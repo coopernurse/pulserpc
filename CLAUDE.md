@@ -119,19 +119,3 @@ npm run lint                  # ESLint
 6. Add to `RUNTIMES` array in `scripts/test-servers.sh`
 
 See [RUNTIME_IMPLEMENTATION_GUIDE.md](docs/RUNTIME_IMPLEMENTATION_GUIDE.md) for detailed requirements.
-
-# Agent Instructions
-
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
-
-Always use the `--no-daemon` flag when running `bd`
-
-## Quick Reference
-
-```bash
-bd --no-daemon ready              # Find available work
-bd --no-daemon show <id>          # View issue details
-bd --no-daemon update <id> --status in_progress  # Claim work
-bd --no-daemon close <id>         # Complete work
-bd --no-daemon sync               # Sync with git
-```
