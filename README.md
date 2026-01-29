@@ -33,6 +33,16 @@ enum UserRole {
 }
 ```
 
+## Syntax Highlighting
+
+For the best editing experience when writing PulseRPC IDL files, install the **PulseRPC Syntax Highlighting** extension from the VSCode Marketplace. This extension provides:
+
+- Syntax highlighting for `.pulse` files
+- Code folding and improved readability
+- Support for all IDL constructs (interfaces, structs, enums, namespaces)
+
+Install it directly from VSCode by searching for "PulseRPC Syntax Highlighting" in the Extensions panel.
+
 ## Web UI and Playground
 
 PulseRPC includes a web UI with an interactive playground that allows you to experiment with IDL definitions and generate code for multiple languages directly in your browser.
