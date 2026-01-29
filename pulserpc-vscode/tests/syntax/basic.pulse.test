@@ -1,0 +1,88 @@
+// Basic syntax test file for Pulse IDL
+
+namespace example
+// ^^^^^^^^^ keyword.control.namespace.pulse
+//         ^^^^^^^ entity.name.namespace.pulse
+
+import "test.pulse"
+// ^^^^^^ keyword.control.import.pulse
+
+// Primitive types test
+struct TestTypes {
+// ^^^^^^ keyword.control.struct.pulse
+//       ^^^^^^^^^ entity.name.type.struct.pulse
+  name  string
+// ^^^^ variable.other.object.property.pulse
+//       ^^^^^^ storage.type.primitive.pulse
+  count int
+// ^^^^^ variable.other.object.property.pulse
+//       ^^^ storage.type.primitive.pulse
+  value float
+// ^^^^^ variable.other.object.property.pulse
+//       ^^^^^ storage.type.primitive.pulse
+  flag  bool
+// ^^^^ variable.other.object.property.pulse
+//       ^^^^ storage.type.primitive.pulse
+}
+
+// Array types test
+struct TestArrays {
+  items []string
+// ^^^^^ variable.other.object.property.pulse
+//       ^^ storage.modifier.array.pulse
+//         ^^^^^^ storage.type.primitive.pulse
+  matrix [][]int
+// ^^^^^^ variable.other.object.property.pulse
+//       ^^^^ storage.modifier.array.pulse
+//           ^^^ storage.type.primitive.pulse
+}
+
+// Map types test
+struct TestMaps {
+  data map[string]int
+// ^^^^ variable.other.object.property.pulse
+//      ^^^ storage.type.map.pulse
+//         ^^^^^^ storage.type.primitive.pulse
+//               ^^^ storage.type.primitive.pulse
+}
+
+// Optional field modifier test
+struct TestOptional {
+  required string
+  optionalField string [optional]
+//             ^^^^^^ variable.other.object.property.pulse
+//                     ^^^^^^ storage.type.primitive.pulse
+//                            ^^^^^^^^^ storage.modifier.optional.pulse
+}
+
+// Qualified names test
+struct ExternalTypes {
+// ^^^^^^ keyword.control.struct.pulse
+//       ^^^^^^^^^^^^^^ entity.name.type.struct.pulse
+  status inc.Status
+// ^^^^^^ variable.other.object.property.pulse
+//        ^^ entity.name.namespace.pulse
+//          ^ punctuation.accessor.dot.pulse
+//           ^^^^^^ entity.name.type.pulse
+}
+
+// Enum test
+enum Status {
+// ^^^ keyword.control.enum.pulse
+//     ^^^^^^ entity.name.type.enum.pulse
+  ok
+// ^^ constant.other.enum.pulse
+  err
+// ^^^ constant.other.enum.pulse
+}
+
+// Interface test
+interface TestInterface {
+// ^^^^^^^^^ keyword.control.interface.pulse
+//           ^^^^^^^^^^^^^ entity.name.type.interface.pulse
+  greet(name string) string
+//       ^^^^ entity.name.function.pulse
+//            ^^^^ variable.parameter.pulse
+//                 ^^^^^^ storage.type.primitive.pulse
+//                        ^^^^^^ storage.type.primitive.pulse
+}

@@ -1,0 +1,108 @@
+// Real-world test file from PulseRPC examples
+// This file tests actual usage patterns from the project
+
+namespace book
+
+// Real interface definition
+interface UserService {
+// ^^^^^^^^^ keyword.control.interface.pulse
+//           ^^^^^^^^^^^ entity.name.type.interface.pulse
+  // Creates a new user if they don't exist
+  createIfNew(userId string, name string) BaseResponse
+//            ^^^^^^ entity.name.function.pulse
+  // Returns a user with the given id
+  get(userId string) UserResponse
+// ^^ entity.name.function.pulse
+  // Updates the given user
+  update(user UserUpdate) BaseResponse
+// ^^^^^^ entity.name.function.pulse
+}
+
+// Real struct definition
+struct Book {
+// ^^^^^^ keyword.control.struct.pulse
+//       ^^^^ entity.name.type.struct.pulse
+  productId   string
+  dateCreated int
+  dateUpdated int
+  platform    Platform
+  author      string
+  title       string
+  productUrl  string
+  imageUrl    string
+  lendable    bool
+}
+
+// Struct with inheritance
+struct BookWithStatus extends Book {
+// ^^^^^^^^^^^^^ entity.name.type.struct.pulse
+//                    ^^^^ entity.name.type.inheritance.pulse
+  userStatus BookUserStatus
+//           ^^^^^^^^^^^^^ entity.name.type.user-defined.pulse
+}
+
+// Enum definition
+enum Platform {
+// ^^^ keyword.control.enum.pulse
+//     ^^^^^^^^ entity.name.type.enum.pulse
+  kindle
+// ^^^^^ constant.other.enum.pulse
+  nook
+// ^^^^ constant.other.enum.pulse
+}
+
+// Response struct with optional fields
+struct BaseResponse {
+// ^^^^^^ keyword.control.struct.pulse
+//       ^^^^^^^^^^^^^ entity.name.type.struct.pulse
+  status  Status
+  message string [optional]
+//             ^^^^^^^^^ storage.modifier.optional.pulse
+}
+
+// Interface with array parameters
+interface BookService {
+  getAvailable(platforms []Platform, userId string, offset int, limit int) BooksResponse
+//              ^^^^^^^^^ entity.name.function.pulse
+//                        ^^ storage.modifier.array.pulse
+//                          ^^^^^^^^ entity.name.type.user-defined.pulse
+  search(request SearchRequest) BooksResponse
+// ^^^^^^ entity.name.function.pulse
+}
+
+// Request struct with multiple fields
+struct SearchRequest {
+// ^^^^^^ keyword.control.struct.pulse
+//       ^^^^^^^^^^^^^ entity.name.type.struct.pulse
+  platforms []Platform
+//          ^^ storage.modifier.array.pulse
+  userId    string
+  keyword   string
+  offset    int
+  limit     int
+}
+
+// Real-world example with import
+import "conform-inc.pulse"
+// ^^^^^^ keyword.control.import.pulse
+
+// Using imported types
+struct RepeatResponse extends inc.Response {
+// ^^^^^^^^^^^^^^ entity.name.type.struct.pulse
+//                     ^^ entity.name.namespace.pulse
+//                       ^^^^^^^ entity.name.type.inheritance.pulse
+  count  int
+  items  []string
+//       ^^ storage.modifier.array.pulse
+}
+
+// Method with qualified return type
+interface A {
+  calc(nums []float, operation inc.MathOp) float
+//       ^^^^ entity.name.function.pulse
+//            ^^^^ variable.parameter.pulse
+//                 ^^ storage.modifier.array.pulse
+//                   ^^^^^ storage.type.primitive.pulse
+//                                    ^^ entity.name.namespace.pulse
+//                                      ^^^^^^ entity.name.type.pulse
+}

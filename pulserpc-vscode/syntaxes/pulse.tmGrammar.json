@@ -1,0 +1,182 @@
+{
+  "name": "Pulse IDL",
+  "scopeName": "source.pulse",
+  "fileTypes": ["pulse"],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#top-level-declarations"
+    },
+    {
+      "include": "#interface-method"
+    },
+    {
+      "include": "#struct-field"
+    },
+    {
+      "include": "#enum-value"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.double-slash.pulse",
+      "match": "//.*$"
+    },
+    "strings": {
+      "name": "string.quoted.double.pulse",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.pulse",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "top-level-declarations": {
+      "patterns": [
+        {
+          "name": "meta.namespace.declaration.pulse",
+          "match": "\\b(namespace)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.namespace.pulse" },
+            "2": { "name": "entity.name.namespace.pulse" }
+          }
+        },
+        {
+          "name": "meta.import.pulse",
+          "match": "\\b(import)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.import.pulse" }
+          }
+        },
+        {
+          "name": "meta.struct.declaration.pulse",
+          "begin": "\\b(struct)\\s+([A-Z][a-zA-Z0-9_]*)(?:\\s+(extends)\\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)?))?\\s*\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.struct.pulse" },
+            "2": { "name": "entity.name.type.struct.pulse" },
+            "3": { "name": "storage.modifier.extends.pulse" },
+            "4": { "name": "entity.name.type.inheritance.pulse" }
+          },
+          "patterns": [
+            { "include": "#struct-field" },
+            { "include": "#comments" }
+          ]
+        },
+        {
+          "name": "meta.interface.declaration.pulse",
+          "begin": "\\b(interface)\\s+([A-Z][a-zA-Z0-9_]*)\\s*\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.interface.pulse" },
+            "2": { "name": "entity.name.type.interface.pulse" }
+          },
+          "patterns": [
+            { "include": "#interface-method" },
+            { "include": "#comments" }
+          ]
+        },
+        {
+          "name": "meta.enum.declaration.pulse",
+          "begin": "\\b(enum)\\s+([A-Z][a-zA-Z0-9_]*)\\s*\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.enum.pulse" },
+            "2": { "name": "entity.name.type.enum.pulse" }
+          },
+          "patterns": [
+            { "include": "#enum-value" },
+            { "include": "#comments" }
+          ]
+        }
+      ]
+    },
+    "struct-field": {
+      "match": "\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s+((?:\\[\\])*(?:(?:map\\[string\\])|(?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)?)))\\s*(\\[optional\\])?",
+      "captures": {
+        "1": { "name": "variable.other.object.property.pulse" },
+        "2": {
+          "patterns": [
+            { "include": "#type-reference" }
+          ]
+        },
+        "3": { "name": "storage.modifier.optional.pulse" }
+      }
+    },
+    "interface-method": {
+      "match": "\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)\\s*((?:\\[\\])*(?:(?:map\\[string\\])|(?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)?)))?\\s*(\\[optional\\])?",
+      "captures": {
+        "1": { "name": "entity.name.function.pulse" },
+        "2": {
+          "patterns": [
+            { "include": "#parameter-list" }
+          ]
+        },
+        "3": {
+          "patterns": [
+            { "include": "#type-reference" }
+          ]
+        },
+        "4": { "name": "storage.modifier.optional.pulse" }
+      }
+    },
+    "parameter-list": {
+      "patterns": [
+        {
+          "match": "\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s+((?:\\[\\])*(?:(?:map\\[string\\])|(?:[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)?)))",
+          "captures": {
+            "1": { "name": "variable.parameter.pulse" },
+            "2": {
+              "patterns": [
+                { "include": "#type-reference" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "enum-value": {
+      "name": "constant.other.enum.pulse",
+      "match": "\\b([a-z][a-zA-Z0-9_]*)\\b"
+    },
+    "type-reference": {
+      "patterns": [
+        {
+          "name": "storage.modifier.array.pulse",
+          "match": "\\[\\]"
+        },
+        {
+          "name": "storage.type.map.pulse",
+          "match": "\\b(map)\\[string\\]",
+          "captures": {
+            "1": { "name": "storage.type.map.pulse" }
+          }
+        },
+        {
+          "name": "storage.type.primitive.pulse",
+          "match": "\\b(string|int|float|bool)\\b"
+        },
+        {
+          "name": "meta.qualified-type.pulse",
+          "match": "([a-zA-Z_][a-zA-Z0-9_]*)(\\.)([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "entity.name.namespace.pulse" },
+            "2": { "name": "punctuation.accessor.dot.pulse" },
+            "3": { "name": "entity.name.type.pulse" }
+          }
+        },
+        {
+          "name": "entity.name.type.user-defined.pulse",
+          "match": "\\b([A-Z][a-zA-Z0-9_]*)\\b"
+        }
+      ]
+    }
+  }
+}

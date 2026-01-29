@@ -1,0 +1,91 @@
+// Complex syntax test file for Pulse IDL
+// Tests struct inheritance, multiple parameters, and complex types
+
+namespace complex
+
+// Struct inheritance test
+struct BaseResponse {
+// ^^^^^^ keyword.control.struct.pulse
+//       ^^^^^^^^^^^^^ entity.name.type.struct.pulse
+  status Status
+  message string
+}
+
+struct UserResponse extends BaseResponse {
+// ^^^^^^^^^^^ entity.name.type.struct.pulse
+//                  ^^^^^^^^^^^^^ entity.name.type.inheritance.pulse
+  userId string
+  email  string [optional]
+//             ^^^^^^^^^ storage.modifier.optional.pulse
+}
+
+// Multi-level inheritance
+struct DetailedUserResponse extends UserResponse {
+//                  ^^^^^^^^^^^^^ entity.name.type.inheritance.pulse
+  age      int
+  metadata map[string]string
+//         ^^^ storage.type.map.pulse
+}
+
+// Interface with multiple parameters
+interface UserService {
+// ^^^^^^^^^ keyword.control.interface.pulse
+//           ^^^^^^^^^^^ entity.name.type.interface.pulse
+  create(userId string, name string, email string [optional]) BaseResponse
+//       ^^^^^^ entity.name.function.pulse
+//              ^^^^^^ variable.parameter.pulse
+//                     ^^^^^^ storage.type.primitive.pulse
+//                                   ^^^^ variable.parameter.pulse
+//                                          ^^^^ storage.type.primitive.pulse
+//                                                ^^^^^ variable.parameter.pulse
+//                                                      ^^^^^^ storage.type.primitive.pulse
+//                                                              ^^^^^^^^^ storage.modifier.optional.pulse
+//                                                                ^^^^^^^^^^^^^ entity.name.type.user-defined.pulse
+}
+
+// Nested complex types
+struct ComplexTypes {
+  arrayOfMaps    []map[string]int
+//               ^^ storage.modifier.array.pulse
+//                 ^^^ storage.type.map.pulse
+  mapOfArrays    map[string][]int
+//               ^^^ storage.type.map.pulse
+//                         ^^ storage.modifier.array.pulse
+  nestedArrays   [][][]string
+//               ^^^^^^ storage.modifier.array.pulse
+  nestedMaps     map[string]map[string]int
+//               ^^^ storage.type.map.pulse
+//                         ^^^ storage.type.map.pulse
+}
+
+// Enum with comments
+enum UserRole {
+// ^^^ keyword.control.enum.pulse
+//     ^^^^^^^^ entity.name.type.enum.pulse
+  // Regular user
+  admin
+// ^^^^^ constant.other.enum.pulse
+  // Can edit content
+  editor
+// ^^^^^^ constant.other.enum.pulse
+  // Read-only access
+  viewer
+// ^^^^^^ constant.other.enum.pulse
+}
+
+// Optional return type
+interface OptionalReturns {
+  findById(id string) UserResponse [optional]
+//                    ^^^^^^^^^^^^^ entity.name.type.user-defined.pulse
+//                                  ^^^^^^^^^ storage.modifier.optional.pulse
+}
+
+// Multiple qualified names
+struct CrossNamespace {
+  otherType  inc.Status
+//            ^^ entity.name.namespace.pulse
+//              ^^^^^^ entity.name.type.pulse
+  anotherType common.BaseResponse
+//             ^^^^^^ entity.name.namespace.pulse
+//                   ^^^^^^^^^^^^^ entity.name.type.pulse
+}

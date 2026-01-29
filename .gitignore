@@ -20,3 +20,4 @@ docs/examples/checkout-csharp/bin/
 docs/examples/checkout-csharp/obj/
 docs/examples/checkout-java/target/.DS_Store
 .DS_Store
+*.vsix

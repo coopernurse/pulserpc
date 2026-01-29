@@ -33,7 +33,7 @@ docker pull ghcr.io/coopernurse/pulserpc:latest
 Run PulseRPC via Docker:
 
 ```bash
-docker run --rm -v $(pwd):/work ghcr.io/coopernurse/pulserpc:latest pulserpc --help
+docker run --rm -v $(pwd):/work ghcr.io/coopernurse/pulserpc:latest -h
 ```
 
 ### Method 3: Build from Source
