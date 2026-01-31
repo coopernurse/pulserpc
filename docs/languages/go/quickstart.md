@@ -156,13 +156,14 @@ pulserpc -plugin go-client-server -dir pkg/checkout checkout.pulse
 ```
 
 This creates:
-- `pkg/checkout/checkout.go` - Type definitions
+- `pkg/checkout/all_types.go` - Shared type maps
+- `pkg/checkout/checkout.go` - Type definitions (with embedded IDL)
 - `pkg/checkout/server.go` - PulseRPC server framework
 - `pkg/checkout/client.go` - HTTP client framework
-- `pkg/checkout/rpc.go`, `types.go`, `validation.go` - Merged runtime
-- `pkg/checkout/idl.json` - IDL metadata
+- `pkg/pulserpc/rpc.go`, `types.go`, `validation.go` - Shared runtime (created once)
 
 > **Note**: The generated code uses the namespace from your IDL as the package name (`checkout` in this example).
+> The shared `pkg/pulserpc` runtime is created only once and reused for all generated packages in your project.
 
 ## 3. Project Structure
 
@@ -173,14 +174,15 @@ checkout-service/
 ├── go.mod
 ├── checkout.pulse
 └── pkg/
+    ├── pulserpc/
+    │   ├── rpc.go
+    │   ├── types.go
+    │   └── validation.go
     └── checkout/
+        ├── all_types.go
         ├── checkout.go
         ├── server.go
-        ├── client.go
-        ├── rpc.go
-        ├── types.go
-        ├── validation.go
-        └── idl.json
+        └── client.go
 ```
 
 ## 4. Create Your Server (10-15 min)
@@ -200,13 +202,19 @@ import (
     "time"
 
     "checkout-service/pkg/checkout"
+    "checkout-service/pkg/pulserpc"
 )
+
+// Helper function to create string pointers for optional fields
+func strPtr(s string) *string {
+    return &s
+}
 
 var products = []*checkout.Product{
     {ProductId: "prod001", Name: "Wireless Mouse", Description: "Ergonomic mouse",
-     Price: 29.99, Stock: 50, ImageUrl: "https://example.com/mouse.jpg"},
+     Price: 29.99, Stock: 50, ImageUrl: strPtr("https://example.com/mouse.jpg")},
     {ProductId: "prod002", Name: "Mechanical Keyboard", Description: "RGB keyboard",
-     Price: 89.99, Stock: 25, ImageUrl: "https://example.com/keyboard.jpg"},
+     Price: 89.99, Stock: 25, ImageUrl: strPtr("https://example.com/keyboard.jpg")},
 }
 
 type CatalogService struct{}
@@ -235,14 +243,16 @@ func NewCartService() *CartService {
 }
 
 func (s *CartService) AddToCart(request *checkout.AddToCartRequest) (*checkout.Cart, error) {
-    cartId := request.CartId
-    if cartId == "" {
+    var cartId string
+    if request.CartId == nil {
         cartId = fmt.Sprintf("cart_%d", rand.Intn(9000)+1000)
+    } else {
+        cartId = *request.CartId
     }
 
     cart, ok := s.carts[cartId]
     if !ok {
-        cart = &checkout.Cart{CartId: cartId, Items: []*checkout.CartItem{}, Subtotal: 0}
+        cart = &checkout.Cart{CartId: cartId, Items: []checkout.CartItem{}, Subtotal: 0}
         s.carts[cartId] = cart
     }
 
@@ -255,8 +265,8 @@ func (s *CartService) AddToCart(request *checkout.AddToCartRequest) (*checkout.C
         }
     }
 
-    // Add item
-    cart.Items = append(cart.Items, &checkout.CartItem{
+    // Add item (note: Items is []CartItem, not []*checkout.CartItem)
+    cart.Items = append(cart.Items, checkout.CartItem{
         ProductId: request.ProductId,
         Quantity:  request.Quantity,
         Price:     product.Price,
@@ -278,7 +288,7 @@ func (s *CartService) GetCart(cartId string) (*checkout.Cart, error) {
 
 func (s *CartService) ClearCart(cartId string) (bool, error) {
     if cart, ok := s.carts[cartId]; ok {
-        cart.Items = []*checkout.CartItem{}
+        cart.Items = []checkout.CartItem{}
         cart.Subtotal = 0
         return true, nil
     }
@@ -300,23 +310,23 @@ func NewOrderService(cartService *CartService) *OrderService {
 func (s *OrderService) CreateOrder(request *checkout.CreateOrderRequest) (*checkout.CheckoutResponse, error) {
     cart, ok := s.carts[request.CartId]
     if !ok {
-        return nil, checkout.NewRPCError(1001, "CartNotFound: Cart does not exist")
+        return nil, pulserpc.NewRPCError(1001, "CartNotFound: Cart does not exist")
     }
 
     if len(cart.Items) == 0 {
-        return nil, checkout.NewRPCError(1002, "CartEmpty: Cannot create order from empty cart")
+        return nil, pulserpc.NewRPCError(1002, "CartEmpty: Cannot create order from empty cart")
     }
 
     // Create order
     orderId := fmt.Sprintf("order_%d", rand.Intn(90000)+10000)
     order := &checkout.Order{
         OrderId:         orderId,
-        Cart:            cart,
+        Cart:            *cart,  // Dereference pointer (struct uses value type)
         ShippingAddress: request.ShippingAddress,
         PaymentMethod:   request.PaymentMethod,
         Status:          checkout.OrderStatusPending,
         Total:           cart.Subtotal,
-        CreatedAt:       time.Now().Unix(),
+        CreatedAt:       int(time.Now().Unix()),  // Convert int64 to int
     }
     s.orders[orderId] = order
 
@@ -385,16 +395,16 @@ func main() {
     }
 
     // Add to cart
-    result, _ := cart.AddToCart(&checkout.AddToCartRequest{
+    result, _ := cart.AddToCart(checkout.AddToCartRequest{
         ProductId: products[0].ProductId,
         Quantity:  2,
     })
     fmt.Printf("\nCart: %s, Subtotal: $%.2f\n", result.CartId, result.Subtotal)
 
     // Create order
-    response, _ := orders.CreateOrder(&checkout.CreateOrderRequest{
+    response, _ := orders.CreateOrder(checkout.CreateOrderRequest{
         CartId: result.CartId,
-        ShippingAddress: &checkout.Address{
+        ShippingAddress: checkout.Address{
             Street:  "123 Main St",
             City:    "San Francisco",
             State:   "CA",
@@ -415,10 +425,10 @@ go run -tags client_only ./cmd/client
 
 ## Error Codes
 
-Return errors using the generated error function:
+Return errors using the pulserpc package:
 
 ```go
-return nil, checkout.NewRPCError(1002, "CartEmpty: Cannot create order from empty cart")
+return nil, pulserpc.NewRPCError(1002, "CartEmpty: Cannot create order from empty cart")
 ```
 
 | Code | Name |
@@ -434,16 +444,17 @@ return nil, checkout.NewRPCError(1002, "CartEmpty: Cannot create order from empt
 ```
 checkout-service/
 ├── go.mod                 # Your module file
-├── checkout.pulse           # Your IDL
+├── checkout.pulse         # Your IDL
 └── pkg/
-    └── checkout/
-        ├── checkout.go    # Generated types
-        ├── server.go      # Generated server
-        ├── client.go      # Generated client
-        ├── rpc.go         # Merged runtime
-        ├── types.go       # Merged runtime
-        ├── validation.go  # Merged runtime
-        └── idl.json       # IDL metadata
+    ├── pulserpc/          # Shared runtime (created once, reused)
+    │   ├── rpc.go
+    │   ├── types.go
+    │   └── validation.go
+    └── checkout/          # Generated types
+        ├── all_types.go   # Shared type maps
+        ├── checkout.go    # Type definitions (with embedded IDL)
+        ├── server.go      # Generated server framework
+        └── client.go      # Generated client framework
 └── cmd/
     ├── server/
     │   └── main.go        # Your server implementation
