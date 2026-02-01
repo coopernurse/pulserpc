@@ -1,4 +1,4 @@
-.PHONY: build build-linux test cover lint quality clean install-tools test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean
+.PHONY: build build-linux test cover lint quality clean install-tools test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-java test-quickstart-ts test-quickstart-csharp
 
 # Variables
 BINARY_NAME=pulserpc
@@ -190,4 +190,24 @@ docs-clean:
 	@echo "Cleaning documentation build..."
 	rm -rf docs/_site
 	@echo "Documentation cleaned"
+
+# Quickstart testing targets
+test-quickstarts: build
+	@echo "Testing all quickstart guides..."
+	@bash tests/integration/test_quickstart_all.sh
+
+test-quickstart-go:
+	@bash tests/integration/test_quickstart_go.sh
+
+test-quickstart-python:
+	@bash tests/integration/test_quickstart_python.sh
+
+test-quickstart-java:
+	@bash tests/integration/test_quickstart_java.sh
+
+test-quickstart-ts:
+	@bash tests/integration/test_quickstart_ts.sh
+
+test-quickstart-csharp:
+	@bash tests/integration/test_quickstart_csharp.sh
 
