@@ -317,6 +317,7 @@ Create a `tsconfig.json` file in the same directory:
 Build and start your server:
 
 ```bash
+npm install
 npm run build
 npm start
 ```
