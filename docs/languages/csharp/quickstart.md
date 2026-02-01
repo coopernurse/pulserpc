@@ -339,6 +339,10 @@ Create a client project file `TestClient/TestClient.csproj`:
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="../Shared/Checkout.cs" />
     <Compile Include="../Shared/Contract.cs" />
     <Compile Include="../Shared/Client.cs" />
@@ -366,28 +370,24 @@ class Program
         var cartClient = new CartServiceClient(transport);
         var ordersClient = new OrderServiceClient(transport);
 
-        // The client classes implement the interfaces, so you can use them
-        // with dependency injection or directly
-        ICatalogService catalog = catalogClient;
-
-        // List products (sync)
-        var products = catalog.listProducts();
+        // List products (async - use *Async methods inside async Main)
+        var products = await catalogClient.listProductsAsync();
         Console.WriteLine("=== Products ===");
         foreach (var p in products)
         {
             Console.WriteLine($"{p.Name} - ${p.Price}");
         }
 
-        // Add to cart (sync)
-        var result = cartClient.addToCart(new AddToCartRequest
+        // Add to cart (async)
+        var result = await cartClient.addToCartAsync(new AddToCartRequest
         {
             ProductId = products[0].ProductId,
             Quantity = 2
         });
         Console.WriteLine($"\nCart: {result.CartId}");
 
-        // Create order (sync)
-        var response = ordersClient.createOrder(new CreateOrderRequest
+        // Create order (async)
+        var response = await ordersClient.createOrderAsync(new CreateOrderRequest
         {
             CartId = result.CartId,
             ShippingAddress = new Address
