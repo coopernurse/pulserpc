@@ -146,7 +146,41 @@ This creates:
 - `src/main/java/com/example/myapp/` - Type definitions and Server/Client frameworks
 - `src/main/resources/idl.json` - IDL metadata
 - `src/main/java/com/bitmechanic/pulserpc/` - Runtime library
-- `pom.xml` - Maven configuration
+
+Create a `pom.xml` in your project root:
+
+```xml
+<project>
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example</groupId>
+    <artifactId>myapp</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.15.2</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+```
 
 ## 3. Implement the Server (10-15 min)
 
