@@ -28,10 +28,6 @@ func (p *JavaClientServer) Name() string {
 
 // RegisterFlags registers CLI flags for this plugin
 func (p *JavaClientServer) RegisterFlags(fs *flag.FlagSet) {
-	// Only register base-dir if it hasn't been registered by another plugin
-	if fs.Lookup("base-dir") == nil {
-		fs.String("base-dir", "", "Base directory for namespace packages/modules (defaults to -dir if not specified)")
-	}
 	// Register base-package flag (required)
 	fs.String("base-package", "", "Base package name for generated Java classes (required, e.g., com.example.server)")
 	// Register json-lib flag for choosing between Jackson and GSON
@@ -52,8 +48,6 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if dirFlag != nil && dirFlag.Value.String() != "" {
 		outputDir = dirFlag.Value.String()
 	}
-
-	// Note: base-dir flag is available but we use outputDir directly for file generation
 
 	// Get base-package flag (required)
 	basePackageFlag := fs.Lookup("base-package")

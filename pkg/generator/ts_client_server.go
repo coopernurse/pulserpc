@@ -30,10 +30,6 @@ func (p *TSClientServer) Name() string {
 // RegisterFlags registers CLI flags for this plugin
 func (p *TSClientServer) RegisterFlags(fs *flag.FlagSet) {
 	fs.String("package", "", "Package prefix for generated types and classes (for namespace isolation)")
-	// Only register base-dir if it hasn't been registered by another plugin
-	if fs.Lookup("base-dir") == nil {
-		fs.String("base-dir", "", "Base directory for namespace packages/modules (defaults to -dir if not specified)")
-	}
 }
 
 // Generate generates TypeScript HTTP server and client code from the parsed IDL
@@ -56,13 +52,6 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	packagePrefix := ""
 	if packageFlag != nil && packageFlag.Value.String() != "" {
 		packagePrefix = packageFlag.Value.String()
-	}
-
-	// Get base-dir flag (defaults to outputDir if not specified)
-	baseDirFlag := fs.Lookup("base-dir")
-	baseDir := outputDir
-	if baseDirFlag != nil && baseDirFlag.Value.String() != "" {
-		baseDir = baseDirFlag.Value.String()
 	}
 
 	// Build type registries
@@ -94,24 +83,11 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			continue // Skip types without namespace (shouldn't happen with required namespaces)
 		}
 		namespaceCode := generateNamespaceTs(namespace, types)
-		namespacePath := filepath.Join(baseDir, namespace+".ts")
+		namespacePath := filepath.Join(outputDir, namespace+".ts")
 		if err := os.WriteFile(namespacePath, []byte(namespaceCode), 0644); err != nil {
 			return fmt.Errorf("failed to write %s.ts: %w", namespace, err)
 		}
 		PrintFileCreated(namespacePath, fs)
-	}
-
-	// Calculate relative path from outputDir to baseDir for imports
-	relPathToBase, err := filepath.Rel(outputDir, baseDir)
-	if err != nil {
-		relPathToBase = baseDir // Fallback to absolute path if relative calculation fails
-	}
-	// Normalize the path (use forward slashes for TypeScript imports)
-	relPathToBase = filepath.ToSlash(relPathToBase)
-	if relPathToBase == "." {
-		relPathToBase = ""
-	} else if relPathToBase != "" {
-		relPathToBase = relPathToBase + "/"
 	}
 
 	// Marshal IDL to JSON for embedding in server code
@@ -121,7 +97,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 
 	// Generate server.ts with embedded IDL
-	serverCode := generateServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, relPathToBase, string(idlJSON))
+	serverCode := generateServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, string(idlJSON))
 	serverPath := filepath.Join(outputDir, "server.ts")
 	if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
 		return fmt.Errorf("failed to write server.ts: %w", err)
@@ -129,7 +105,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	PrintFileCreated(serverPath, fs)
 
 	// Generate client.ts
-	clientCode := generateClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, relPathToBase)
+	clientCode := generateClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap)
 	clientPath := filepath.Join(outputDir, "client.ts")
 	if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
 		return fmt.Errorf("failed to write client.ts: %w", err)
@@ -143,7 +119,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// Generate test server and client if flag is set
 	if generateTestServer {
 		// Generate test_server.ts
-		testServerCode := generateTestServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, relPathToBase)
+		testServerCode := generateTestServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap)
 		testServerPath := filepath.Join(outputDir, "test_server.ts")
 		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_server.ts: %w", err)
@@ -151,7 +127,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		PrintFileCreated(testServerPath, fs)
 
 		// Generate test_client.ts
-		testClientCode := generateTestClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, relPathToBase)
+		testClientCode := generateTestClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap)
 		testClientPath := filepath.Join(outputDir, "test_client.ts")
 		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_client.ts: %w", err)
@@ -258,7 +234,7 @@ func applyPackagePrefix(name, prefix string) string {
 }
 
 // generateServerTs generates the server.ts file with HTTP server and interface stubs
-func generateServerTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string, namespaceMap map[string]*NamespaceTypes, relPathToBase string, idlJson string) string {
+func generateServerTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string, namespaceMap map[string]*NamespaceTypes, idlJson string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
@@ -281,12 +257,7 @@ func generateServerTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string
 	// Sort namespaces for consistent output
 	sort.Strings(namespaces)
 	for _, ns := range namespaces {
-		importPath := relPathToBase + ns
-		if importPath == "" {
-			importPath = "./" + ns
-		} else if !strings.HasPrefix(importPath, ".") {
-			importPath = "./" + importPath
-		}
+		importPath := "./" + ns
 		sb.WriteString(fmt.Sprintf("import { ALL_STRUCTS as %s_STRUCTS, ALL_ENUMS as %s_ENUMS } from '%s';\n", strings.ToUpper(ns), strings.ToUpper(ns), importPath))
 	}
 	sb.WriteString("\n")
@@ -621,7 +592,7 @@ func writeInterfaceMethodLookupTs(sb *strings.Builder, interfaces []*parser.Inte
 }
 
 // generateClientTs generates the client.ts file with transport abstraction and client classes
-func generateClientTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string, namespaceMap map[string]*NamespaceTypes, relPathToBase string) string {
+func generateClientTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string, namespaceMap map[string]*NamespaceTypes) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
@@ -639,12 +610,7 @@ func generateClientTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string
 	// Sort namespaces for consistent output
 	sort.Strings(namespaces)
 	for _, ns := range namespaces {
-		importPath := relPathToBase + ns
-		if importPath == "" {
-			importPath = "./" + ns
-		} else if !strings.HasPrefix(importPath, ".") {
-			importPath = "./" + importPath
-		}
+		importPath := "./" + ns
 		sb.WriteString(fmt.Sprintf("import { ALL_STRUCTS as %s_STRUCTS, ALL_ENUMS as %s_ENUMS } from '%s';\n", strings.ToUpper(ns), strings.ToUpper(ns), importPath))
 	}
 	sb.WriteString("\n")
@@ -894,7 +860,7 @@ func writeClientMethodTs(sb *strings.Builder, iface *parser.Interface, method *p
 }
 
 // generateTestServerTs generates test_server.ts with concrete implementations of all interfaces
-func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string, _ map[string]*NamespaceTypes, _ string) string {
+func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string, _ map[string]*NamespaceTypes) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by barrister - do not edit\n")
@@ -1128,7 +1094,7 @@ func writeDefaultTestValueTs(sb *strings.Builder, t *parser.Type, structMap map[
 }
 
 // generateTestClientTs generates test_client.ts that exercises all client methods
-func generateTestClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string, _ map[string]*NamespaceTypes, _ string) string {
+func generateTestClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string, _ map[string]*NamespaceTypes) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by barrister - do not edit\n")

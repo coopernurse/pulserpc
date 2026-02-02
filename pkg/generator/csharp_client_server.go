@@ -29,10 +29,7 @@ func (p *CSharpClientServer) Name() string {
 
 // RegisterFlags registers CLI flags for this plugin
 func (p *CSharpClientServer) RegisterFlags(fs *flag.FlagSet) {
-	// Only register base-dir if it hasn't been registered by another plugin
-	if fs.Lookup("base-dir") == nil {
-		fs.String("base-dir", "", "Base directory for namespace packages/modules (defaults to -dir if not specified)")
-	}
+	// No plugin-specific flags
 }
 
 // Generate generates C# HTTP server and client code from the parsed IDL
@@ -48,13 +45,6 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	outputDir := ""
 	if dirFlag != nil && dirFlag.Value.String() != "" {
 		outputDir = dirFlag.Value.String()
-	}
-
-	// Get base-dir flag (defaults to outputDir if not specified)
-	baseDirFlag := fs.Lookup("base-dir")
-	baseDir := outputDir
-	if baseDirFlag != nil && baseDirFlag.Value.String() != "" {
-		baseDir = baseDirFlag.Value.String()
 	}
 
 	// Build type registries
@@ -103,7 +93,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			continue // Skip types without namespace (shouldn't happen with required namespaces)
 		}
 		namespaceCode := generateNamespaceCs(namespace, namespaces, types, structMap, enumMap)
-		namespacePath := filepath.Join(baseDir, snakeToPascalCase(namespace)+".cs")
+		namespacePath := filepath.Join(outputDir, snakeToPascalCase(namespace)+".cs")
 		if err := os.WriteFile(namespacePath, []byte(namespaceCode), 0644); err != nil {
 			return fmt.Errorf("failed to write %s.cs: %w", namespace, err)
 		}

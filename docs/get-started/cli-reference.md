@@ -50,17 +50,10 @@ pulserpc [flags] <idl-file>
 
 ### Plugin-Specific Flags
 
-#### Python Plugin (`python-client-server`)
-
-| Flag | Type | Description |
-|------|------|-------------|
-| `-base-dir` | string | Base directory for namespace packages/modules. Defaults to `-dir` if not specified. |
-
 #### Go Plugin (`go-client-server`)
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `-base-dir` | string | Base directory for namespace packages. Defaults to `-dir` if not specified. |
 | `-go-module` | string | Override Go module path for pulserpc imports. Auto-detected from `go.mod` if not specified. |
 | `-inline-runtime` | bool | Place runtime files inline with generated code. Useful for playground/testing environments. |
 
@@ -68,7 +61,6 @@ pulserpc [flags] <idl-file>
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `-base-dir` | string | Base directory for namespace package directories. Defaults to `-dir` if not specified. |
 | `-base-package` | string | Base package name for generated Java classes. Required (e.g., `com.example.server`). |
 | `-json-lib` | string | JSON library to use: `jackson` (default) or `gson`. |
 
@@ -77,13 +69,10 @@ pulserpc [flags] <idl-file>
 | Flag | Type | Description |
 |------|------|-------------|
 | `-package` | string | Package prefix for generated types and classes. Used for namespace isolation. |
-| `-base-dir` | string | Base directory for namespace packages. Defaults to `-dir` if not specified. |
 
 #### C# Plugin (`csharp-client-server`)
 
-| Flag | Type | Description |
-|------|------|-------------|
-| `-base-dir` | string | Base directory for namespace directories. Defaults to `-dir` if not specified. |
+The C# plugin has no plugin-specific flags.
 
 ## Common Usage Examples
 

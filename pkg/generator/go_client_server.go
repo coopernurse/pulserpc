@@ -29,10 +29,6 @@ func (p *GoClientServer) Name() string {
 
 // RegisterFlags registers CLI flags for this plugin
 func (p *GoClientServer) RegisterFlags(fs *flag.FlagSet) {
-	// Only register base-dir if it hasn't been registered by another plugin
-	if fs.Lookup("base-dir") == nil {
-		fs.String("base-dir", "", "Base directory for namespace packages/modules (defaults to -dir if not specified)")
-	}
 	// Register go-module flag for manual override
 	if fs.Lookup("go-module") == nil {
 		fs.String("go-module", "", "Override Go module path for pulserpc imports (auto-detected from go.mod)")

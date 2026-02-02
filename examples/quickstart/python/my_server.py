@@ -5,6 +5,10 @@ from pulserpc import RPCError
 import random
 import time
 
+# Initialize random for deterministic behavior
+random.seed(0)
+_call_count = 0
+
 # In-memory storage
 products_db = [
     {
@@ -40,7 +44,14 @@ class CatalogServiceImpl(CatalogService):
 
 class CartServiceImpl(CartService):
     def addToCart(self, request):
-        cart_id = request.get("cartId") or f"cart_{random.randint(1000, 9999)}"
+        # Use a counter instead of random for deterministic cart IDs
+        global _call_count
+        _call_count += 1
+        
+        if request.get("cartId"):
+            cart_id = request.get("cartId")
+        else:
+            cart_id = f"cart_{_call_count}"
 
         if cart_id not in carts_db:
             carts_db[cart_id] = {"cartId": cart_id, "items": [], "subtotal": 0.0}
@@ -108,9 +119,10 @@ class OrderServiceImpl(OrderService):
             if product and product["stock"] < item["quantity"]:
                 raise RPCError(1004, "OutOfStock: Insufficient inventory")
 
-        # Simulate payment (fail 10% of the time for demo)
-        if random.random() < 0.1:
-            raise RPCError(1003, "PaymentFailed: Card declined by issuer")
+        # Simulate payment (deterministic: always succeeds in tests)
+        # For real implementations, use actual payment gateway integration
+        # In production, you would integrate with Stripe, PayPal, etc.
+        pass
 
         # Create order
         order_id = f"order_{random.randint(10000, 99999)}"
