@@ -709,7 +709,7 @@ func writeInterfaceClient(sb *strings.Builder, iface *parser.Interface, _ []*par
 	fmt.Fprintf(sb, "class %s:\n", clientClassName)
 	if iface.Comment != "" {
 		fmt.Fprintf(sb, "    \"\"\"Client for %s interface.\n\n", iface.Name)
-		fmt.Fprintf(sb, "    %s\n", strings.TrimSpace(iface.Comment))
+		fmt.Fprintf(sb, "    %s\n", escapePythonDocstring(strings.TrimSpace(iface.Comment)))
 		sb.WriteString("    \"\"\"\n\n")
 	} else {
 		fmt.Fprintf(sb, "    \"\"\"Client for %s interface.\"\"\"\n\n", iface.Name)
@@ -846,7 +846,7 @@ func writeInterfaceStub(sb *strings.Builder, iface *parser.Interface) {
 	}
 	fmt.Fprintf(sb, "class %s(abc.ABC):\n", iface.Name)
 	if iface.Comment != "" {
-		fmt.Fprintf(sb, "    \"\"\"%s\"\"\"\n", strings.TrimSpace(iface.Comment))
+		fmt.Fprintf(sb, "    \"\"\"%s\"\"\"\n", escapePythonDocstring(strings.TrimSpace(iface.Comment)))
 	}
 	sb.WriteString("\n")
 
@@ -1373,19 +1373,30 @@ func generateTestParamValue(t *parser.Type, paramName string, structMap map[stri
 }
 
 // escapePythonTripleQuotedString escapes a string for use as a Python triple-quoted string
+// Note: We use """ instead of ''' to avoid conflicts with single quotes in IDL content
 func escapePythonTripleQuotedString(s string) string {
 	var sb strings.Builder
-	sb.WriteString("'''") // Start of Python triple-quoted string
+	sb.WriteString(`"""`) // Start of Python triple-double-quoted string
 	for _, r := range s {
 		switch r {
-		case '\'':
-			sb.WriteString("\\'") // Escape single quotes
+		case '"':
+			// Check for """ sequence and escape it
+			sb.WriteString(`\"`) // Escape double quotes (prevents """ sequence)
 		case '\\':
 			sb.WriteString("\\\\") // Escape backslashes
+		case '\n':
+			sb.WriteString("\n") // Keep newlines for readability
 		default:
 			sb.WriteRune(r)
 		}
 	}
-	sb.WriteString("'''") // End of Python triple-quoted string
+	sb.WriteString(`"""`) // End of Python triple-double-quoted string
 	return sb.String()
+}
+
+// escapePythonDocstring escapes a string for use inside a Python triple-double-quoted docstring
+// Escapes """ to \""" to avoid ending the docstring prematurely
+func escapePythonDocstring(s string) string {
+	// Replace """ with \"""
+	return strings.ReplaceAll(s, `"""`, `\"""`)
 }

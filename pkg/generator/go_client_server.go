@@ -637,9 +637,9 @@ func generateServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	idlJSON, err := json.MarshalIndent(idl, "", "  ")
 	if err == nil {
 		sb.WriteString("// IDL_JSON contains the IDL definition used to generate this code\n")
-		sb.WriteString("const IDL_JSON = `\n")
-		sb.WriteString(string(idlJSON))
-		sb.WriteString("`\n\n")
+		sb.WriteString("const IDL_JSON = ")
+		sb.WriteString(escapeGoString(string(idlJSON)))
+		sb.WriteString("\n\n")
 	}
 
 	// Merge ALL_STRUCTS and ALL_ENUMS from all namespaces
@@ -1771,4 +1771,29 @@ func generateTestParamValueGo(t *parser.Type, paramName string, structMap map[st
 		return "nil"
 	}
 	return "nil"
+}
+
+// escapeGoString escapes a string for use as a Go string literal
+// Escapes backslashes, double quotes, newlines, and other special characters
+func escapeGoString(s string) string {
+	var sb strings.Builder
+	sb.WriteString("\"") // Start of Go string
+	for _, r := range s {
+		switch r {
+		case '\\':
+			sb.WriteString("\\\\") // Escape backslashes
+		case '"':
+			sb.WriteString("\\\"") // Escape double quotes
+		case '\n':
+			sb.WriteString("\\n") // Escape newlines
+		case '\r':
+			sb.WriteString("\\r") // Escape carriage returns
+		case '\t':
+			sb.WriteString("\\t") // Escape tabs
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	sb.WriteString("\"") // End of Go string
+	return sb.String()
 }
