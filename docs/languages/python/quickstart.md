@@ -37,7 +37,8 @@ This creates:
 - `server.py` - PulseRPCServer framework with abstract service classes
 - `client.py` - HTTPTransport and service client classes
 - `pulserpc/` - Runtime library (RPCError, validation, types)
-- `idl.json` - IDL metadata for introspection
+
+The IDL is embedded directly in `server.py` for the `pulserpc-idl` RPC method.
 
 Note: the Python generator only creates classes for interfaces (service stubs). Structs are plain dicts and enums are strings, so use maps and lists directly in your handlers and client code.
 

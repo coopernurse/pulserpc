@@ -61,7 +61,7 @@ The PulseRPC code generation system consists of two main components:
   - `idl.{ext}` - IDL-specific type definitions (structs, enums) as data structures
   - `server.{ext}` - HTTP server with interface stubs and request handling
   - `client.{ext}` - Client classes with transport abstraction
-  - `idl.json` - JSON representation of the IDL (for `pulserpc-idl` RPC method)
+  - **IDL JSON embedded** - The IDL is embedded directly in `server.{ext}` for the `pulserpc-idl` RPC method
 
 ### Runtime Directory Structure
 
@@ -206,9 +206,8 @@ The `Generate()` method must:
 2. **Build type registries**: Create maps of structs, enums, interfaces for efficient lookup
 3. **Copy runtime files**: Use `runtime.CopyRuntimeFiles(lang, outputDir)` to copy embedded runtime files to output directory
 4. **Generate IDL-specific file**: Create `idl.{ext}` with type definitions
-5. **Generate server file**: Create `server.{ext}` with HTTP server and interface stubs
+5. **Generate server file**: Create `server.{ext}` with HTTP server, interface stubs, and **embedded IDL JSON** for `pulserpc-idl` RPC method
 6. **Generate client file**: Create `client.{ext}` with client classes and transport
-7. **Generate IDL JSON**: Create `idl.json` for `pulserpc-idl` RPC method
 
 ### Runtime File Copying
 
@@ -362,7 +361,7 @@ ALL_ENUMS = {
      - Handle validation errors
      - Handle internal errors
    - **Special Method**: `pulserpc-idl`
-     - Returns the IDL JSON document (read from `idl.json`)
+     - Returns the IDL JSON document (from embedded constant in server file)
      - Allows clients to introspect the IDL
 
 3. **Server Lifecycle**:
@@ -449,13 +448,20 @@ class BookServiceClient:
         # Return result
 ```
 
-### 4. IDL JSON File (`idl.json`)
+### 4. Embedded IDL JSON
 
-**Purpose**: JSON representation of the IDL for the `pulserpc-idl` RPC method
+**Purpose**: The IDL JSON is embedded directly in the server file as a constant for the `pulserpc-idl` RPC method
 
-**Format**: JSON-serialized `parser.IDL` structure
+**Format**: Language-appropriate string constant containing JSON-serialized `parser.IDL` structure
 
-**Usage**: Server reads this file when handling `pulserpc-idl` requests
+**Implementation Details**:
+- **Go**: Raw string literal (backticks) - no escaping needed
+- **C#:** Verbatim string `@"..."` - escape `"` as `""`
+- **Java**: Text block `"""..."""` - escape `"""` as `\"""\"`
+- **Python**: Triple-quoted string `'''...'''` - escape `'` as `\'` and `\` as `\\`
+- **TypeScript**: Template literal `` `...` `` - escape `` ` `` as `` \` ``, `$` as `\$`, and `\` as `\\`
+
+**Usage**: Server uses the embedded constant when handling `pulserpc-idl` requests
 
 ### Static vs Dynamic Type Generation
 
@@ -960,9 +966,8 @@ When implementing a new runtime, ensure:
 - [ ] New runtime added to `runtimeMap` in `pkg/runtime/embed.go`
 - [ ] Plugin uses `runtime.CopyRuntimeFiles()` to copy embedded runtime files
 - [ ] `idl.{ext}` generated with type definitions
-- [ ] `server.{ext}` generated with HTTP server
+- [ ] `server.{ext}` generated with HTTP server and **embedded IDL JSON**
 - [ ] `client.{ext}` generated with transport abstraction
-- [ ] `idl.json` generated for `pulserpc-idl` method
 - [ ] Runtime validation functions implemented
 - [ ] RPC error class implemented
 - [ ] Type helper functions implemented
@@ -1002,9 +1007,8 @@ pkg/runtime/runtimes/java/
 
 **Generated Files**:
 - `Idl.java` - Contains `ALL_STRUCTS` and `ALL_ENUMS` as static maps
-- `Server.java` - HTTP server using `HttpServer` or Servlet
+- `Server.java` - HTTP server using `HttpServer` or Servlet with **embedded IDL JSON**
 - `Client.java` - Client classes with `Transport` interface
-- `idl.json` - IDL JSON document
 
 **Server Integration**:
 - Could use `com.sun.net.httpserver.HttpServer` (standard library)

@@ -32,7 +32,8 @@ This creates:
 - `server.ts` - PulseRPC server framework
 - `client.ts` - HTTP client framework
 - `pulserpc/` - Runtime library
-- `idl.json` - IDL metadata
+
+The IDL is embedded directly in `server.ts` for the `pulserpc-idl` RPC method.
 
 ## 3. Implement the Server (10-15 min)
 

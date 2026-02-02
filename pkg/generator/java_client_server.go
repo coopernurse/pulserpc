@@ -180,8 +180,14 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		PrintFileCreated(nsIdlPath, fs)
 	}
 
-	// Register Server.java and Client.java in the base package
-	serverCodePkg := generateServerJava(idl, structMap, namespaceMap, basePackage, basePackage)
+	// Marshal IDL to JSON for embedding in server code
+	idlJSON, err := json.MarshalIndent(idl, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)
+	}
+
+	// Generate Server.java with embedded IDL
+	serverCodePkg := generateServerJava(idl, structMap, namespaceMap, basePackage, basePackage, string(idlJSON))
 	// Server and Client belong in the base package
 	basePackageDir := filepath.Join(outputDir, "src/main/java", strings.ReplaceAll(basePackage, ".", string(filepath.Separator)))
 	if err := os.MkdirAll(basePackageDir, 0755); err != nil {
@@ -200,21 +206,6 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		return fmt.Errorf("failed to write Client.java: %w", err)
 	}
 	PrintFileCreated(clientPath, fs)
-
-	// Write IDL JSON document for pulserpc-idl RPC method
-	jsonData, err := json.MarshalIndent(idl, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)
-	}
-	resourcesDir := filepath.Join(dirFlag.Value.String(), "src/main/resources")
-	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
-		return fmt.Errorf("failed to create resources directory: %w", err)
-	}
-	jsonPath := filepath.Join(resourcesDir, "idl.json")
-	if err := os.WriteFile(jsonPath, jsonData, 0644); err != nil {
-		return fmt.Errorf("failed to write idl.json: %w", err)
-	}
-	PrintFileCreated(jsonPath, fs)
 
 	// Check if generate-test-files flag is set
 	generateTestFilesFlag := fs.Lookup("generate-test-files")
@@ -869,7 +860,7 @@ func generateStructClassJava(sb *strings.Builder, structDef *parser.Struct, enum
 }
 
 // generateServerJava generates the Server.java file
-func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceMap map[string]*NamespaceTypes, basePackage string, packageDecl string) string {
+func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceMap map[string]*NamespaceTypes, basePackage string, packageDecl string, idlJson string) string {
 	_ = namespaceMap
 	var sb strings.Builder
 
@@ -903,6 +894,10 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	}
 
 	sb.WriteString("public class Server {\n")
+	sb.WriteString("    // Embedded IDL JSON for pulserpc-idl RPC method\n")
+	sb.WriteString("    private static final String IDL_JSON = ")
+	sb.WriteString(escapeJavaString(idlJson))
+	sb.WriteString(";\n\n")
 	sb.WriteString("    private final HttpServer server;\n")
 	sb.WriteString("    private final JsonParser jsonParser;\n")
 	sb.WriteString("    private final Map<String, Object> interfaceHandlers;\n\n")
@@ -993,21 +988,9 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("        Object id = request.get(\"id\");\n")
 	sb.WriteString("        Object params = request.get(\"params\");\n\n")
 	sb.WriteString("        if (\"pulserpc-idl\".equals(method)) {\n")
-	sb.WriteString("            // Return IDL definition - read from idl.json in resources\n")
+	sb.WriteString("            // Return IDL definition - use embedded constant\n")
 	sb.WriteString("            try {\n")
-	sb.WriteString("                InputStream is = Server.class.getResourceAsStream(\"/idl.json\");\n")
-	sb.WriteString("                if (is == null) {\n")
-	sb.WriteString("                    return Map.of(\n")
-	sb.WriteString("                        \"jsonrpc\", \"2.0\",\n")
-	sb.WriteString("                        \"error\", Map.of(\n")
-	sb.WriteString("                            \"code\", -32603,\n")
-	sb.WriteString("                            \"message\", \"Failed to load IDL: /idl.json not found in classpath\"\n")
-	sb.WriteString("                        ),\n")
-	sb.WriteString("                        \"id\", id\n")
-	sb.WriteString("                    );\n")
-	sb.WriteString("                }\n")
-	sb.WriteString("                String idlJson = new String(is.readAllBytes());\n")
-	sb.WriteString("                Object idlDoc = jsonParser.fromJson(idlJson, Object.class);\n")
+	sb.WriteString("                Object idlDoc = jsonParser.fromJson(IDL_JSON, Object.class);\n")
 	sb.WriteString("                return Map.of(\n")
 	sb.WriteString("                    \"jsonrpc\", \"2.0\",\n")
 	sb.WriteString("                    \"result\", idlDoc,\n")
@@ -1830,6 +1813,31 @@ func generatePomXml(jsonLib string) string {
 	sb.WriteString("    </build>\n")
 	sb.WriteString("</project>\n")
 
+	return sb.String()
+}
+
+// escapeJavaString escapes a string for use as a Java string literal
+// Escapes backslashes, double quotes, and newlines
+func escapeJavaString(s string) string {
+	var sb strings.Builder
+	sb.WriteString("\"") // Start of Java string
+	for _, r := range s {
+		switch r {
+		case '\\':
+			sb.WriteString("\\\\") // Escape backslashes
+		case '"':
+			sb.WriteString("\\\"") // Escape double quotes
+		case '\n':
+			sb.WriteString("\\n") // Escape newlines
+		case '\r':
+			sb.WriteString("\\r") // Escape carriage returns
+		case '\t':
+			sb.WriteString("\\t") // Escape tabs
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	sb.WriteString("\"") // End of Java string
 	return sb.String()
 }
 

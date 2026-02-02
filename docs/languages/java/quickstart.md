@@ -29,8 +29,9 @@ pulserpc -plugin java-client-server -base-package com.example.myapp checkout.pul
 
 This creates:
 - `src/main/java/com/example/myapp/` - Type definitions and Server/Client frameworks
-- `src/main/resources/idl.json` - IDL metadata
 - `src/main/java/com/bitmechanic/pulserpc/` - Runtime library
+
+The IDL is embedded directly in `Server.java` for the `pulserpc-idl` RPC method.
 
 Create a `pom.xml` in your project root:
 

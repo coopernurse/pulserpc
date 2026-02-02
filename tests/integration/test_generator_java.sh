@@ -97,7 +97,6 @@ REQUIRED_FILES=(
     "src/main/java/com/example/server/Client.java"
     "src/test/java/com/example/server/TestServer.java"
     "src/test/java/com/example/server/TestClient.java"
-    "src/main/resources/idl.json"
     "pom.xml"
     "src/main/java/com/bitmechanic/pulserpc/RPCError.java"
     "src/main/java/com/bitmechanic/pulserpc/Validation.java"
