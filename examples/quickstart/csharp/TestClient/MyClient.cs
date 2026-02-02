@@ -44,5 +44,16 @@ class Program
             PaymentMethod = PaymentMethod.credit_card
         });
         Console.WriteLine($"Order created: {response.OrderId}");
+
+        // Test error handling - try to get product that doesn't exist
+        try
+        {
+            await catalogClient.getProductAsync("nonexistent");
+            Console.WriteLine("Should have failed!");
+        }
+        catch (RPCError e)
+        {
+            Console.WriteLine($"Got expected error: {e.Code} - {e.Message}");
+        }
     }
 }

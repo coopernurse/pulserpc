@@ -1,4 +1,4 @@
-.PHONY: build build-linux test cover lint quality clean install-tools test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-java test-quickstart-ts test-quickstart-csharp
+.PHONY: build build-linux test cover lint quality clean install-tools test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker
 
 # Variables
 BINARY_NAME=pulserpc
@@ -210,4 +210,7 @@ test-quickstart-ts:
 
 test-quickstart-csharp:
 	@bash tests/integration/test_quickstart_csharp.sh
+
+test-quickstart-csharp-docker:
+	@USE_DOCKER=1 bash tests/integration/test_quickstart_csharp.sh
 

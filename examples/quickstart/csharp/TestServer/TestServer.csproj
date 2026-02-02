@@ -15,7 +15,7 @@
     <Compile Include="../Shared/Checkout.cs" />
     <Compile Include="../Shared/Contract.cs" />
     <Compile Include="../Shared/Server.cs" />
-    <Compile Include="../Shared/pulserpc/*.cs" />
+    <Compile Include="../Shared/PulseRPC/*.cs" />
   </ItemGroup>
 
 </Project>

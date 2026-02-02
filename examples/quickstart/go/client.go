@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"checkout-service/pkg/checkout"
+	"checkout-service/pkg/pulserpc"
 )
 
 func main() {
@@ -38,4 +39,28 @@ func main() {
 		PaymentMethod: checkout.PaymentMethodCreditCard,
 	})
 	fmt.Printf("✓ Order created: %s\n", response.OrderId)
+
+	// Test error case: empty cart
+	fmt.Println("\n=== Testing Error Case ===")
+	cart.ClearCart(result.CartId)
+	_, err := orders.CreateOrder(checkout.CreateOrderRequest{
+		CartId: result.CartId,
+		ShippingAddress: checkout.Address{
+			Street:  "123 Main St",
+			City:    "San Francisco",
+			State:   "CA",
+			ZipCode: "94105",
+			Country: "USA",
+		},
+		PaymentMethod: checkout.PaymentMethodCreditCard,
+	})
+	if err != nil {
+		if rpcErr, ok := err.(*pulserpc.RPCError); ok {
+			fmt.Printf("✓ Got expected error: %d - %s\n", rpcErr.Code, rpcErr.Message)
+		} else {
+			fmt.Printf("✗ Unexpected error type: %v\n", err)
+		}
+	} else {
+		fmt.Println("✗ Should have failed!")
+	}
 }

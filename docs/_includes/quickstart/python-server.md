@@ -1,5 +1,6 @@
 {% highlight python %}
 #!/usr/bin/env python3
+import os
 from server import PulseRPCServer, CatalogService, CartService, OrderService
 from pulserpc import RPCError
 import random
@@ -136,7 +137,8 @@ class OrderServiceImpl(OrderService):
 
 # Start server
 if __name__ == "__main__":
-    server = PulseRPCServer(host="0.0.0.0", port=8080)
+    port = int(os.environ.get("SERVER_PORT", "8080"))
+    server = PulseRPCServer(host="0.0.0.0", port=port)
     server.register("CatalogService", CatalogServiceImpl())
     server.register("CartService", CartServiceImpl())
     server.register("OrderService", OrderServiceImpl())

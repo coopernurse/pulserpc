@@ -1,10 +1,12 @@
 {% highlight python %}
 #!/usr/bin/env python3
+import os
 from client import HTTPTransport, CatalogServiceClient, CartServiceClient, OrderServiceClient
 from pulserpc import RPCError
 
 # Connect to server
-transport = HTTPTransport("http://localhost:8080")
+port = os.environ.get("SERVER_PORT", "8080")
+transport = HTTPTransport(f"http://localhost:{port}")
 catalog = CatalogServiceClient(transport)
 cart = CartServiceClient(transport)
 orders = OrderServiceClient(transport)

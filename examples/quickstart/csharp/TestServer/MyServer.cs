@@ -19,7 +19,10 @@ public class CatalogServiceImpl : ICatalogService
 
     public Product? getProduct(string productId)
     {
-        return Products.FirstOrDefault(p => p.ProductId == productId);
+        var product = Products.FirstOrDefault(p => p.ProductId == productId);
+        if (product == null)
+            throw new RPCError(-32602, "Product not found");
+        return product;
     }
 
 }

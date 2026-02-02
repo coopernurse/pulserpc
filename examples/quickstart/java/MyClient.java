@@ -41,5 +41,15 @@ public class MyClient {
 
         CheckoutResponse response = orders.createOrder(orderReq);
         System.out.println("✓ Order created: " + response.getOrderId());
+
+        // Test error case: empty cart
+        System.out.println("\n=== Testing Error Case ===");
+        cart.clearCart(result.getCartId());
+        try {
+            orders.createOrder(orderReq);
+            System.out.println("✗ Should have failed!");
+        } catch (RPCError e) {
+            System.out.println("✓ Got expected error: " + e.getCode() + " - " + e.getMessage());
+        }
     }
 }

@@ -12,8 +12,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-LANGUAGES=("go" "python" "java" "typescript" "csharp")
+LANGUAGES=("go" "python" "java" "ts" "csharp")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export USE_DOCKER=1
 FAILED_TESTS=()
 
 echo -e "${BLUE}╔═══════════════════════════════════════════════════════╗${NC}"

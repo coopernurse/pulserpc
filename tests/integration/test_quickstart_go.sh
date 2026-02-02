@@ -43,12 +43,21 @@ else
     exit 1
 fi
 
+# Check for Go
+if ! command -v go >/dev/null 2>&1; then
+    echo -e "${YELLOW}WARNING: go not found, skipping Go quickstart test${NC}"
+    echo -e "${YELLOW}Install Go to run this test: https://go.dev/dl/${NC}"
+    exit 0
+fi
+
 # 1. Generate code from shared checkout.pulse
 echo -e "${YELLOW}Generating code from checkout.pulse...${NC}"
 mkdir -p "$OUTPUT_DIR"
 cd "$OUTPUT_DIR"
-go mod init quickstart-test
-"$PULSERPC" -plugin go-client-server -dir pkg/checkout \
+go mod init checkout-service
+mkdir -p pkg/checkout
+# Use -go-module flag to explicitly specify module path for runtime imports
+"$PULSERPC" -plugin go-client-server -dir pkg/checkout -go-module checkout-service/pkg \
     "$QUICKSTART_DIR/checkout.pulse"
 
 # 2. Copy quickstart implementations
@@ -56,6 +65,12 @@ echo -e "${YELLOW}Copying quickstart implementations...${NC}"
 mkdir -p cmd/server cmd/client
 cp "$QUICKSTART_DIR/go/server.go" cmd/server/main.go
 cp "$QUICKSTART_DIR/go/client.go" cmd/client/main.go
+
+# Update server and client to use test port instead of default 8080
+sed -i.bak "s/8080/$SERVER_PORT/g" cmd/server/main.go
+rm -f cmd/server/main.go.bak
+sed -i.bak "s/8080/$SERVER_PORT/g" cmd/client/main.go
+rm -f cmd/client/main.go.bak
 
 # 3. Build and start server
 echo -e "${YELLOW}Starting server on port $SERVER_PORT...${NC}"

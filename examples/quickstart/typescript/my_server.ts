@@ -108,7 +108,8 @@ class OrderServiceImpl extends OrderService {
   }
 }
 
-const server = new PulseRPCServer('0.0.0.0', 8080);
+const port = parseInt(process.env.SERVER_PORT || '8080', 10);
+const server = new PulseRPCServer('0.0.0.0', port);
 server.register('CatalogService', new CatalogServiceImpl());
 server.register('CartService', new CartServiceImpl());
 server.register('OrderService', new OrderServiceImpl());

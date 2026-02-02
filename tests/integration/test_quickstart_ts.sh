@@ -45,14 +45,16 @@ fi
 
 # Check for Node.js
 if ! command -v node >/dev/null 2>&1; then
-    echo -e "${RED}ERROR: node not found${NC}"
-    exit 1
+    echo -e "${YELLOW}WARNING: node not found, skipping TypeScript quickstart test${NC}"
+    echo -e "${YELLOW}Install Node.js to run this test: https://nodejs.org/${NC}"
+    exit 0
 fi
 
 # Check for npm
 if ! command -v npm >/dev/null 2>&1; then
-    echo -e "${RED}ERROR: npm not found${NC}"
-    exit 1
+    echo -e "${YELLOW}WARNING: npm not found, skipping TypeScript quickstart test${NC}"
+    echo -e "${YELLOW}Install npm to run this test: https://nodejs.org/${NC}"
+    exit 0
 fi
 
 # Check for tsc
@@ -87,7 +89,7 @@ npx tsc >/dev/null 2>&1
 
 # 4. Start server
 echo -e "${YELLOW}Starting server on port $SERVER_PORT...${NC}"
-node dist/my_server.js > server.log 2>&1 &
+SERVER_PORT=$SERVER_PORT node dist/my_server.js > server.log 2>&1 &
 SERVER_PID=$!
 
 # 5. Wait for server ready
@@ -111,7 +113,7 @@ fi
 
 # 6. Run client and verify output
 echo -e "${YELLOW}Running client...${NC}"
-CLIENT_OUTPUT=$(node dist/my_client.js 2>&1)
+CLIENT_OUTPUT=$(SERVER_PORT=$SERVER_PORT node dist/my_client.js 2>&1)
 
 # Verify expected outputs
 echo "$CLIENT_OUTPUT" | grep -q "Products ===" || {
