@@ -24,6 +24,7 @@ func main() {
 	var uiMode = flag.Bool("ui", false, "Start the embedded web UI server")
 	var uiPort = flag.Int("ui-port", 8080, "Port for the web UI server (default: 8080)")
 	_ = flag.String("dir", "", "Output directory for generated code") // Available to plugins via FlagSet
+	_ = flag.Bool("silent", false, "Suppress file generation output")
 	_ = flag.Bool("generate-test-files", false, "Generate test files (test_server.*, test_client.*)")
 
 	// Register flags for all plugins

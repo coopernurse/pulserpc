@@ -111,14 +111,16 @@ func GetRuntimeFiles(lang string) (map[string][]byte, error) {
 // CopyRuntimeFiles copies all runtime files for the specified language to the output directory
 // The files are copied to outputDir/{runtimePackageName}/ where runtimePackageName is typically
 // "pulserpc" for most languages, "PulseRPC" for C#, "com/bitmechanic/pulserpc" for Java
-func CopyRuntimeFiles(lang string, outputDir string) error {
-	return CopyRuntimeFilesToPackage(lang, outputDir, getRuntimePackageName(lang))
+// If silent is true, no file paths are printed
+func CopyRuntimeFiles(lang string, outputDir string, silent bool) error {
+	return CopyRuntimeFilesToPackage(lang, outputDir, getRuntimePackageName(lang), silent)
 }
 
 // CopyRuntimeFilesToPackage copies all runtime files for the specified language to the output directory
 // using the specified package name (relative to outputDir).
 // If packageName is empty, files are copied directly into outputDir.
-func CopyRuntimeFilesToPackage(lang string, outputDir string, packageName string) error {
+// If silent is true, no file paths are printed
+func CopyRuntimeFilesToPackage(lang string, outputDir string, packageName string, silent bool) error {
 	files, err := GetRuntimeFiles(lang)
 	if err != nil {
 		return err
@@ -138,6 +140,10 @@ func CopyRuntimeFilesToPackage(lang string, outputDir string, packageName string
 		dstPath := filepath.Join(runtimeDir, filename)
 		if err := os.WriteFile(dstPath, data, 0644); err != nil {
 			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)
+		}
+		// Print file path unless silent mode
+		if !silent {
+			fmt.Println(dstPath)
 		}
 	}
 

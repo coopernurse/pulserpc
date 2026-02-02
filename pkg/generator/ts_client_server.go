@@ -38,6 +38,12 @@ func (p *TSClientServer) RegisterFlags(fs *flag.FlagSet) {
 
 // Generate generates TypeScript HTTP server and client code from the parsed IDL
 func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
+	// Check silent flag
+	silentFlag := fs.Lookup("silent")
+	isSilent := func() bool {
+		return silentFlag != nil && silentFlag.Value.String() == "true"
+	}
+
 	// Access the -dir flag value
 	dirFlag := fs.Lookup("dir")
 	outputDir := ""
@@ -75,7 +81,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 
 	// Copy runtime library files
-	if err := p.copyRuntimeFiles(outputDir); err != nil {
+	if err := p.copyRuntimeFiles(outputDir, isSilent()); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
@@ -92,6 +98,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(namespacePath, []byte(namespaceCode), 0644); err != nil {
 			return fmt.Errorf("failed to write %s.ts: %w", namespace, err)
 		}
+		PrintFileCreated(namespacePath, fs)
 	}
 
 	// Calculate relative path from outputDir to baseDir for imports
@@ -113,6 +120,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
 		return fmt.Errorf("failed to write server.ts: %w", err)
 	}
+	PrintFileCreated(serverPath, fs)
 
 	// Generate client.ts
 	clientCode := generateClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, relPathToBase)
@@ -120,6 +128,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
 		return fmt.Errorf("failed to write client.ts: %w", err)
 	}
+	PrintFileCreated(clientPath, fs)
 
 	// Write IDL JSON document for pulserpc-idl RPC method
 	jsonData, err := json.MarshalIndent(idl, "", "  ")
@@ -130,6 +139,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(jsonPath, jsonData, 0644); err != nil {
 		return fmt.Errorf("failed to write idl.json: %w", err)
 	}
+	PrintFileCreated(jsonPath, fs)
 
 	// Check if generate-test-files flag is set
 	generateTestFilesFlag := fs.Lookup("generate-test-files")
@@ -143,6 +153,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_server.ts: %w", err)
 		}
+		PrintFileCreated(testServerPath, fs)
 
 		// Generate test_client.ts
 		testClientCode := generateTestClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, relPathToBase)
@@ -150,6 +161,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_client.ts: %w", err)
 		}
+		PrintFileCreated(testClientPath, fs)
 	}
 
 	return nil
@@ -157,8 +169,8 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 // copyRuntimeFiles copies the TypeScript runtime library files to the output directory
 // Uses embedded runtime files from the binary
-func (p *TSClientServer) copyRuntimeFiles(outputDir string) error {
-	return runtime.CopyRuntimeFiles("ts", outputDir)
+func (p *TSClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
+	return runtime.CopyRuntimeFiles("ts", outputDir, silent)
 }
 
 // generateNamespaceTs generates a TypeScript file for a single namespace

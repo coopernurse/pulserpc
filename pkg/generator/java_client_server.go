@@ -40,6 +40,12 @@ func (p *JavaClientServer) RegisterFlags(fs *flag.FlagSet) {
 
 // Generate generates Java HTTP server and client code from the parsed IDL
 func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
+	// Check silent flag
+	silentFlag := fs.Lookup("silent")
+	isSilent := func() bool {
+		return silentFlag != nil && silentFlag.Value.String() == "true"
+	}
+
 	// Access the -dir flag value
 	dirFlag := fs.Lookup("dir")
 	outputDir := ""
@@ -85,7 +91,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 
 	// Copy runtime library files with selective copying based on json-lib
-	if err := p.copyRuntimeFiles(filepath.Join(outputDir, "src/main/java"), jsonLib); err != nil {
+	if err := p.copyRuntimeFiles(filepath.Join(outputDir, "src/main/java"), jsonLib, isSilent()); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
@@ -117,6 +123,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			if err := os.WriteFile(enumPath, []byte(enumCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s: %w", enumPath, err)
 			}
+			PrintFileCreated(enumPath, fs)
 		}
 
 		// Generate struct files (need to handle inheritance)
@@ -130,6 +137,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			if err := os.WriteFile(structPath, []byte(structCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s: %w", structPath, err)
 			}
+			PrintFileCreated(structPath, fs)
 		}
 
 		// Generate interface files
@@ -143,6 +151,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			if err := os.WriteFile(interfacePath, []byte(interfaceCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s: %w", interfacePath, err)
 			}
+			PrintFileCreated(interfacePath, fs)
 		}
 
 		// Generate client files for each interface
@@ -156,6 +165,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s: %w", clientPath, err)
 			}
+			PrintFileCreated(clientPath, fs)
 		}
 
 		// Generate namespace aggregate (IDL maps + types) into a single file
@@ -167,6 +177,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(nsIdlPath, []byte(nsIdlCode), 0644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", nsIdlPath, err)
 		}
+		PrintFileCreated(nsIdlPath, fs)
 	}
 
 	// Register Server.java and Client.java in the base package
@@ -180,6 +191,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(serverPath, []byte(serverCodePkg), 0644); err != nil {
 		return fmt.Errorf("failed to write Server.java: %w", err)
 	}
+	PrintFileCreated(serverPath, fs)
 
 	// Generate Client.java
 	clientCodePkg := generateClientJava(idl, namespaceMap, basePackage, basePackage)
@@ -187,6 +199,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(clientPath, []byte(clientCodePkg), 0644); err != nil {
 		return fmt.Errorf("failed to write Client.java: %w", err)
 	}
+	PrintFileCreated(clientPath, fs)
 
 	// Write IDL JSON document for pulserpc-idl RPC method
 	jsonData, err := json.MarshalIndent(idl, "", "  ")
@@ -201,6 +214,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(jsonPath, jsonData, 0644); err != nil {
 		return fmt.Errorf("failed to write idl.json: %w", err)
 	}
+	PrintFileCreated(jsonPath, fs)
 
 	// Check if generate-test-files flag is set
 	generateTestFilesFlag := fs.Lookup("generate-test-files")
@@ -224,6 +238,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			if err := os.WriteFile(implPath, []byte(implCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s: %w", implPath, err)
 			}
+			PrintFileCreated(implPath, fs)
 		}
 
 		// Generate TestServer.java in base package
@@ -236,6 +251,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
 			return fmt.Errorf("failed to write TestServer.java: %w", err)
 		}
+		PrintFileCreated(testServerPath, fs)
 
 		// Generate TestClient.java in base package
 		testClientCode := generateTestClientJava(idl, structMap, enumMap, jsonLib, basePackage, namespaceMap)
@@ -243,6 +259,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
 			return fmt.Errorf("failed to write TestClient.java: %w", err)
 		}
+		PrintFileCreated(testClientPath, fs)
 
 		// Generate pom.xml
 		pomCode := generatePomXml(jsonLib)
@@ -250,6 +267,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(pomPath, []byte(pomCode), 0644); err != nil {
 			return fmt.Errorf("failed to write pom.xml: %w", err)
 		}
+		PrintFileCreated(pomPath, fs)
 	}
 
 	return nil
@@ -257,9 +275,9 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 // copyRuntimeFiles copies the Java runtime library files to the output directory
 // Selectively copies files based on json-lib flag
-func (p *JavaClientServer) copyRuntimeFiles(outputDir string, jsonLib string) error {
+func (p *JavaClientServer) copyRuntimeFiles(outputDir string, jsonLib string, silent bool) error {
 	// Delegate to centralized runtime copying
-	if err := runtime.CopyRuntimeFiles("java", outputDir); err != nil {
+	if err := runtime.CopyRuntimeFiles("java", outputDir, silent); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 

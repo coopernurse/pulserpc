@@ -37,6 +37,12 @@ func (p *PythonClientServer) RegisterFlags(fs *flag.FlagSet) {
 
 // Generate generates Python HTTP server and client code from the parsed IDL
 func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
+	// Check silent flag
+	silentFlag := fs.Lookup("silent")
+	isSilent := func() bool {
+		return silentFlag != nil && silentFlag.Value.String() == "true"
+	}
+
 	// Access the -dir flag value
 	dirFlag := fs.Lookup("dir")
 	outputDir := ""
@@ -67,7 +73,7 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 
 	// Copy runtime library files
-	if err := p.copyRuntimeFiles(outputDir); err != nil {
+	if err := p.copyRuntimeFiles(outputDir, isSilent()); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
@@ -84,6 +90,7 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(namespacePath, []byte(namespaceCode), 0644); err != nil {
 			return fmt.Errorf("failed to write %s.py: %w", namespace, err)
 		}
+		PrintFileCreated(namespacePath, fs)
 	}
 
 	// Generate server.py
@@ -92,6 +99,7 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
 		return fmt.Errorf("failed to write server.py: %w", err)
 	}
+	PrintFileCreated(serverPath, fs)
 
 	// Generate client.py
 	clientCode := generateClientPy(idl, structMap, enumMap, interfaceMap, namespaceMap, baseDir, outputDir)
@@ -99,6 +107,7 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
 		return fmt.Errorf("failed to write client.py: %w", err)
 	}
+	PrintFileCreated(clientPath, fs)
 
 	// Write IDL JSON document for pulserpc-idl RPC method
 	jsonData, err := json.MarshalIndent(idl, "", "  ")
@@ -109,6 +118,7 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(jsonPath, jsonData, 0644); err != nil {
 		return fmt.Errorf("failed to write idl.json: %w", err)
 	}
+	PrintFileCreated(jsonPath, fs)
 
 	// Check if generate-test-files flag is set
 	generateTestFilesFlag := fs.Lookup("generate-test-files")
@@ -122,6 +132,7 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_server.py: %w", err)
 		}
+		PrintFileCreated(testServerPath, fs)
 
 		// Generate test_client.py
 		testClientCode := generateTestClientPy(idl, structMap, enumMap, interfaceMap, namespaceMap, baseDir, outputDir)
@@ -129,6 +140,7 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_client.py: %w", err)
 		}
+		PrintFileCreated(testClientPath, fs)
 	}
 
 	return nil
@@ -136,8 +148,8 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 // copyRuntimeFiles copies the Python runtime library files to the output directory
 // Uses embedded runtime files from the binary
-func (p *PythonClientServer) copyRuntimeFiles(outputDir string) error {
-	return runtime.CopyRuntimeFiles("python", outputDir)
+func (p *PythonClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
+	return runtime.CopyRuntimeFiles("python", outputDir, silent)
 }
 
 // generateNamespacePy generates a Python file for a single namespace

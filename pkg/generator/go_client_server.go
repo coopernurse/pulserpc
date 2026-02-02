@@ -104,6 +104,12 @@ func (p *GoClientServer) detectRuntimeImportPath(outputDir string, fs *flag.Flag
 
 // Generate generates Go HTTP server and client code from the parsed IDL
 func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
+	// Check silent flag
+	silentFlag := fs.Lookup("silent")
+	isSilent := func() bool {
+		return silentFlag != nil && silentFlag.Value.String() == "true"
+	}
+
 	// Access the -dir flag value
 	dirFlag := fs.Lookup("dir")
 	outputDir := ""
@@ -155,9 +161,10 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(allStructsPath, []byte(allStructsContent), 0644); err != nil {
 		return fmt.Errorf("failed to write all_types.go: %w", err)
 	}
+	PrintFileCreated(allStructsPath, fs)
 
 	// Copy runtime library files directly into outputDir
-	if err := p.copyRuntimeFiles(outputDir); err != nil {
+	if err := p.copyRuntimeFiles(outputDir, isSilent()); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
@@ -171,6 +178,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(namespacePath, []byte(namespaceCode), 0644); err != nil {
 			return fmt.Errorf("failed to write %s.go: %w", namespace, err)
 		}
+		PrintFileCreated(namespacePath, fs)
 	}
 
 	// Generate server.go
@@ -179,6 +187,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
 		return fmt.Errorf("failed to write server.go: %w", err)
 	}
+	PrintFileCreated(serverPath, fs)
 
 	// Generate client.go
 	clientCode := generateClientGo(idl, structMap, enumMap, primaryNs, namespaceMap, runtimeImportPath)
@@ -186,6 +195,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
 		return fmt.Errorf("failed to write client.go: %w", err)
 	}
+	PrintFileCreated(clientPath, fs)
 
 	// Check if generate-test-files flag is set
 	generateTestFilesFlag := fs.Lookup("generate-test-files")
@@ -203,6 +213,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_server/main.go: %w", err)
 		}
+		PrintFileCreated(testServerPath, fs)
 
 		// Generate cmd/test_client/main.go
 		testClientCode := generateTestClientGo(idl, structMap, enumMap, packageImportPath)
@@ -214,6 +225,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_client/main.go: %w", err)
 		}
+		PrintFileCreated(testClientPath, fs)
 	}
 
 	return nil
@@ -307,7 +319,7 @@ func calculateImportPath(moduleRoot, modulePath, outputDir string) (string, erro
 // copyRuntimeFiles copies the Go runtime library files to a shared pulserpc directory
 // Uses embedded runtime files from the binary
 // The runtime is placed in a sibling directory ../pulserpc/ to be shared across packages
-func (p *GoClientServer) copyRuntimeFiles(outputDir string) error {
+func (p *GoClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
 	files, err := runtime.GetRuntimeFiles("go")
 	if err != nil {
 		return err
@@ -358,6 +370,10 @@ copyFiles:
 		dstPath := filepath.Join(runtimeDir, filename)
 		if err := os.WriteFile(dstPath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)
+		}
+		// Print file path unless silent mode
+		if !silent {
+			fmt.Println(dstPath)
 		}
 	}
 

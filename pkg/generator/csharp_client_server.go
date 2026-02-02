@@ -37,6 +37,12 @@ func (p *CSharpClientServer) RegisterFlags(fs *flag.FlagSet) {
 
 // Generate generates C# HTTP server and client code from the parsed IDL
 func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
+	// Check silent flag
+	silentFlag := fs.Lookup("silent")
+	isSilent := func() bool {
+		return silentFlag != nil && silentFlag.Value.String() == "true"
+	}
+
 	// Access the -dir flag value
 	dirFlag := fs.Lookup("dir")
 	outputDir := ""
@@ -67,7 +73,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 
 	// Copy runtime library files
-	if err := p.copyRuntimeFiles(outputDir); err != nil {
+	if err := p.copyRuntimeFiles(outputDir, isSilent()); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
@@ -89,6 +95,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(contractPath, []byte(contractCode), 0644); err != nil {
 		return fmt.Errorf("failed to write Contract.cs: %w", err)
 	}
+	PrintFileCreated(contractPath, fs)
 
 	// Generate one file per namespace
 	for namespace, types := range namespaceMap {
@@ -100,6 +107,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(namespacePath, []byte(namespaceCode), 0644); err != nil {
 			return fmt.Errorf("failed to write %s.cs: %w", namespace, err)
 		}
+		PrintFileCreated(namespacePath, fs)
 	}
 
 	// Marshal IDL JSON for embedding in Server.cs
@@ -114,6 +122,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
 		return fmt.Errorf("failed to write Server.cs: %w", err)
 	}
+	PrintFileCreated(serverPath, fs)
 
 	// Generate Client.cs
 	clientCode := generateClientCs(idl, structMap, enumMap, namespaceMap)
@@ -121,6 +130,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
 		return fmt.Errorf("failed to write Client.cs: %w", err)
 	}
+	PrintFileCreated(clientPath, fs)
 
 	// Check if generate-test-files flag is set
 	generateTestFilesFlag := fs.Lookup("generate-test-files")
@@ -132,6 +142,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
 			return fmt.Errorf("failed to write TestServer.cs: %w", err)
 		}
+		PrintFileCreated(testServerPath, fs)
 
 		// Generate TestClient.cs
 		testClientCode := generateTestClientCs(idl, namespaces, structMap, enumMap)
@@ -139,6 +150,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
 			return fmt.Errorf("failed to write TestClient.cs: %w", err)
 		}
+		PrintFileCreated(testClientPath, fs)
 
 		// Generate TestServer.csproj
 		testServerProjCode := generateTestServerCsproj()
@@ -146,6 +158,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testServerProjPath, []byte(testServerProjCode), 0644); err != nil {
 			return fmt.Errorf("failed to write TestServer.csproj: %w", err)
 		}
+		PrintFileCreated(testServerProjPath, fs)
 
 		// Generate TestClient.csproj
 		testClientProjCode := generateTestClientCsproj()
@@ -153,6 +166,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := os.WriteFile(testClientProjPath, []byte(testClientProjCode), 0644); err != nil {
 			return fmt.Errorf("failed to write TestClient.csproj: %w", err)
 		}
+		PrintFileCreated(testClientProjPath, fs)
 	}
 
 	return nil
@@ -160,8 +174,8 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 // copyRuntimeFiles copies the C# runtime library files to the output directory
 // Uses embedded runtime files from the binary
-func (p *CSharpClientServer) copyRuntimeFiles(outputDir string) error {
-	return runtime.CopyRuntimeFiles("csharp", outputDir)
+func (p *CSharpClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
+	return runtime.CopyRuntimeFiles("csharp", outputDir, silent)
 }
 
 // generateNamespaceCs generates a C# file for a single namespace
