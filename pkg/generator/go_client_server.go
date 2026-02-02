@@ -37,6 +37,10 @@ func (p *GoClientServer) RegisterFlags(fs *flag.FlagSet) {
 	if fs.Lookup("go-module") == nil {
 		fs.String("go-module", "", "Override Go module path for pulserpc imports (auto-detected from go.mod)")
 	}
+	// Register inline-runtime flag for playground mode
+	if fs.Lookup("inline-runtime") == nil {
+		fs.Bool("inline-runtime", false, "Place runtime files inline with generated code (for playground/testing)")
+	}
 }
 
 // detectRuntimeImportPath determines the fully qualified import path for the pulserpc runtime
@@ -163,8 +167,9 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 	PrintFileCreated(allStructsPath, fs)
 
-	// Copy runtime library files directly into outputDir
-	if err := p.copyRuntimeFiles(outputDir, isSilent()); err != nil {
+	// Copy runtime library files
+	inlineRuntime := fs.Lookup("inline-runtime") != nil && fs.Lookup("inline-runtime").Value.String() == "true"
+	if err := p.copyRuntimeFiles(outputDir, isSilent(), inlineRuntime); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
@@ -319,17 +324,19 @@ func calculateImportPath(moduleRoot, modulePath, outputDir string) (string, erro
 // copyRuntimeFiles copies the Go runtime library files to a shared pulserpc directory
 // Uses embedded runtime files from the binary
 // The runtime is placed in a sibling directory ../pulserpc/ to be shared across packages
-func (p *GoClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
+// If inlineRuntime is true, the runtime is placed in outputDir/pulserpc instead (for playground mode)
+func (p *GoClientServer) copyRuntimeFiles(outputDir string, silent bool, inlineRuntime bool) error {
 	files, err := runtime.GetRuntimeFiles("go")
 	if err != nil {
 		return err
 	}
 
 	// Determine where to place the runtime directory
-	// If outputDir is "." or essentially the current directory, place runtime in "./pulserpc"
-	// Otherwise, place it as a sibling: filepath.Dir(outputDir)/pulserpc
 	var runtimeDir string
-	if outputDir == "." || outputDir == "" {
+	if inlineRuntime {
+		// Playground mode: place runtime inline with generated code
+		runtimeDir = filepath.Join(outputDir, "pulserpc")
+	} else if outputDir == "." || outputDir == "" {
 		runtimeDir = "pulserpc"
 	} else {
 		// Check if outputDir is at the root of a go module

@@ -24,9 +24,9 @@ const (
 
 // Manager manages generation sessions and temp file cleanup
 type Manager struct {
-	baseDir string        // temp base dir for all playground sessions
-	maxAge  time.Duration // max session age before cleanup
-	mu      sync.RWMutex
+	baseDir  string        // temp base dir for all playground sessions
+	maxAge   time.Duration // max session age before cleanup
+	mu       sync.RWMutex
 	sessions map[string]*Session // keyed by ULID
 
 	plugins map[string]generator.Plugin // available generator plugins
@@ -34,12 +34,12 @@ type Manager struct {
 
 // Session represents a single generation run
 type Session struct {
-	ID      string    // ULID identifier
+	ID      string // ULID identifier
 	Created time.Time
-	Runtime string    // e.g., "go-client-server"
-	IDL     string    // original IDL text
-	Files   []string  // relative file paths
-	Dir     string    // absolute path to temp dir
+	Runtime string   // e.g., "go-client-server"
+	IDL     string   // original IDL text
+	Files   []string // relative file paths
+	Dir     string   // absolute path to temp dir
 }
 
 // NewManager creates a new playground manager
@@ -56,10 +56,10 @@ func NewManager(baseDir string, plugins []generator.Plugin) (*Manager, error) {
 	}
 
 	m := &Manager{
-		baseDir: baseDir,
-		maxAge:  DefaultMaxAge,
+		baseDir:  baseDir,
+		maxAge:   DefaultMaxAge,
 		sessions: make(map[string]*Session),
-		plugins: pluginMap,
+		plugins:  pluginMap,
 	}
 
 	// Start cleanup goroutine
@@ -109,6 +109,19 @@ func (m *Manager) Generate(idl string, runtime string) (*Session, error) {
 
 	// Call the plugin's RegisterFlags
 	plugin.RegisterFlags(fs)
+
+	// Provide a default Go module for playground generation to avoid go.mod dependency
+	if runtime == "go-client-server" {
+		if goModuleFlag := fs.Lookup("go-module"); goModuleFlag != nil {
+			if goModuleFlag.Value.String() == "" {
+				goModuleFlag.Value.Set("example.com/pulserpc-playground")
+			}
+		}
+		// Set inline-runtime to true for playground mode
+		if inlineRuntimeFlag := fs.Lookup("inline-runtime"); inlineRuntimeFlag != nil {
+			inlineRuntimeFlag.Value.Set("true")
+		}
+	}
 
 	// Set default values for Java-specific flags if they exist and are empty
 	if pkgFlag := fs.Lookup("base-package"); pkgFlag != nil {
