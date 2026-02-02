@@ -54,7 +54,7 @@ The binary will be created at `./target/pulserpc`.
 pulserpc -h
 ```
 
-You should see usage output that documents the supported command line flags.
+You should see usage output that documents the supported command line flags. For a complete reference of all flags and usage examples, see the [CLI Reference](cli-reference.html).
 
 ## Troubleshooting
 

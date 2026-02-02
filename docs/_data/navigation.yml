@@ -5,6 +5,8 @@
   children:
     - title: "Installation"
       url: /get-started/installation
+    - title: "CLI Reference"
+      url: /get-started/cli-reference
     - title: "Quickstart"
       url: /get-started/quickstart-overview
 
