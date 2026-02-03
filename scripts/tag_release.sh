@@ -71,7 +71,12 @@ echo -e "${GREEN}✓${NC} Integration tests passed"
 # Update version in cmd/pulse/version.go
 echo ""
 echo -e "${YELLOW}Updating version in cmd/pulse/version.go...${NC}"
-sed -i "s/const Version = \".*\"/const Version = \"$VERSION\"/" cmd/pulse/version.go
+# Detect if we're on macOS (BSD sed) or Linux (GNU sed)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' "s/const Version = \".*\"/const Version = \"$VERSION\"/" cmd/pulse/version.go
+else
+    sed -i "s/const Version = \".*\"/const Version = \"$VERSION\"/" cmd/pulse/version.go
+fi
 echo -e "${GREEN}✓${NC} Version updated to $VERSION"
 
 # Commit the version change
