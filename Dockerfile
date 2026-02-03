@@ -18,7 +18,7 @@ RUN cd pkg/webui && npm ci && npm run build
 
 # Build Go binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
-    -o /pulserpc ./cmd/pulse/pulse.go
+    -o /pulserpc ./cmd/pulse
 
 # Final stage - scratch image (empty, no OS)
 FROM scratch
