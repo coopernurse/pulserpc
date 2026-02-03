@@ -26,6 +26,7 @@ func main() {
 	_ = flag.String("dir", "", "Output directory for generated code") // Available to plugins via FlagSet
 	_ = flag.Bool("silent", false, "Suppress file generation output")
 	_ = flag.Bool("generate-test-files", false, "Generate test files (test_server.*, test_client.*)")
+	var showVersion = flag.Bool("version", false, "Display version information")
 
 	// Register flags for all plugins
 	allPlugins := getAllPlugins()
@@ -34,6 +35,12 @@ func main() {
 	}
 
 	flag.Parse()
+
+	// Handle version flag - must be checked before other operations
+	if *showVersion {
+		fmt.Printf("pulserpc %s\n", Version)
+		os.Exit(0)
+	}
 
 	// Handle UI server mode - must be checked early
 	if *uiMode {

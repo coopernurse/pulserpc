@@ -18,11 +18,11 @@ build-webui:
 
 # Build the binary
 build: build-webui
-	go build -o $(BINARY_PATH) cmd/pulse/pulse.go
+	go build -o $(BINARY_PATH) ./cmd/pulse
 	@echo "Built successfully at $(BINARY_PATH)"
 	@echo "Building Linux binary for Docker containers..."
 	@mkdir -p $(TARGET_DIR)
-	GOOS=linux GOARCH=amd64 go build -o $(BINARY_PATH_LINUX) cmd/pulse/pulse.go
+	GOOS=linux GOARCH=amd64 go build -o $(BINARY_PATH_LINUX) ./cmd/pulse
 	@echo "Built Linux binary successfully at $(BINARY_PATH_LINUX)"
 
 # Build Linux binary for Docker containers (cross-compile) - only if it doesn't exist
@@ -33,7 +33,7 @@ build-linux:
 		$(MAKE) build-webui; \
 		echo "Building Linux binary for Docker containers..."; \
 		mkdir -p $(TARGET_DIR); \
-		GOOS=linux GOARCH=amd64 go build -o $(BINARY_PATH_LINUX) cmd/pulse/pulse.go; \
+		GOOS=linux GOARCH=amd64 go build -o $(BINARY_PATH_LINUX) ./cmd/pulse; \
 		echo "Built Linux binary successfully at $(BINARY_PATH_LINUX)"; \
 	fi
 
