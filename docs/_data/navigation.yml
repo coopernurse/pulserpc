@@ -9,6 +9,8 @@
       url: /get-started/cli-reference
     - title: "Quickstart"
       url: /get-started/quickstart-overview
+    - title: "Editor Integrations"
+      url: /get-started/editor-integrations
 
 - title: "IDL Guide"
   children:
