@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/coopernurse/pulserpc/pkg/generator"
+	"github.com/coopernurse/pulserpc/pkg/openapi"
 	"github.com/coopernurse/pulserpc/pkg/parser"
 	"github.com/coopernurse/pulserpc/pkg/webui"
 )
@@ -27,6 +28,12 @@ func main() {
 	_ = flag.Bool("silent", false, "Suppress file generation output")
 	_ = flag.Bool("generate-test-files", false, "Generate test files (test_server.*, test_client.*)")
 	var showVersion = flag.Bool("version", false, "Display version information")
+
+	// OpenAPI translation flags
+	var openapiToPulse = flag.String("openapi-to-pulse", "", "Convert OpenAPI spec to Pulse IDL (input: .yaml or .json)")
+	var pulseToOpenapi = flag.String("pulse-to-openapi", "", "Convert Pulse IDL to OpenAPI spec (input: .pulse file)")
+	var outputDir = flag.String("output-dir", "", "Output directory for generated files (default: ./generated)")
+	var openapiVersion = flag.String("openapi-version", "3.1", "Target OpenAPI version for Pulse→OpenAPI (3.0 or 3.1, default: 3.1)")
 
 	// Register flags for all plugins
 	allPlugins := getAllPlugins()
@@ -49,6 +56,22 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: failed to start web UI server: %v\n", err)
 			os.Exit(1)
 		}
+		return
+	}
+
+	// Handle OpenAPI translation modes
+	if *openapiToPulse != "" && *pulseToOpenapi != "" {
+		fmt.Fprintf(os.Stderr, "error: -openapi-to-pulse and -pulse-to-openapi cannot be used together\n")
+		os.Exit(1)
+	}
+
+	if *openapiToPulse != "" {
+		handleOpenAPIToPulse(*openapiToPulse, *outputDir)
+		return
+	}
+
+	if *pulseToOpenapi != "" {
+		handlePulseToOpenAPI(*pulseToOpenapi, *outputDir, *openapiVersion)
 		return
 	}
 
@@ -412,4 +435,70 @@ func handlePluginGeneration(pluginName string, idl *parser.IDL) {
 		fmt.Fprintf(os.Stderr, "error: plugin %q failed: %v\n", pluginName, err)
 		os.Exit(1)
 	}
+}
+
+// handleOpenAPIToPulse handles conversion from OpenAPI spec to Pulse IDL.
+func handleOpenAPIToPulse(inputFile, outputDir string) {
+	// Check if input file exists
+	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "error: file does not exist: %s\n", inputFile)
+		os.Exit(1)
+	}
+
+	// Set default output directory if not specified
+	if outputDir == "" {
+		outputDir = "./generated"
+	}
+
+	// Create output directory if it doesn't exist
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to create output directory %s: %v\n", outputDir, err)
+		os.Exit(1)
+	}
+
+	// Generate Pulse IDL from OpenAPI spec
+	generator := openapi.NewToPulseGenerator()
+	if err := generator.GenerateToFile(inputFile, outputDir); err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to generate Pulse IDL: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Generated Pulse IDL from %s\n", inputFile)
+	fmt.Printf("Output directory: %s\n", outputDir)
+}
+
+// handlePulseToOpenAPI handles conversion from Pulse IDL to OpenAPI spec.
+func handlePulseToOpenAPI(inputFile, outputDir, openAPIVersion string) {
+	// Check if input file exists
+	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "error: file does not exist: %s\n", inputFile)
+		os.Exit(1)
+	}
+
+	// Set default output directory if not specified
+	if outputDir == "" {
+		outputDir = "./generated"
+	}
+
+	// Create output directory if it doesn't exist
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to create output directory %s: %v\n", outputDir, err)
+		os.Exit(1)
+	}
+
+	// Validate OpenAPI version
+	if openAPIVersion != "3.0" && openAPIVersion != "3.1" {
+		fmt.Fprintf(os.Stderr, "error: invalid OpenAPI version %q (must be 3.0 or 3.1)\n", openAPIVersion)
+		os.Exit(1)
+	}
+
+	// Generate OpenAPI spec from Pulse IDL
+	generator := openapi.NewFromPulseGenerator(openAPIVersion)
+	if err := generator.GenerateToFile(inputFile, outputDir); err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to generate OpenAPI spec: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Generated OpenAPI %s spec from %s\n", openAPIVersion, inputFile)
+	fmt.Printf("Output directory: %s\n", outputDir)
 }
