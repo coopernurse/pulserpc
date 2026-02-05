@@ -444,10 +444,13 @@ func TestInvalidMapWithNonStringKey(t *testing.T) {
 }
 
 func TestInvalidMapMissingBrackets(t *testing.T) {
-	input := `struct Test {
+	// With word boundary lexer fix, "mapstring" is now a valid identifier
+	// (user-defined type), so this results in a validation error for unknown type
+	input := `namespace test
+struct Test {
   field mapstring
 }`
-	assertParseError(t, input)
+	assertValidationError(t, input, "unknown type")
 }
 
 func TestInvalidMapMissingValueType(t *testing.T) {
@@ -813,51 +816,69 @@ enum Status {
 }
 
 func TestNestedComplexTypes(t *testing.T) {
-	// Note: Nested types are not supported by the parser grammar
-	input := `struct Complex {
+	// Nested types are now fully supported by the parser
+	input := `namespace test
+struct Complex {
   arrayOfMaps []map[string]int
   mapOfArrays map[string][]string
   nestedArray [][]string
   nestedMap map[string]map[string]int
   tripleNested [][][]int
 }`
-	_, err := ParseIDL("test.pulse", input)
+	idl, err := ParseIDL("test.pulse", input)
 	if err != nil {
-		t.Logf("Nested types not supported (expected): %v", err)
-	} else {
-		t.Error("Expected parse error for nested types")
+		t.Fatalf("Parse error: %v", err)
+	}
+	err = ValidateIDL(idl)
+	if err != nil {
+		t.Fatalf("Validation error: %v", err)
+	}
+	// Verify fields parsed correctly
+	if len(idl.Structs) != 1 {
+		t.Fatalf("Expected 1 struct, got %d", len(idl.Structs))
+	}
+	fields := idl.Structs[0].Fields
+	expected := []string{
+		"[]map[string]int",
+		"map[string][]string",
+		"[][]string",
+		"map[string]map[string]int",
+		"[][][]int",
+	}
+	for i, f := range fields {
+		if f.Type.String() != expected[i] {
+			t.Errorf("Field %d: expected type %s, got %s", i, expected[i], f.Type.String())
+		}
 	}
 }
 
 func TestAllBuiltInTypes(t *testing.T) {
-	// Note: There appears to be a parsing issue with []int
-	// Testing what works
-	input := `struct AllTypes {
+	// All built-in types including arrays now work correctly
+	input := `namespace test
+struct AllTypes {
   str string
   num int
   decimal float
   flag bool
   strArray []string
+  intArray []int
   floatArray []float
   boolArray []bool
 }`
-	// intArray []int appears to have a parsing issue
 	idl, err := ParseIDL("test.pulse", input)
 	if err != nil {
-		t.Logf("Parsing issue with some array types: %v", err)
-		// Test with minimal case
-		input2 := `struct AllTypes {
-  str string
-  num int
-  decimal float
-  flag bool
-}`
-		assertValid(t, input2)
-		return
+		t.Fatalf("Parse error: %v", err)
 	}
 	err = ValidateIDL(idl)
 	if err != nil {
-		t.Errorf("Validation error: %v", err)
+		t.Fatalf("Validation error: %v", err)
+	}
+	// Verify all fields parsed
+	if len(idl.Structs) != 1 {
+		t.Fatalf("Expected 1 struct, got %d", len(idl.Structs))
+	}
+	if len(idl.Structs[0].Fields) != 8 {
+		t.Fatalf("Expected 8 fields, got %d", len(idl.Structs[0].Fields))
 	}
 }
 

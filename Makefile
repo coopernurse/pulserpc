@@ -40,13 +40,13 @@ build-linux:
 # Run tests
 test:
 	@echo "Running tests..."
-	go test -v ./cmd/... ./pkg/generator/... ./pkg/parser/...
+	go test -v ./cmd/... ./pkg/generator/... ./pkg/openapi/... ./pkg/parser/...
 
 # Run tests with coverage
 cover:
 	@echo "Running tests with coverage..."
 	@mkdir -p $(TARGET_DIR)
-	go test -v -coverprofile=$(COVERAGE_FILE) ./cmd/... ./pkg/generator/... ./pkg/parser/...
+	go test -v -coverprofile=$(COVERAGE_FILE) ./cmd/... ./pkg/generator/... ./pkg/openapi/... ./pkg/parser/...
 	go tool cover -html=$(COVERAGE_FILE) -o $(COVERAGE_HTML)
 	@echo "Coverage report generated at $(COVERAGE_HTML)"
 	@go tool cover -func=$(COVERAGE_FILE) | tail -1

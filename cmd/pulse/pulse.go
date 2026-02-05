@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/coopernurse/pulserpc/pkg/generator"
@@ -494,11 +495,18 @@ func handlePulseToOpenAPI(inputFile, outputDir, openAPIVersion string) {
 
 	// Generate OpenAPI spec from Pulse IDL
 	generator := openapi.NewFromPulseGenerator(openAPIVersion)
-	if err := generator.GenerateToFile(inputFile, outputDir); err != nil {
+
+	// Generate output file path: replace .pulse extension with .openapi.yaml
+	inputBasename := filepath.Base(inputFile)
+	inputExt := filepath.Ext(inputFile)
+	outputName := strings.TrimSuffix(inputBasename, inputExt) + ".openapi.yaml"
+	outputFile := filepath.Join(outputDir, outputName)
+
+	if err := generator.GenerateToFile(inputFile, outputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "error: failed to generate OpenAPI spec: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("Generated OpenAPI %s spec from %s\n", openAPIVersion, inputFile)
-	fmt.Printf("Output directory: %s\n", outputDir)
+	fmt.Printf("Output file: %s\n", outputFile)
 }

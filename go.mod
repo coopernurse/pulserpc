@@ -6,7 +6,9 @@ require github.com/alecthomas/participle/v2 v2.1.4
 
 require (
 	github.com/getkin/kin-openapi v0.133.0
+	github.com/google/go-cmp v0.7.0
 	github.com/oklog/ulid/v2 v2.1.1
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -19,5 +21,4 @@ require (
 	github.com/oasdiff/yaml3 v0.0.0-20250309153720-d2182401db90 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/woodsbury/decimal128 v1.3.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
