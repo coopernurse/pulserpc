@@ -27,6 +27,8 @@ pulserpc [flags] <idl-file>
 | `-plugin` | string | Code generation plugin to use (e.g., `python-client-server`, `go-client-server`). |
 | `-ui` | bool | Start the embedded web UI server for interactive testing and code generation. |
 | `-ui-port` | int | Port for the web UI server (default: `8080`). |
+| `-openapi-to-pulse` | string | Convert OpenAPI spec (YAML/JSON) to Pulse IDL. Specify path to OpenAPI file. |
+| `-pulse-to-openapi` | string | Convert Pulse IDL to OpenAPI spec. Specify path to Pulse IDL file. |
 
 ### Output Directory Flags
 
@@ -35,6 +37,9 @@ pulserpc [flags] <idl-file>
 | `-dir` | string | Output directory for generated code and runtime files. Required when using `-plugin`. |
 | `-silent` | bool | Suppress file generation output. Useful for scripting or when output is too verbose. |
 | `-generate-test-files` | bool | Generate test files (`test_server.*`, `test_client.*`) along with regular output. |
+| `-output-dir` | string | Output directory for OpenAPI translation. Default: `./generated`. Used with `-openapi-to-pulse` or `-pulse-to-openapi`. |
+| `-openapi-version` | string | Target OpenAPI version for Pulse → OpenAPI conversion: `3.0` or `3.1` (default). Used with `-pulse-to-openapi`. |
+| `-strict` | bool | Treat warnings as errors during OpenAPI translation. Exit with non-zero code if any warnings are issued. |
 
 ## Code Generation Plugins
 
@@ -161,6 +166,58 @@ pulserpc -ui -ui-port 9090
 
 Then open http://localhost:9090 in your browser.
 
+## OpenAPI Translation
+
+### Convert OpenAPI to Pulse IDL
+
+Import an existing OpenAPI specification and generate Pulse IDL:
+
+```bash
+pulserpc -openapi-to-pulse api-spec.yaml -output-dir ./idl
+```
+
+This creates `api-spec.yaml.pulse` in the output directory.
+
+### Convert Pulse IDL to OpenAPI
+
+Export a Pulse IDL file as an OpenAPI specification:
+
+```bash
+pulserpc -pulse-to-openapi service.pulse -output-dir ./specs
+```
+
+This creates `service.openapi.yaml` in the output directory.
+
+### Specify OpenAPI Version
+
+Generate OpenAPI 3.0 instead of the default 3.1:
+
+```bash
+pulserpc -pulse-to-openapi service.pulse -output-dir ./specs -openapi-version 3.0
+```
+
+### Strict Mode
+
+Treat warnings as errors during conversion:
+
+```bash
+pulserpc -openapi-to-pulse api-spec.yaml -output-dir ./idl -strict
+```
+
+The command will exit with a non-zero code if any warnings are issued (e.g., unsupported features like `oneOf` or security schemes).
+
+### Combined Conversion and Code Generation
+
+Convert an OpenAPI spec and immediately generate code:
+
+```bash
+# Step 1: Convert to Pulse
+pulserpc -openapi-to-pulse petstore.yaml -output-dir ./generated
+
+# Step 2: Generate Python code
+pulserpc -plugin python-client-server -dir ./client ./generated/petstore.yaml.pulse
+```
+
 ## Using with Docker
 
 When running PulseRPC via Docker, mount your working directory and pass flags as usual:
@@ -182,6 +239,8 @@ Some flag combinations are not allowed:
 
 - `-to-json` and `-from-json` cannot be used together
 - `-plugin` cannot be used with `-to-json` or `-from-json`
+- `-openapi-to-pulse` and `-pulse-to-openapi` cannot be used together
+- `-openapi-to-pulse` and `-pulse-to-openapi` cannot be used with `-plugin`, `-to-json`, or `-from-json`
 - `-ui` mode ignores other flags and starts the web UI immediately
 
 ## Getting Help
@@ -201,4 +260,5 @@ pulserpc -plugin java-client-server -h
 ## Next Steps
 
 - [Quickstart Overview](quickstart-overview.html) - Learn what you'll build
+- [OpenAPI Translation](openapi-translation.html) - Convert between OpenAPI and Pulse IDL
 - [IDL Syntax](../idl-guide/syntax.html) - IDL language reference

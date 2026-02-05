@@ -95,6 +95,38 @@ The playground also exposes REST API endpoints for programmatic access:
 - `GET /api/playground/files/:session-id/:file-path`: Retrieve a generated file
 - `GET /api/playground/zip/:session-id`: Download all files as ZIP archive
 
+## OpenAPI Translation
+
+PulseRPC provides bidirectional translation between OpenAPI specifications and Pulse IDL, enabling you to work with existing REST APIs or generate OpenAPI specs from your Pulse services.
+
+### Converting OpenAPI to Pulse IDL
+
+Import an existing OpenAPI specification and generate Pulse IDL:
+
+```bash
+pulserpc -openapi-to-pulse api-spec.yaml -output-dir ./idl
+```
+
+This converts your OpenAPI spec to a `.pulse` file, which you can then use to generate type-safe JSON-RPC clients and servers.
+
+### Converting Pulse IDL to OpenAPI
+
+Export your Pulse IDL as an OpenAPI specification:
+
+```bash
+pulserpc -pulse-to-openapi service.pulse -output-dir ./specs
+```
+
+This generates a valid OpenAPI 3.1 specification that can be used with REST tooling like Swagger UI, Spectral, or OpenAPI Generator.
+
+### Use Cases
+
+- **Import External APIs**: Convert third-party OpenAPI specs to Pulse IDL and generate type-safe clients
+- **Document Your Services**: Generate OpenAPI specs from your Pulse IDL for REST tooling compatibility
+- **Migration**: Gradually migrate from REST to JSON-RPC by importing your existing API definitions
+
+For complete documentation, see the [OpenAPI Translation Guide](docs/get-started/openapi-translation.md).
+
 ## Documentation
 
 Comprehensive documentation is available at **[https://bitmechanic.github.io/pulserpc/](https://bitmechanic.github.io/pulserpc/)** (or build locally with `make docs-build`).
@@ -102,6 +134,7 @@ Comprehensive documentation is available at **[https://bitmechanic.github.io/pul
 The documentation includes:
 
 - **Installation Guide**: Multiple installation methods (Go install, binary, Docker, source)
+- **OpenAPI Translation**: Convert between OpenAPI specs and Pulse IDL
 - **IDL Guide**: Complete reference for the Interface Definition Language
 - **Language Quickstarts**: Step-by-step tutorials for Go, Java, Python, TypeScript, and C#
 - **Language Reference**: Type mappings, patterns, and best practices for each language

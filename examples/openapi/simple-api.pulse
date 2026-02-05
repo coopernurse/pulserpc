@@ -1,0 +1,43 @@
+// Simple Pulse API for round-trip testing
+// This example demonstrates basic Pulse IDL features
+
+namespace simple_api
+
+// User represents a user account
+struct User {
+    userId    string
+    email     string   [optional]
+    createdAt int
+}
+
+// CreateUserRequest is the input for creating a user
+struct CreateUserRequest {
+    email     string
+    firstName string
+    lastName  string
+}
+
+// Status represents the status of an operation
+enum Status {
+    success
+    error
+    pending
+}
+
+// UserService provides user management operations
+interface UserService {
+    // getUser retrieves a user by ID
+    getUser(userId string) User
+
+    // createUser creates a new user account
+    createUser(request CreateUserRequest) User
+
+    // deleteUser deletes a user account
+    deleteUser(userId string) bool
+
+    // listUsers returns all users
+    listUsers() []User
+
+    // checkStatus checks the status of an operation
+    checkStatus(operationId string) Status
+}

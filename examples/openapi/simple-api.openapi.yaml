@@ -1,0 +1,180 @@
+# Expected OpenAPI 3.1 output from simple-api.pulse
+# To regenerate:
+#   pulserpc -pulse-to-openapi simple-api.pulse -output-dir .
+
+components:
+    schemas:
+        CreateUserRequest:
+            description: CreateUserRequest is the input for creating a user
+            properties:
+                email:
+                    type: string
+                firstName:
+                    type: string
+                lastName:
+                    type: string
+            required:
+                - email
+                - firstName
+                - lastName
+            type: object
+        Status:
+            description: Status represents the status of an operation
+            enum:
+                - success
+                - error
+                - pending
+            type: string
+        User:
+            description: User represents a user account
+            properties:
+                createdAt:
+                    format: int64
+                    type: integer
+                email:
+                    type: string
+                userId:
+                    type: string
+            required:
+                - userId
+                - createdAt
+            type: object
+info:
+    description: |-
+        Namespace: simple_api
+
+        Interfaces: 1
+        Structs: 2
+        Enums: 1
+    title: Simple Api
+    version: 1.0.0
+openapi: "3.1"
+paths:
+    /UserService/checkStatus:
+        post:
+            description: 'Method: checkStatus'
+            operationId: UserService_checkStatus
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                operationId:
+                                    type: string
+                            required:
+                                - operationId
+                            type: object
+                description: Request body for checkStatus
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Status'
+                    description: Successful response
+                default:
+                    description: ""
+            tags:
+                - UserService
+    /UserService/createUser:
+        post:
+            description: 'Method: createUser'
+            operationId: UserService_createUser
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                request:
+                                    $ref: '#/components/schemas/CreateUserRequest'
+                            required:
+                                - request
+                            type: object
+                description: Request body for createUser
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+                    description: Successful response
+                default:
+                    description: ""
+            tags:
+                - UserService
+    /UserService/deleteUser:
+        post:
+            description: 'Method: deleteUser'
+            operationId: UserService_deleteUser
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                userId:
+                                    type: string
+                            required:
+                                - userId
+                            type: object
+                description: Request body for deleteUser
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: boolean
+                    description: Successful response
+                default:
+                    description: ""
+            tags:
+                - UserService
+    /UserService/getUser:
+        post:
+            description: 'Method: getUser'
+            operationId: UserService_getUser
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                userId:
+                                    type: string
+                            required:
+                                - userId
+                            type: object
+                description: Request body for getUser
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/User'
+                    description: Successful response
+                default:
+                    description: ""
+            tags:
+                - UserService
+    /UserService/listUsers:
+        post:
+            description: 'Method: listUsers'
+            operationId: UserService_listUsers
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/User'
+                                type: array
+                    description: Successful response
+                default:
+                    description: ""
+            tags:
+                - UserService
+servers:
+    - description: PulseRPC Server
+      url: http://localhost:8080

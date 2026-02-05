@@ -1,0 +1,42 @@
+// Generated from OpenAPI spec: petstore.yaml
+// This is the expected output when converting petstore.yaml to Pulse IDL
+//
+// To regenerate:
+//   pulserpc -openapi-to-pulse petstore.yaml -output-dir .
+
+namespace petstore
+
+// Pet represents a pet in the store
+struct Pet {
+    id    int
+    name  string
+    tag   string   [optional]
+}
+
+// NewPet represents a new pet to be created
+struct NewPet {
+    name  string
+    tag   string   [optional]
+}
+
+// Error represents an error response
+struct Error {
+    code    int
+    message string
+}
+
+// pets interface provides pet management operations
+interface pets {
+    // getListPets returns a list of pets
+    getListPets(limit int) []Pet
+
+    // postCreatePets creates a new pet
+    postCreatePets(createPetsBody NewPet) createPetsResponse
+
+    // getShowPetById returns a specific pet by ID
+    getShowPetById(petId string) Pet
+}
+
+// Response types for operations without a direct schema reference
+// Note: The translator creates synthetic response types for operations
+// that don't directly reference a component schema
