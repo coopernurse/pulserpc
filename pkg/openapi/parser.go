@@ -186,15 +186,45 @@ func (p *Parser) parseSchema(schema *openapi3.Schema, name string, ctx *Translat
 	if len(schema.AllOf) > 0 {
 		info.AllOf = make([]*SchemaInfo, 0, len(schema.AllOf))
 		for _, allOfRef := range schema.AllOf {
-			if allOfRef == nil || allOfRef.Value == nil {
+			if allOfRef == nil {
 				continue
 			}
-			// Generate a synthetic name for nested allOf schemas
-			nestedName := fmt.Sprintf("%s_allof_%d", name, len(info.AllOf))
-			nestedInfo, err := p.parseSchema(allOfRef.Value, nestedName, ctx, append(refPath, nestedName))
-			if err != nil {
-				return nil, err
+
+			var nestedInfo *SchemaInfo
+			var err error
+
+			// Check if this is a $ref
+			if allOfRef.Ref != "" {
+				// Extract the ref name (e.g., "#/components/schemas/Base" -> "Base")
+				refName := extractRefName(allOfRef.Ref)
+				if allOfRef.Value != nil {
+					// Parse the referenced schema
+					nestedInfo, err = p.parseSchema(allOfRef.Value, refName, ctx, append(refPath, refName))
+					if err != nil {
+						return nil, err
+					}
+					// Store the ref name for extends generation
+					nestedInfo.RefName = refName
+				} else {
+					// Create a placeholder SchemaInfo for the ref
+					nestedInfo = &SchemaInfo{
+						Name:     refName,
+						RefName:  refName,
+						IsObject: true,
+						Type:     MakeCustomType(refName),
+					}
+				}
+			} else if allOfRef.Value != nil {
+				// Generate a synthetic name for inline allOf schemas
+				nestedName := fmt.Sprintf("%s_allof_%d", name, len(info.AllOf))
+				nestedInfo, err = p.parseSchema(allOfRef.Value, nestedName, ctx, append(refPath, nestedName))
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				continue
 			}
+
 			info.AllOf = append(info.AllOf, nestedInfo)
 		}
 		// allOf is handled specially during Pulse generation
@@ -506,4 +536,15 @@ func PathToMethodName(path string) string {
 		result += strings.Title(part)
 	}
 	return result
+}
+
+// extractRefName extracts the schema name from a $ref string.
+// For example, "#/components/schemas/Base" -> "Base"
+func extractRefName(ref string) string {
+	// Handle local references like "#/components/schemas/Name"
+	parts := strings.Split(ref, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return ref
 }
