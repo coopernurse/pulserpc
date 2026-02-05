@@ -18,6 +18,8 @@ type ToPulseGenerator struct {
 	Parser *Parser
 	// Strict mode treats warnings as errors
 	Strict bool
+	// ctx is the translation context for collecting warnings
+	ctx *TranslationContext
 }
 
 // NewToPulseGenerator creates a new OpenAPI → Pulse generator.
@@ -25,12 +27,14 @@ func NewToPulseGenerator() *ToPulseGenerator {
 	return &ToPulseGenerator{
 		Parser: NewParser(),
 		Strict: false,
+		ctx:    NewTranslationContext(false),
 	}
 }
 
 // SetStrict sets the strict mode flag.
 func (g *ToPulseGenerator) SetStrict(strict bool) {
 	g.Strict = strict
+	g.ctx.Strict = strict
 }
 
 // Generate reads an OpenAPI spec file and generates Pulse IDL.
@@ -39,6 +43,11 @@ func (g *ToPulseGenerator) Generate(openapiFile string) (*parser.IDL, error) {
 	spec, err := g.Parser.ParseFile(openapiFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse OpenAPI spec: %w", err)
+	}
+
+	// Merge warnings from parsing
+	for _, w := range spec.GetWarnings() {
+		g.ctx.Warnings.warnings = append(g.ctx.Warnings.warnings, w)
 	}
 
 	// Check for errors in strict mode
@@ -55,6 +64,20 @@ func (g *ToPulseGenerator) Generate(openapiFile string) (*parser.IDL, error) {
 		Interfaces:    make([]*parser.Interface, 0),
 		Structs:       make([]*parser.Struct, 0),
 		Enums:         make([]*parser.Enum, 0),
+	}
+
+	// Check for empty paths
+	if len(spec.Paths) == 0 {
+		g.ctx.Warnings.AddWarning("paths", "no paths defined in OpenAPI spec; generating types only")
+	}
+
+	// Check for security schemes (not supported)
+	if len(spec.Security) > 0 {
+		schemeNames := make([]string, 0, len(spec.Security))
+		for name := range spec.Security {
+			schemeNames = append(schemeNames, name)
+		}
+		g.ctx.Warnings.AddWarning("security", fmt.Sprintf("security schemes are not supported: %v", schemeNames))
 	}
 
 	// Generate structs from schemas
@@ -83,6 +106,9 @@ func (g *ToPulseGenerator) Generate(openapiFile string) (*parser.IDL, error) {
 
 // GenerateToFile reads an OpenAPI spec file and writes Pulse IDL to a file.
 func (g *ToPulseGenerator) GenerateToFile(openapiFile, outputFile string) error {
+	// Reset the context for this generation
+	g.ctx = NewTranslationContext(g.Strict)
+
 	// Generate the IDL
 	idl, err := g.Generate(openapiFile)
 	if err != nil {
@@ -98,6 +124,29 @@ func (g *ToPulseGenerator) GenerateToFile(openapiFile, outputFile string) error 
 	}
 
 	return nil
+}
+
+// GenerateToFileWithWarnings reads an OpenAPI spec file, writes Pulse IDL to a file, and returns warnings.
+func (g *ToPulseGenerator) GenerateToFileWithWarnings(openapiFile, outputFile string) ([]Warning, error) {
+	// Reset the context for this generation
+	g.ctx = NewTranslationContext(g.Strict)
+
+	// Generate the IDL
+	idl, err := g.Generate(openapiFile)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate the Pulse IDL content
+	content := g.GeneratePulseContent(idl, openapiFile)
+
+	// Write to file
+	if err := writePulseFile(outputFile, content); err != nil {
+		return nil, fmt.Errorf("failed to write Pulse IDL file: %w", err)
+	}
+
+	// Return warnings
+	return g.ctx.Warnings.All(), nil
 }
 
 // deriveNamespace converts an OpenAPI title to a valid Pulse namespace.

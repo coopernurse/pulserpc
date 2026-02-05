@@ -389,3 +389,31 @@ func TestSanitizeComment(t *testing.T) {
 		})
 	}
 }
+
+// TestIsReservedOpenAPIWord tests the reserved word checker.
+func TestIsReservedOpenAPIWord(t *testing.T) {
+	tests := []struct {
+		name     string
+		word     string
+		expected bool
+	}{
+		{"$ref is reserved", "$ref", true},
+		{"schema is reserved", "schema", true},
+		{"example is reserved", "example", true},
+		{"content is reserved", "content", true},
+		{"allowReserved is reserved", "allowReserved", true},
+		{"normal word is not reserved", "myParam", false},
+		{"empty string is not reserved", "", false},
+		{"mixed case is not reserved", "Schema", false},
+		{"x-custom is not reserved", "x-custom", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsReservedOpenAPIWord(tt.word)
+			if result != tt.expected {
+				t.Errorf("expected %v for '%s', got %v", tt.expected, tt.word, result)
+			}
+		})
+	}
+}

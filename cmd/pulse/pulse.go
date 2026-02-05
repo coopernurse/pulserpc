@@ -35,6 +35,7 @@ func main() {
 	var pulseToOpenapi = flag.String("pulse-to-openapi", "", "Convert Pulse IDL to OpenAPI spec (input: .pulse file)")
 	var outputDir = flag.String("output-dir", "", "Output directory for generated files (default: ./generated)")
 	var openapiVersion = flag.String("openapi-version", "3.1", "Target OpenAPI version for Pulse→OpenAPI (3.0 or 3.1, default: 3.1)")
+	var strictMode = flag.Bool("strict", false, "Treat warnings as errors (non-zero exit code on warnings)")
 
 	// Register flags for all plugins
 	allPlugins := getAllPlugins()
@@ -67,12 +68,12 @@ func main() {
 	}
 
 	if *openapiToPulse != "" {
-		handleOpenAPIToPulse(*openapiToPulse, *outputDir)
+		handleOpenAPIToPulse(*openapiToPulse, *outputDir, *strictMode)
 		return
 	}
 
 	if *pulseToOpenapi != "" {
-		handlePulseToOpenAPI(*pulseToOpenapi, *outputDir, *openapiVersion)
+		handlePulseToOpenAPI(*pulseToOpenapi, *outputDir, *openapiVersion, *strictMode)
 		return
 	}
 
@@ -439,7 +440,7 @@ func handlePluginGeneration(pluginName string, idl *parser.IDL) {
 }
 
 // handleOpenAPIToPulse handles conversion from OpenAPI spec to Pulse IDL.
-func handleOpenAPIToPulse(inputFile, outputDir string) {
+func handleOpenAPIToPulse(inputFile, outputDir string, strict bool) {
 	// Check if input file exists
 	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "error: file does not exist: %s\n", inputFile)
@@ -457,19 +458,36 @@ func handleOpenAPIToPulse(inputFile, outputDir string) {
 		os.Exit(1)
 	}
 
+	// Generate output file path: replace .yaml/.json extension with .pulse
+	inputBasename := filepath.Base(inputFile)
+	inputExt := filepath.Ext(inputFile)
+	outputName := strings.TrimSuffix(inputBasename, inputExt) + ".pulse"
+	outputFile := filepath.Join(outputDir, outputName)
+
 	// Generate Pulse IDL from OpenAPI spec
 	generator := openapi.NewToPulseGenerator()
-	if err := generator.GenerateToFile(inputFile, outputDir); err != nil {
+	generator.SetStrict(strict)
+
+	warnings, err := generator.GenerateToFileWithWarnings(inputFile, outputFile)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: failed to generate Pulse IDL: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Display warnings to stderr
+	displayWarnings(warnings)
+
+	// In strict mode, exit with error if there are warnings
+	if strict && len(warnings) > 0 {
+		os.Exit(1)
+	}
+
 	fmt.Printf("Generated Pulse IDL from %s\n", inputFile)
-	fmt.Printf("Output directory: %s\n", outputDir)
+	fmt.Printf("Output file: %s\n", outputFile)
 }
 
 // handlePulseToOpenAPI handles conversion from Pulse IDL to OpenAPI spec.
-func handlePulseToOpenAPI(inputFile, outputDir, openAPIVersion string) {
+func handlePulseToOpenAPI(inputFile, outputDir, openAPIVersion string, strict bool) {
 	// Check if input file exists
 	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "error: file does not exist: %s\n", inputFile)
@@ -502,11 +520,37 @@ func handlePulseToOpenAPI(inputFile, outputDir, openAPIVersion string) {
 	outputName := strings.TrimSuffix(inputBasename, inputExt) + ".openapi.yaml"
 	outputFile := filepath.Join(outputDir, outputName)
 
-	if err := generator.GenerateToFile(inputFile, outputFile); err != nil {
+	warnings, err := generator.GenerateToFileWithWarnings(inputFile, outputFile, strict)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: failed to generate OpenAPI spec: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display warnings to stderr
+	displayWarnings(warnings)
+
+	// In strict mode, exit with error if there are warnings
+	if strict && len(warnings) > 0 {
 		os.Exit(1)
 	}
 
 	fmt.Printf("Generated OpenAPI %s spec from %s\n", openAPIVersion, inputFile)
 	fmt.Printf("Output file: %s\n", outputFile)
+}
+
+// displayWarnings prints warnings to stderr with proper formatting.
+func displayWarnings(warnings []openapi.Warning) {
+	if len(warnings) == 0 {
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "\nWarnings (%d):\n", len(warnings))
+	for _, w := range warnings {
+		if w.Location != "" {
+			fmt.Fprintf(os.Stderr, "  %s: %s: %s\n", w.Location, w.Level, w.Message)
+		} else {
+			fmt.Fprintf(os.Stderr, "  %s: %s\n", w.Level, w.Message)
+		}
+	}
+	fmt.Fprintln(os.Stderr)
 }

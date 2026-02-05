@@ -39,6 +39,10 @@ func (g *FromPulseGenerator) createSchemaRef(t *parser.Type, doc *openapi3.T, ct
 type FromPulseGenerator struct {
 	// OpenAPIVersion specifies the target OpenAPI version (3.0 or 3.1)
 	OpenAPIVersion string
+	// ctx is the translation context for collecting warnings
+	ctx *TranslationContext
+	// Strict mode treats warnings as errors
+	Strict bool
 }
 
 // NewFromPulseGenerator creates a new Pulse → OpenAPI generator.
@@ -48,7 +52,15 @@ func NewFromPulseGenerator(version string) *FromPulseGenerator {
 	}
 	return &FromPulseGenerator{
 		OpenAPIVersion: version,
+		ctx:            NewTranslationContext(false),
+		Strict:         false,
 	}
+}
+
+// SetStrict sets the strict mode flag.
+func (g *FromPulseGenerator) SetStrict(strict bool) {
+	g.Strict = strict
+	g.ctx.Strict = strict
 }
 
 // GeneratedSpec represents a generated OpenAPI specification.
@@ -83,8 +95,8 @@ func (g *FromPulseGenerator) Generate(pulseFile string) (*GeneratedSpec, error) 
 		return nil, fmt.Errorf("failed to parse Pulse IDL: %w", err)
 	}
 
-	// Create translation context for warnings
-	ctx := NewTranslationContext(false)
+	// Reset context for this generation
+	g.ctx = NewTranslationContext(g.Strict)
 
 	// Create OpenAPI document
 	doc := openapi3.T{
@@ -108,13 +120,18 @@ func (g *FromPulseGenerator) Generate(pulseFile string) (*GeneratedSpec, error) 
 		},
 	}
 
+	// Check for empty interfaces
+	if len(idl.Interfaces) == 0 {
+		g.ctx.Warnings.AddWarning("interfaces", "no interfaces defined in Pulse IDL; generating schemas only")
+	}
+
 	// Generate schemas from structs and enums
-	if err := g.generateSchemas(idl, &doc, ctx); err != nil {
+	if err := g.generateSchemas(idl, &doc, g.ctx); err != nil {
 		return nil, fmt.Errorf("failed to generate schemas: %w", err)
 	}
 
 	// Generate paths from interfaces and methods
-	if err := g.generatePaths(idl, &doc, ctx); err != nil {
+	if err := g.generatePaths(idl, &doc, g.ctx); err != nil {
 		return nil, fmt.Errorf("failed to generate paths: %w", err)
 	}
 
@@ -151,6 +168,37 @@ func (g *FromPulseGenerator) GenerateToFile(pulseFile, outputFile string) error 
 	}
 
 	return nil
+}
+
+// GenerateToFileWithWarnings reads a Pulse IDL file, writes OpenAPI spec to a file, and returns warnings.
+func (g *FromPulseGenerator) GenerateToFileWithWarnings(pulseFile, outputFile string, strict bool) ([]Warning, error) {
+	g.Strict = strict
+	spec, err := g.Generate(pulseFile)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine output format from file extension
+	var data []byte
+	ext := strings.ToLower(filepath.Ext(outputFile))
+	if ext == ".json" {
+		data, err = spec.ToJSON()
+	} else {
+		// Default to YAML
+		data, err = spec.ToYAML()
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize OpenAPI spec: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(outputFile, data, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write output file %s: %w", outputFile, err)
+	}
+
+	// Return warnings
+	return g.ctx.Warnings.All(), nil
 }
 
 // generateSchemas generates OpenAPI schemas from Pulse structs and enums.
@@ -249,6 +297,18 @@ func (g *FromPulseGenerator) generatePaths(idl *parser.IDL, doc *openapi3.T, ctx
 		for _, method := range iface.Methods {
 			// Generate path: POST /{interface}/{method}
 			path := fmt.Sprintf("/%s/%s", iface.Name, method.Name)
+
+			// Warn about very long paths (>100 characters)
+			if len(path) > 100 {
+				ctx.Warnings.AddWarning(path, fmt.Sprintf("path is very long (%d characters); some OpenAPI tools may have issues", len(path)))
+			}
+
+			// Check for reserved parameter names
+			for _, param := range method.Parameters {
+				if IsReservedOpenAPIWord(param.Name) {
+					ctx.Warnings.AddWarning(param.Name, fmt.Sprintf("parameter name '%s' conflicts with OpenAPI reserved word; may cause issues", param.Name))
+				}
+			}
 
 			// Create operation
 			operation := &openapi3.Operation{

@@ -321,3 +321,23 @@ func SanitizeComment(comment string) string {
 	result = strings.ReplaceAll(result, "\r", "")
 	return strings.TrimSpace(result)
 }
+
+// OpenAPIReservedWords contains words that are reserved in OpenAPI specifications.
+var OpenAPIReservedWords = map[string]bool{
+	"$ref": true,
+	"schema": true,
+	"example": true,
+	"examples": true,
+	"encoding": true,
+	"style": true,
+	"explode": true,
+	"allowReserved": true,
+	"content": true,
+	"headers": true,
+	"links": true,
+}
+
+// IsReservedOpenAPIWord checks if a word is reserved in OpenAPI specifications.
+func IsReservedOpenAPIWord(word string) bool {
+	return OpenAPIReservedWords[word]
+}
