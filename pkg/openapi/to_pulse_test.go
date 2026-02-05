@@ -669,3 +669,142 @@ func TestGeneratePulseContent(t *testing.T) {
 		t.Error("Generated content missing optional annotation")
 	}
 }
+
+// TestFormatEnum tests enum formatting.
+func TestFormatEnum(t *testing.T) {
+	g := NewToPulseGenerator()
+
+	enumDef := &parser.Enum{
+		Name:    "Status",
+		Comment: "Status enum",
+		Values: []*parser.EnumValue{
+			{Name: "Active"},
+			{Name: "Inactive"},
+			{Name: "Pending"},
+		},
+	}
+
+	result := g.formatEnum(enumDef)
+
+	// Verify the formatted enum contains expected content
+	if !strings.Contains(result, "enum Status") {
+		t.Error("formatEnum() should contain 'enum Status'")
+	}
+
+	if !strings.Contains(result, "Active") {
+		t.Error("formatEnum() should contain 'Active'")
+	}
+
+	if !strings.Contains(result, "Inactive") {
+		t.Error("formatEnum() should contain 'Inactive'")
+	}
+
+	if !strings.Contains(result, "Pending") {
+		t.Error("formatEnum() should contain 'Pending'")
+	}
+}
+
+// TestFormatEnumNoComment tests enum formatting without comment.
+func TestFormatEnumNoComment(t *testing.T) {
+	g := NewToPulseGenerator()
+
+	enumDef := &parser.Enum{
+		Name: "Color",
+		Values: []*parser.EnumValue{
+			{Name: "Red"},
+			{Name: "Green"},
+			{Name: "Blue"},
+		},
+	}
+
+	result := g.formatEnum(enumDef)
+
+	// Verify the formatted enum doesn't start with comment
+	if strings.HasPrefix(strings.TrimSpace(result), "//") {
+		t.Error("formatEnum() should not start with comment when enum has no comment")
+	}
+
+	if !strings.Contains(result, "enum Color") {
+		t.Error("formatEnum() should contain 'enum Color'")
+	}
+}
+
+// TestSetStrict tests setting strict mode.
+func TestSetStrict(t *testing.T) {
+	g := NewToPulseGenerator()
+
+	// Default should be false
+	if g.Strict {
+		t.Error("Default Strict should be false")
+	}
+
+	// Set to true
+	g.SetStrict(true)
+	if !g.Strict {
+		t.Error("Strict should be true after SetStrict(true)")
+	}
+
+	// Set back to false
+	g.SetStrict(false)
+	if g.Strict {
+		t.Error("Strict should be false after SetStrict(false)")
+	}
+}
+
+// TestGenerateToFileWithWarnings tests file generation with warnings.
+func TestGenerateToFileWithWarnings(t *testing.T) {
+	// Create a simple test OpenAPI spec
+	spec := `
+openapi: 3.0.0
+info:
+  title: Test API
+  version: 1.0.0
+paths:
+  /ping:
+    get:
+      operationId: ping
+      responses:
+        '200':
+          description: OK
+`
+
+	// Write spec to temp file
+	tmpDir := t.TempDir()
+	specFile := filepath.Join(tmpDir, "test.yaml")
+	if err := os.WriteFile(specFile, []byte(spec), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Generate Pulse IDL to file
+	outputFile := filepath.Join(tmpDir, "test.pulse")
+	g := NewToPulseGenerator()
+	warnings, err := g.GenerateToFileWithWarnings(specFile, outputFile)
+
+	if err != nil {
+		t.Fatalf("GenerateToFileWithWarnings() failed: %v", err)
+	}
+
+	// Verify file was created
+	if _, err := os.Stat(outputFile); os.IsNotExist(err) {
+		t.Error("Output file was not created")
+	}
+
+	// Warnings should be a non-nil slice (even if empty)
+	if warnings == nil {
+		t.Error("Warnings should not be nil")
+	}
+}
+
+// TestGenerateToFileWithWarningsInvalidFile tests error handling in GenerateToFileWithWarnings.
+func TestGenerateToFileWithWarningsInvalidFile(t *testing.T) {
+	g := NewToPulseGenerator()
+
+	// Try to generate from non-existent file
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "test.pulse")
+
+	_, err := g.GenerateToFileWithWarnings("/nonexistent/file.yaml", outputFile)
+	if err == nil {
+		t.Error("GenerateToFileWithWarnings() should fail with non-existent input file")
+	}
+}

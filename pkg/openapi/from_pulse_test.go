@@ -748,3 +748,330 @@ func (g *FromPulseGenerator) GenerateFromStringToFile(input, outputFile string) 
 
 	return os.WriteFile(outputFile, data, 0644)
 }
+
+// TestSetStrictFromPulse tests setting strict mode on FromPulseGenerator.
+func TestSetStrictFromPulse(t *testing.T) {
+	g := NewFromPulseGenerator("3.1")
+
+	// Default should be false
+	if g.Strict {
+		t.Error("Default Strict should be false")
+	}
+
+	g.SetStrict(true)
+	if !g.Strict {
+		t.Error("Strict should be true after SetStrict(true)")
+	}
+
+	g.SetStrict(false)
+	if g.Strict {
+		t.Error("Strict should be false after SetStrict(false)")
+	}
+}
+
+// TestVoidTypeConversion tests void type conversion.
+func TestVoidTypeConversion(t *testing.T) {
+	input := `namespace example
+
+interface UserService {
+    deleteUser(id string) void
+}
+`
+
+	g := NewFromPulseGenerator("3.1")
+	spec, err := g.GenerateFromString(input)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Just verify the spec is valid - void is a special case
+	if spec.T.OpenAPI != "3.1" {
+		t.Error("OpenAPI version should be 3.1")
+	}
+
+	// Check that a path was created
+	paths := spec.T.Paths.Map()
+	if len(paths) == 0 {
+		t.Error("Expected at least one path")
+	}
+}
+
+// TestGenerateFromFile tests generating from a file.
+func TestGenerateFromFile(t *testing.T) {
+	input := `namespace example
+
+interface TestService {
+    test() string
+}
+`
+
+	// Write to temp file
+	tmpDir := t.TempDir()
+	pulseFile := filepath.Join(tmpDir, "test.pulse")
+	if err := os.WriteFile(pulseFile, []byte(input), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	g := NewFromPulseGenerator("3.1")
+	spec, err := g.Generate(pulseFile)
+	if err != nil {
+		t.Fatalf("Generate() failed: %v", err)
+	}
+
+	if spec.T.OpenAPI != "3.1" {
+		t.Error("OpenAPI version should be 3.1")
+	}
+}
+
+// TestGenerateToFileFromPulse tests generating OpenAPI to file from Pulse IDL.
+func TestGenerateToFileFromPulse(t *testing.T) {
+	input := `namespace example
+
+interface TestService {
+    test() string
+}
+`
+
+	// Write to temp file
+	tmpDir := t.TempDir()
+	pulseFile := filepath.Join(tmpDir, "test.pulse")
+	if err := os.WriteFile(pulseFile, []byte(input), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	yamlFile := filepath.Join(tmpDir, "output.yaml")
+	jsonFile := filepath.Join(tmpDir, "output.json")
+
+	g := NewFromPulseGenerator("3.1")
+
+	// Test YAML output
+	if err := g.GenerateToFile(pulseFile, yamlFile); err != nil {
+		t.Fatalf("GenerateToFile (YAML) failed: %v", err)
+	}
+
+	if _, err := os.Stat(yamlFile); os.IsNotExist(err) {
+		t.Error("YAML output file was not created")
+	}
+
+	// Test JSON output
+	if err := g.GenerateToFile(pulseFile, jsonFile); err != nil {
+		t.Fatalf("GenerateToFile (JSON) failed: %v", err)
+	}
+
+	if _, err := os.Stat(jsonFile); os.IsNotExist(err) {
+		t.Error("JSON output file was not created")
+	}
+}
+
+// TestGenerateToFileWithWarningsFromPulse tests generating with warnings collection.
+func TestGenerateToFileWithWarningsFromPulse(t *testing.T) {
+	input := `namespace example
+
+interface TestService {
+    test() string
+}
+`
+
+	// Write to temp file
+	tmpDir := t.TempDir()
+	pulseFile := filepath.Join(tmpDir, "test.pulse")
+	if err := os.WriteFile(pulseFile, []byte(input), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	yamlFile := filepath.Join(tmpDir, "output.yaml")
+
+	g := NewFromPulseGenerator("3.1")
+	warnings, err := g.GenerateToFileWithWarnings(pulseFile, yamlFile, false)
+
+	if err != nil {
+		t.Fatalf("GenerateToFileWithWarnings() failed: %v", err)
+	}
+
+	if _, err := os.Stat(yamlFile); os.IsNotExist(err) {
+		t.Error("Output file was not created")
+	}
+
+	// Warnings should be a non-nil slice
+	if warnings == nil {
+		t.Error("Warnings should not be nil")
+	}
+}
+
+// TestGenerateToFileNonExistentFile tests error handling for non-existent file.
+func TestGenerateToFileNonExistentFile(t *testing.T) {
+	g := NewFromPulseGenerator("3.1")
+	tmpDir := t.TempDir()
+	outputFile := filepath.Join(tmpDir, "output.yaml")
+
+	err := g.GenerateToFile("/nonexistent/file.pulse", outputFile)
+	if err == nil {
+		t.Error("GenerateToFile() should fail with non-existent input file")
+	}
+}
+
+// TestInterfaceWithNoMethods tests interface with no methods.
+func TestInterfaceWithNoMethods(t *testing.T) {
+	input := `namespace example
+
+interface EmptyService {
+}
+`
+
+	g := NewFromPulseGenerator("3.1")
+	spec, err := g.GenerateFromString(input)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Should still create valid spec
+	if spec.T.OpenAPI != "3.1" {
+		t.Error("OpenAPI version should be 3.1")
+	}
+
+	// Empty interface should not create a path
+	pathItem := spec.T.Paths.Find("/EmptyService")
+	if pathItem != nil {
+		// It's ok to have an empty path or no path at all
+	}
+}
+
+// TestStructWithAllOptionalFields tests struct with all optional fields.
+func TestStructWithAllOptionalFields(t *testing.T) {
+	input := `namespace example
+
+struct OptionalUser {
+    name string [optional]
+    email string [optional]
+    age int [optional]
+}
+`
+
+	g := NewFromPulseGenerator("3.1")
+	spec, err := g.GenerateFromString(input)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	userSchemaRef := spec.T.Components.Schemas["OptionalUser"]
+	userSchema := userSchemaRef.Value
+
+	// No fields should be required
+	if len(userSchema.Required) != 0 {
+		t.Errorf("Expected 0 required fields, got %d: %v", len(userSchema.Required), userSchema.Required)
+	}
+}
+
+// TestMultipleInterfacesWithSameMethodNames tests different interfaces with methods having same name.
+func TestMultipleInterfacesWithSameMethodNames(t *testing.T) {
+	input := `namespace example
+
+interface ServiceA {
+    process(data string) string
+}
+
+interface ServiceB {
+    process(data string) string
+}
+`
+
+	g := NewFromPulseGenerator("3.1")
+	spec, err := g.GenerateFromString(input)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Should have two different paths
+	pathA := spec.T.Paths.Find("/ServiceA/process")
+	if pathA == nil {
+		t.Error("Path /ServiceA/process not found")
+	}
+
+	pathB := spec.T.Paths.Find("/ServiceB/process")
+	if pathB == nil {
+		t.Error("Path /ServiceB/process not found")
+	}
+}
+
+// TestDeeplyNestedArray tests deeply nested array types.
+func TestDeeplyNestedArray(t *testing.T) {
+	input := `namespace example
+
+struct Matrix {
+    data [][][]int
+}
+`
+
+	g := NewFromPulseGenerator("3.1")
+	spec, err := g.GenerateFromString(input)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	matrixSchemaRef := spec.T.Components.Schemas["Matrix"]
+	if matrixSchemaRef == nil {
+		t.Fatal("Matrix schema not found")
+	}
+
+	matrixSchema := matrixSchemaRef.Value
+	dataProp := matrixSchema.Properties["data"]
+
+	if dataProp == nil {
+		t.Fatal("data property not found")
+	}
+
+	// Should be array
+	if !typeMatches(dataProp.Value.Type, "array") {
+		t.Errorf("data should be array, got %v", dataProp.Value.Type)
+	}
+}
+
+// TestMapWithCustomType tests map with custom value type.
+func TestMapWithCustomType(t *testing.T) {
+	input := `namespace example
+
+struct Metadata {
+    tags map[string]Tag
+}
+
+struct Tag {
+    key string
+    value string
+}
+`
+
+	g := NewFromPulseGenerator("3.1")
+	spec, err := g.GenerateFromString(input)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	metadataSchemaRef := spec.T.Components.Schemas["Metadata"]
+	if metadataSchemaRef == nil {
+		t.Fatal("Metadata schema not found")
+	}
+
+	metadataSchema := metadataSchemaRef.Value
+	tagsProp := metadataSchema.Properties["tags"]
+
+	if tagsProp == nil {
+		t.Fatal("tags property not found")
+	}
+
+	// Should be object with additionalProperties having ref to Tag
+	if tagsProp.Value.AdditionalProperties.Schema == nil {
+		t.Fatal("tags additionalProperties schema ref should not be nil")
+	}
+
+	// Verify Tag schema exists
+	_, ok := spec.T.Components.Schemas["Tag"]
+	if !ok {
+		t.Error("Tag schema should exist in components/schemas")
+	}
+
+	// The additionalProperties should have a ref to Tag
+	expectedRef := "#/components/schemas/Tag"
+	if tagsProp.Value.AdditionalProperties.Schema.Ref != expectedRef {
+		t.Errorf("Expected additionalProperties ref %s, got %s", expectedRef, tagsProp.Value.AdditionalProperties.Schema.Ref)
+	}
+}

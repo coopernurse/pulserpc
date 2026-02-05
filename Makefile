@@ -1,4 +1,4 @@
-.PHONY: build build-linux test cover lint quality clean install-tools test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker
+.PHONY: build build-linux test cover lint quality clean install-tools test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
 
 # Variables
 BINARY_NAME=pulserpc
@@ -213,4 +213,14 @@ test-quickstart-csharp:
 
 test-quickstart-csharp-docker:
 	@USE_DOCKER=1 bash tests/integration/test_quickstart_csharp.sh
+
+# OpenAPI translation tests
+test-openapi: build
+	@echo "Testing OpenAPI to Pulse conversion..."
+	@bash tests/integration/test_openapi_to_pulse.sh
+	@echo "Testing Pulse to OpenAPI conversion..."
+	@bash tests/integration/test_pulse_to_openapi.sh
+	@echo "Testing OpenAPI round-trip conversion..."
+	@bash tests/integration/test_openapi_roundtrip.sh
+	@echo "All OpenAPI integration tests passed"
 
