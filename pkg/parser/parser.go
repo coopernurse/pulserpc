@@ -17,12 +17,15 @@ var (
 		{Name: "Whitespace", Pattern: `[ \t\r\n]+`},
 		{Name: "Optional", Pattern: `\[optional\]`},
 		{Name: "StringLiteral", Pattern: `"[^"]*"`},
+		{Name: "IntLiteral", Pattern: `[0-9]+`},
 		// Keywords must use word boundaries to avoid matching prefixes of identifiers
 		// e.g., "strings" should be Ident, not String + "s"
 		{Name: "Namespace", Pattern: `\bnamespace\b`},
 		{Name: "Interface", Pattern: `\binterface\b`},
 		{Name: "Struct", Pattern: `\bstruct\b`},
 		{Name: "Enum", Pattern: `\benum\b`},
+		{Name: "Errors", Pattern: `\berrors\b`},
+		{Name: "Raises", Pattern: `\braises\b`},
 		{Name: "Extends", Pattern: `\bextends\b`},
 		{Name: "Map", Pattern: `\bmap\b`},
 		{Name: "String", Pattern: `\bstring\b`},
@@ -54,6 +57,7 @@ type IDLElement struct {
 	Interface *InterfaceDef `parser:"| 'interface' @@"`
 	Struct    *StructDef    `parser:"| 'struct' @@"`
 	Enum      *EnumDef      `parser:"| 'enum' @@"`
+	Errors    *ErrorsDef    `parser:"| 'errors' @@"`
 }
 
 // ImportString is a custom type for parsing import paths
@@ -87,9 +91,15 @@ type InterfaceDef struct {
 type MethodDef struct {
 	Pos            lexer.Position
 	Name           string          `parser:"@Ident '('"`
-	Parameters     []*ParameterDef `parser:"( @@ (',' @@)* )? ')'"`
+	Parameters     []*ParameterDef `parser:"( @@ (',' @@)* )? ')' "`
 	ReturnType     *TypeExpr       `parser:"@@"`
 	ReturnOptional bool            `parser:"( @Optional )?"`
+	Raises         []*RaisesIdentifier `parser:"( 'raises' '(' @@ ( ',' @@ )* ')' )?"`
+}
+
+// RaisesIdentifier represents an error identifier in a raises clause
+type RaisesIdentifier struct {
+	Name *QualifiedName `parser:"@@"`
 }
 
 // ParameterDef represents a parameter definition
@@ -131,6 +141,20 @@ type EnumDef struct {
 	Pos    lexer.Position
 	Name   string   `parser:"@Ident '{'"`
 	Values []string `parser:"@Ident* '}'"`
+}
+
+// ErrorsDef represents an errors block
+type ErrorsDef struct {
+	Pos    lexer.Position
+	Errors []*ErrorDecl `parser:"'{' @@* '}'"`
+}
+
+// ErrorDecl represents a single error declaration: <code> <name> <message>
+type ErrorDecl struct {
+	Pos     lexer.Position
+	Code    int    `parser:"@IntLiteral"`
+	Name    string `parser:"@Ident"`
+	Message string `parser:"@StringLiteral"`
 }
 
 // TypeExpr represents a type expression
@@ -428,6 +452,14 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 				}
 			}
 		}
+		if importedNamespace == "" {
+			for _, e := range importedIDL.Errors {
+				if e.Namespace != "" {
+					importedNamespace = e.Namespace
+					break
+				}
+			}
+		}
 
 		// Check for duplicate namespace
 		if importedNamespace != "" {
@@ -477,6 +509,7 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 		Interfaces:    make([]*Interface, 0),
 		Structs:       make([]*Struct, 0),
 		Enums:         make([]*Enum, 0),
+		Errors:        make([]*ErrorDef, 0),
 	}
 
 	// Process local elements
@@ -498,6 +531,16 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 					Parameters:     make([]*Parameter, 0),
 					ReturnType:     convertTypeExpr(m.ReturnType),
 					ReturnOptional: m.ReturnOptional,
+				}
+				// Convert raises identifiers to strings
+				if len(m.Raises) > 0 {
+					methodRaises := make([]string, 0, len(m.Raises))
+					for _, r := range m.Raises {
+						if r.Name != nil {
+							methodRaises = append(methodRaises, r.Name.String())
+						}
+					}
+					method.Raises = methodRaises
 				}
 				for _, p := range m.Parameters {
 					method.Parameters = append(method.Parameters, &Parameter{
@@ -562,6 +605,33 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 				Comment:   enumComment,
 				Values:    enumValues,
 			})
+		} else if elem.Errors != nil {
+			// Process each error declaration
+			for _, e := range elem.Errors.Errors {
+				// Extract individual error comment
+				errorComment := extractPrecedingComments(filteredInput, e.Pos)
+
+				// Strip quotes from message (StringLiteral pattern includes them)
+				message := e.Message
+				if len(message) >= 2 && message[0] == '"' && message[len(message)-1] == '"' {
+					message = message[1 : len(message)-1]
+				}
+
+				// Prefix error name with namespace for consistency
+				errorName := e.Name
+				if namespace != "" {
+					errorName = namespace + "." + e.Name
+				}
+
+				idl.Errors = append(idl.Errors, &ErrorDef{
+					Pos:       e.Pos,
+					Name:      errorName,
+					Namespace: namespace,
+					Code:      e.Code,
+					Message:   message,
+					Comment:   errorComment,
+				})
+			}
 		}
 	}
 
@@ -570,33 +640,6 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 		importedNamespace := imported.namespace
 		importedIDL := imported.idl
 		if importedNamespace != "" {
-			// Build a map of unqualified to qualified names for this namespace
-			typeMap := make(map[string]string)
-			for _, s := range importedIDL.Structs {
-				if s.Namespace == importedNamespace {
-					typeMap[s.Name] = importedNamespace + "." + s.Name
-				}
-			}
-			for _, e := range importedIDL.Enums {
-				if e.Namespace == importedNamespace {
-					typeMap[e.Name] = importedNamespace + "." + e.Name
-				}
-			}
-			for _, i := range importedIDL.Interfaces {
-				if i.Namespace == importedNamespace {
-					typeMap[i.Name] = importedNamespace + "." + i.Name
-				}
-			}
-
-			// Update type references within the same namespace to use qualified names
-			updateTypeRefs := func(t *Type) {
-				if t != nil && t.IsUserDefined() {
-					if qualified, exists := typeMap[t.UserDefined]; exists {
-						t.UserDefined = qualified
-					}
-				}
-			}
-
 			// Prefix types from the imported file with the imported namespace
 			// Types from nested imports already have their namespace prefix
 			for _, s := range importedIDL.Structs {
@@ -605,16 +648,9 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 				if s.Namespace == importedNamespace {
 					// Local type from imported file - prefix it
 					s.Name = importedNamespace + "." + s.Name
-					// Update field type references
-					for _, f := range s.Fields {
-						updateTypeRefs(f.Type)
-					}
-					// Update extends reference
-					if s.Extends != "" {
-						if qualified, exists := typeMap[s.Extends]; exists {
-							s.Extends = qualified
-						}
-					}
+					// Note: We do NOT update field type references or extends clause
+					// Type references are kept as-is from the source file
+					// Validation will resolve them based on the struct's namespace
 				}
 				idl.Structs = append(idl.Structs, s)
 			}
@@ -629,21 +665,29 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 				if i.Namespace == importedNamespace {
 					// Local type from imported file - prefix it
 					i.Name = importedNamespace + "." + i.Name
-					// Update method parameter and return type references
-					for _, m := range i.Methods {
-						updateTypeRefs(m.ReturnType)
-						for _, p := range m.Parameters {
-							updateTypeRefs(p.Type)
-						}
-					}
+					// Note: We do NOT update method parameter/return type references
+					// Type references are kept as-is from the source file
+					// Validation will resolve them based on the interface's namespace
 				}
 				idl.Interfaces = append(idl.Interfaces, i)
+			}
+
+			// Prefix error names from imported file (if not already prefixed)
+			for _, err := range importedIDL.Errors {
+				if err.Namespace == importedNamespace {
+					// Only prefix if not already prefixed
+					if !strings.HasPrefix(err.Name, importedNamespace+".") {
+						err.Name = importedNamespace + "." + err.Name
+					}
+				}
+				idl.Errors = append(idl.Errors, err)
 			}
 		} else {
 			// No namespace - add types as-is
 			idl.Structs = append(idl.Structs, importedIDL.Structs...)
 			idl.Enums = append(idl.Enums, importedIDL.Enums...)
 			idl.Interfaces = append(idl.Interfaces, importedIDL.Interfaces...)
+			idl.Errors = append(idl.Errors, importedIDL.Errors...)
 		}
 	}
 

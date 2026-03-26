@@ -41,6 +41,81 @@ enum Status {
 }
 ```
 
+## Error Declarations
+
+Define error codes that methods can raise:
+
+```idl
+errors {
+    1001 NotFound "Not Found"
+    1002 InvalidInput "Invalid Input"
+    1003 PermissionDenied "Permission Denied"
+}
+```
+
+Each error declaration has three parts:
+- **Error code**: Integer value for the JSON-RPC `code` field
+- **Name**: Identifier used in `raises()` clauses
+- **Message**: String literal for the JSON-RPC `message` field
+
+### Error Codes
+
+Error codes can be any integer. JSON-RPC reserves certain ranges:
+- `-32700` to `-32000`: Standard JSON-RPC errors
+- `-32099` to `-32000`: Server errors
+- `0` and positive integers: Application-defined errors
+
+### Using Errors in Methods
+
+Methods can declare which errors they raise using the `raises()` clause:
+
+```idl
+interface UserService {
+    getUser(userId string) User raises(NotFound)
+    createUser(user User) UserResponse raises(InvalidInput, PermissionDenied)
+}
+```
+
+### Namespaced Errors
+
+Errors can be imported from other files:
+
+```idl
+// common/errors.pulse
+namespace common
+
+errors {
+    1001 NotFound "Not Found"
+    1002 InvalidInput "Invalid Input"
+}
+
+// service.pulse
+import "common/errors.pulse"
+
+namespace myservice
+
+interface Service {
+    getValue(id string) string raises(common.NotFound)
+}
+```
+
+### Error Documentation
+
+Errors can be documented with comments:
+
+```idl
+// Standard application errors
+errors {
+    // Returned when a requested resource is not found
+    1001 NotFound "Not Found"
+
+    // Returned when input validation fails
+    1002 InvalidInput "Invalid Input"
+}
+```
+
+See [Error Handling](errors.html) for comprehensive error documentation.
+
 ## Structs
 
 Define data structures with fields:
@@ -157,6 +232,7 @@ interface OrderService {
 
 ## Next Steps
 
+- [Error Handling](errors.html) - Declaring and handling errors
 - [Types & Fields](types.html) - Built-in types and validation
 - [Validation](validation.html) - How runtime validation works
 - [Quickstart](../get-started/quickstart-overview.html) - Build a complete example

@@ -1,0 +1,33 @@
+namespace example
+
+import "errors.pulse"
+
+// Pet management types
+struct Pet {
+    petId   string
+    name    string
+    status  string
+}
+
+struct NewPet {
+    name    string
+    status  string
+}
+
+struct createPetsResponse {
+    petId   string
+    name    string
+    status  string
+}
+
+// Pet service interface
+interface pets {
+    // getListPets returns a list of pets
+    getListPets(limit int) []Pet
+
+    // postCreatePets creates a new pet
+    postCreatePets(createPetsBody NewPet) createPetsResponse raises(api.InvalidInput, api.PermissionDenied)
+
+    // getShowPetById returns a specific pet by ID
+    getShowPetById(petId string) Pet raises(api.NotFound)
+}

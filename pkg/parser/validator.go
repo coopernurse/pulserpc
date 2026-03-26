@@ -25,7 +25,7 @@ func ValidateIDL(idl *IDL) error {
 
 	// Validate that the root file has a namespace declaration
 	// Exception: empty files (no types defined) are allowed without a namespace
-	isEmpty := len(idl.Interfaces) == 0 && len(idl.Structs) == 0 && len(idl.Enums) == 0
+	isEmpty := len(idl.Interfaces) == 0 && len(idl.Structs) == 0 && len(idl.Enums) == 0 && len(idl.Errors) == 0
 	if idl.RootNamespace == "" && !isEmpty {
 		errors.Add(&ValidationError{
 			Line:   0,
@@ -97,6 +97,36 @@ func ValidateIDL(idl *IDL) error {
 		}
 	}
 
+	// Register all errors and check for duplicate codes
+	errorCodes := make(map[int]lexer.Position) // code -> position
+	for _, err := range idl.Errors {
+		baseName := getBaseName(err.Name)
+		if !validateIdentifierName(baseName, errors, err.Pos.Line, err.Pos.Column) {
+			continue
+		}
+		if existingPos, exists := errorCodes[err.Code]; exists {
+			errors.Add(&ValidationError{
+				Line:   err.Pos.Line,
+				Column: err.Pos.Column,
+				Msg:    fmt.Sprintf("duplicate error code: %d (previously defined at %d:%d)", err.Code, existingPos.Line, existingPos.Column),
+			})
+		} else {
+			errorCodes[err.Code] = err.Pos
+		}
+
+		// Also check for duplicate error names in type registry
+		if existingPos, exists := typeRegistry[err.Name]; exists {
+			errors.Add(&ValidationError{
+				Line:   err.Pos.Line,
+				Column: err.Pos.Column,
+				Msg:    fmt.Sprintf("duplicate type name: %s (previously defined as %s at %d:%d)", err.Name, typeNames[err.Name], existingPos.Line, existingPos.Column),
+			})
+		} else {
+			typeRegistry[err.Name] = err.Pos
+			typeNames[err.Name] = "error"
+		}
+	}
+
 	// Second pass: validate everything now that all types are registered
 	for _, iface := range idl.Interfaces {
 		// Validate method names and types
@@ -104,12 +134,25 @@ func ValidateIDL(idl *IDL) error {
 			if !validateIdentifierName(method.Name, errors, method.Pos.Line, method.Pos.Column) {
 				continue
 			}
-			validateType(method.ReturnType, typeRegistry, errors)
+			validateType(method.ReturnType, typeRegistry, errors, iface.Namespace)
 			for _, param := range method.Parameters {
 				if !validateIdentifierName(param.Name, errors, param.Pos.Line, param.Pos.Column) {
 					continue
 				}
-				validateType(param.Type, typeRegistry, errors)
+				validateType(param.Type, typeRegistry, errors, iface.Namespace)
+			}
+
+			// Validate raises clauses reference existing errors
+			for _, raisesName := range method.Raises {
+				resolvedName := resolveErrorName(raisesName, typeRegistry, idl.RootNamespace)
+				_, exists := typeRegistry[resolvedName]
+				if !exists {
+					errors.Add(&ValidationError{
+						Line:   method.Pos.Line,
+						Column: method.Pos.Column,
+						Msg:    fmt.Sprintf("method %s raises unknown error: %s", method.Name, raisesName),
+					})
+				}
 			}
 		}
 	}
@@ -126,7 +169,7 @@ func ValidateIDL(idl *IDL) error {
 			}
 		}
 		for _, field := range s.Fields {
-			validateType(field.Type, typeRegistry, errors)
+			validateType(field.Type, typeRegistry, errors, s.Namespace)
 		}
 	}
 
@@ -141,7 +184,7 @@ func ValidateIDL(idl *IDL) error {
 }
 
 // validateType validates that a type exists and is well-formed
-func validateType(t *Type, typeRegistry map[string]lexer.Position, errors *ValidationErrors) {
+func validateType(t *Type, typeRegistry map[string]lexer.Position, errors *ValidationErrors, sourceNamespace string) {
 	if t == nil {
 		errors.Add(&ValidationError{
 			Line:   0,
@@ -166,19 +209,21 @@ func validateType(t *Type, typeRegistry map[string]lexer.Position, errors *Valid
 	}
 
 	if t.IsArray() {
-		validateType(t.Array, typeRegistry, errors)
+		validateType(t.Array, typeRegistry, errors, sourceNamespace)
 		return
 	}
 
 	if t.IsMap() {
 		// Map keys are always string, so we just validate the value type
-		validateType(t.MapValue, typeRegistry, errors)
+		validateType(t.MapValue, typeRegistry, errors, sourceNamespace)
 		return
 	}
 
 	if t.IsUserDefined() {
 		typeName := t.UserDefined
-		if _, exists := typeRegistry[typeName]; !exists && !builtInTypes[typeName] {
+		// Resolve the type name based on the source namespace
+		resolvedTypeName := resolveTypeName(typeName, typeRegistry, sourceNamespace)
+		if _, exists := typeRegistry[resolvedTypeName]; !exists && !builtInTypes[resolvedTypeName] {
 			errors.Add(&ValidationError{
 				Line:   line,
 				Column: column,
@@ -212,6 +257,51 @@ func validateIdentifierName(name string, errors *ValidationErrors, line, column 
 func getBaseName(name string) string {
 	parts := strings.Split(name, ".")
 	return parts[len(parts)-1]
+}
+
+// resolveErrorName resolves a potentially-unqualified error name to a fully-qualified name.
+// If the name is already qualified (contains a dot), it's returned as-is.
+// Otherwise, it attempts to resolve it by checking:
+// 1. If the unqualified name exists in the type registry, prefix with currentNamespace
+// 2. If currentNamespace.name exists, return that
+// 3. Otherwise, return the original name (will fail validation)
+// NOTE: Does NOT search across imported namespaces - imported errors must be fully qualified
+func resolveErrorName(name string, typeRegistry map[string]lexer.Position, currentNamespace string) string {
+	// If already qualified, return as-is
+	if strings.Contains(name, ".") {
+		return name
+	}
+
+	// Check if qualified version exists in current namespace
+	qualified := currentNamespace + "." + name
+	if _, exists := typeRegistry[qualified]; exists {
+		return qualified
+	}
+
+	// Not found in current namespace - return as-is (will fail validation with clear error message)
+	return name
+}
+
+// resolveTypeName resolves a potentially-unqualified type name to a fully-qualified name.
+// If the name is already qualified (contains a dot), it's returned as-is.
+// Otherwise, it attempts to resolve it by checking:
+// 1. If the unqualified name exists in the current namespace, prefix with currentNamespace
+// 2. Otherwise, return the original name (will fail validation)
+// NOTE: Does NOT search across imported namespaces - imported types must be fully qualified
+func resolveTypeName(name string, typeRegistry map[string]lexer.Position, currentNamespace string) string {
+	// If already qualified, return as-is
+	if strings.Contains(name, ".") {
+		return name
+	}
+
+	// Check if qualified version exists in current namespace
+	qualified := currentNamespace + "." + name
+	if _, exists := typeRegistry[qualified]; exists {
+		return qualified
+	}
+
+	// Not found in current namespace - return as-is (will fail validation with clear error message)
+	return name
 }
 
 // getReferencedTypes extracts user-defined type names from a Type

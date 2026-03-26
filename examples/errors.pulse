@@ -1,0 +1,13 @@
+namespace api
+
+// Standard error codes
+errors {
+    // Resource not found
+    1001 NotFound "Not Found"
+    // Input validation failed
+    1002 InvalidInput "Invalid Input"
+    // Permission denied
+    1003 PermissionDenied "Permission Denied"
+    // Resource already exists
+    1004 AlreadyExists "Already Exists"
+}

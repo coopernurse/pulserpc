@@ -10,6 +10,7 @@ type IDL struct {
 	Interfaces    []*Interface `json:"interfaces,omitempty"`
 	Structs       []*Struct    `json:"structs,omitempty"`
 	Enums         []*Enum      `json:"enums,omitempty"`
+	Errors        []*ErrorDef  `json:"errors,omitempty"`
 }
 
 // Interface represents a service interface with methods
@@ -28,6 +29,7 @@ type Method struct {
 	Parameters     []*Parameter   `json:"parameters,omitempty"`
 	ReturnType     *Type          `json:"returnType"`
 	ReturnOptional bool           `json:"returnOptional,omitempty"`
+	Raises         []string       `json:"raises,omitempty"`
 }
 
 // Parameter represents a method parameter
@@ -69,6 +71,16 @@ type Enum struct {
 	Namespace string         `json:"namespace,omitempty"`
 	Comment   string         `json:"comment,omitempty"`
 	Values    []*EnumValue   `json:"values,omitempty"`
+}
+
+// ErrorDef represents a declared error with code, name, and message
+type ErrorDef struct {
+	Pos       lexer.Position `json:"-"`
+	Name      string         `json:"name"`      // e.g., "NotFound" or "errors.NotFound" if imported
+	Namespace string         `json:"namespace,omitempty"` // Namespace where declared
+	Code      int            `json:"code"`      // JSON-RPC error code
+	Message   string         `json:"message"`   // Error message template
+	Comment   string         `json:"comment,omitempty"` // Documentation comment
 }
 
 // Type represents a type (built-in, array, map, or user-defined)

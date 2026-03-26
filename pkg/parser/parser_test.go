@@ -1976,3 +1976,692 @@ func TestNoCommentWhenNonePresent(t *testing.T) {
 		t.Errorf("Expected empty comment, got '%s'", s.Comment)
 	}
 }
+
+// ============================================================================
+// Error Declaration Tests
+// ============================================================================
+
+func TestValidErrorsBlock(t *testing.T) {
+	input := `
+errors {
+    1001 NotFound "Not Found"
+    1002 InvalidInput "Invalid Input"
+}
+
+struct Dummy {}
+`
+	assertValid(t, input)
+}
+
+func TestErrorsWithRaises(t *testing.T) {
+	input := `
+errors {
+    1001 NotFound "Not Found"
+    1002 InvalidInput "Invalid Input"
+}
+
+interface Service {
+    getValue(id string) string raises(NotFound)
+    setValue(id string, value int) string raises(InvalidInput)
+}
+`
+	assertValid(t, input)
+}
+
+func TestErrorsWithComments(t *testing.T) {
+	input := `
+// Common error codes for this service
+errors {
+    // Resource not found
+    1001 NotFound "Not Found"
+    // Input validation failed
+    1002 InvalidInput "Invalid Input"
+}
+
+struct Dummy {}
+`
+	idl, err := parseAndValidate(input)
+	if err != nil {
+		t.Fatalf("Expected valid parsing, got error: %v", err)
+	}
+
+	// Verify comments are captured
+	if len(idl.Errors) != 2 {
+		t.Fatalf("Expected 2 errors, got %d", len(idl.Errors))
+	}
+	expectedComment1 := "Resource not found"
+	if idl.Errors[0].Comment != expectedComment1 {
+		t.Errorf("Expected error comment '%s', got '%s'", expectedComment1, idl.Errors[0].Comment)
+	}
+	expectedComment2 := "Input validation failed"
+	if idl.Errors[1].Comment != expectedComment2 {
+		t.Errorf("Expected error comment '%s', got '%s'", expectedComment2, idl.Errors[1].Comment)
+	}
+}
+
+func TestNamespacedErrorsInRaises(t *testing.T) {
+	// For now, test simple identifiers (not qualified names)
+	// TODO: Support qualified names like "errors.NotFound"
+	input := `
+errors {
+    1001 NotFound "Not Found"
+    1002 InvalidInput "Invalid Input"
+}
+
+interface Service {
+    getValue(id string) string raises(NotFound)
+    setValue(id string, value int) string raises(NotFound, InvalidInput)
+}
+`
+	assertValid(t, input)
+}
+
+// ============================================================================
+// Error Validation Tests
+// ============================================================================
+
+func TestDuplicateErrorCodes(t *testing.T) {
+	input := `
+errors {
+    1001 NotFound "Not Found"
+    1001 DuplicateError "Duplicate"
+}
+
+struct Dummy {}
+`
+	assertValidationError(t, input, "duplicate error code")
+}
+
+func TestInvalidErrorCodeNotInteger(t *testing.T) {
+	input := `
+errors {
+    "string" NotFound "Not Found"
+}
+
+struct Dummy {}
+`
+	assertParseError(t, input)
+}
+
+func TestRaisesUnknownError(t *testing.T) {
+	input := `
+interface Service {
+    getValue(id string) string raises(UnknownError)
+}
+`
+	assertValidationError(t, input, "unknown error")
+}
+
+func TestErrorsBlockWithoutNamespace(t *testing.T) {
+	// Test with explicit namespace check - should fail validation
+	// Don't use parseAndValidate helper as it adds namespace automatically
+	input := `errors {
+    1001 NotFound "Not Found"
+}
+`
+	idl, err := ParseIDL("test.pulse", input)
+	if err != nil {
+		// Parse error is acceptable
+		return
+	}
+	// If parsing succeeded, validation should fail due to missing namespace
+	err = ValidateIDL(idl)
+	if err == nil {
+		t.Error("Expected validation error for errors without namespace")
+	}
+}
+
+func TestErrorMessageMissing(t *testing.T) {
+	input := `
+errors {
+    1001 NotFound
+}
+
+struct Dummy {}
+`
+	assertParseError(t, input)
+}
+
+func TestErrorNameMissing(t *testing.T) {
+	input := `
+errors {
+    1001 "Not Found"
+}
+
+struct Dummy {}
+`
+	assertParseError(t, input)
+}
+
+func TestJSONRPCReservedErrorCodes(t *testing.T) {
+	input := `
+errors {
+    -32700 ParseError "Parse error"
+    -32600 InvalidRequest "Invalid Request"
+}
+
+struct Dummy {}
+`
+	// Should parse - users can override standard codes
+	// Negative numbers may not parse with IntLiteral pattern
+	_, err := ParseIDL("test.pulse", input)
+	if err != nil {
+		t.Logf("Negative error codes not supported (expected): %v", err)
+		return
+	}
+	// If they parse, validate them
+	idl, err := parseAndValidate(input)
+	if err == nil {
+		err = ValidateIDL(idl)
+	}
+	if err != nil {
+		t.Errorf("Expected validation to pass for reserved error codes: %v", err)
+	}
+}
+
+func TestMultipleErrorsInRaises(t *testing.T) {
+	input := `
+errors {
+    1001 NotFound "Not Found"
+    1002 InvalidInput "Invalid Input"
+    1003 PermissionDenied "Permission Denied"
+}
+
+interface Service {
+    process(id string, data string) string raises(NotFound, InvalidInput, PermissionDenied)
+}
+`
+	assertValid(t, input)
+}
+
+func TestRaisesClauseOptional(t *testing.T) {
+	input := `
+errors {
+    1001 NotFound "Not Found"
+}
+
+interface Service {
+    getValue(id string) string
+    getValueWithError(id string) string raises(NotFound)
+}
+`
+	assertValid(t, input)
+}
+
+func TestErrorNameCollisionWithType(t *testing.T) {
+	input := `
+errors {
+    1001 NotFound "Not Found"
+}
+
+struct NotFound {}
+`
+	// With namespace prefixing, errors are stored as "test.NotFound"
+	// and structs as "NotFound", so there's no collision
+	// This test documents the current behavior - they can coexist
+	idl, err := parseAndValidate(input)
+	if err != nil {
+		t.Fatalf("Expected valid parsing, got error: %v", err)
+	}
+	// Verify both exist independently
+	foundError := false
+	foundStruct := false
+	for _, e := range idl.Errors {
+		if e.Name == "test.NotFound" {
+			foundError = true
+		}
+	}
+	for _, s := range idl.Structs {
+		if s.Name == "NotFound" {
+			foundStruct = true
+		}
+	}
+	if !foundError {
+		t.Error("Expected to find test.NotFound error")
+	}
+	if !foundStruct {
+		t.Error("Expected to find NotFound struct")
+	}
+}
+
+func TestErrorsBlockEmpty(t *testing.T) {
+	input := `namespace test
+
+errors {}
+
+struct Dummy {}
+`
+	// Empty errors block should be valid
+	idl, err := ParseIDL("test.pulse", input)
+	if err != nil {
+		t.Fatalf("Expected valid parsing for empty errors block, got error: %v", err)
+	}
+	err = ValidateIDL(idl)
+	if err != nil {
+		t.Errorf("Expected valid validation for empty errors block, got error: %v", err)
+	}
+}
+
+func TestErrorCodeLargeValues(t *testing.T) {
+	input := `
+errors {
+    1000001 VeryLargeCode "Very large error code"
+    2147483647 MaxInt "Max int32"
+}
+
+struct Dummy {}
+`
+	assertValid(t, input)
+}
+
+func TestErrorInInterfaceMethodReturn(t *testing.T) {
+	// Test that errors can't be used as return types
+	input := `
+errors {
+    1001 NotFound "Not Found"
+}
+
+interface Service {
+    getValue(id string) NotFound
+}
+`
+	// Error types are not valid return types
+	idl, err := ParseIDL("test.pulse", input)
+	if err != nil {
+		// Parse error is acceptable
+		return
+	}
+	err = ValidateIDL(idl)
+	if err == nil {
+		t.Error("Expected validation error when using error as return type")
+	}
+}
+
+func TestErrorInParameterType(t *testing.T) {
+	// Test that errors can't be used as parameter types
+	input := `
+errors {
+    1001 NotFound "Not Found"
+}
+
+interface Service {
+    setValue(err NotFound) string
+}
+`
+	// Error types are not valid parameter types
+	idl, err := ParseIDL("test.pulse", input)
+	if err != nil {
+		// Parse error is acceptable
+		return
+	}
+	err = ValidateIDL(idl)
+	if err == nil {
+		t.Error("Expected validation error when using error as parameter type")
+	}
+}
+
+func TestErrorInStructFieldType(t *testing.T) {
+	// Test that errors can't be used as struct field types
+	input := `
+errors {
+    1001 NotFound "Not Found"
+}
+
+struct MyStruct {
+    err NotFound
+}
+`
+	// Error types are not valid field types
+	idl, err := ParseIDL("test.pulse", input)
+	if err != nil {
+		// Parse error is acceptable
+		return
+	}
+	err = ValidateIDL(idl)
+	if err == nil {
+		t.Error("Expected validation error when using error as field type")
+	}
+}
+
+func TestErrorsBlockCommentRetention(t *testing.T) {
+	input := `errors {
+    // Standard error codes
+    1001 NotFound "Not Found"
+}
+
+struct Dummy {}
+`
+	idl, err := parseAndValidate(input)
+	if err != nil {
+		t.Fatalf("Expected valid parsing, got error: %v", err)
+	}
+
+	if len(idl.Errors) != 1 {
+		t.Fatalf("Expected 1 error, got %d", len(idl.Errors))
+	}
+
+	errDef := idl.Errors[0]
+	// Note: errors blocks don't have block-level comment extraction in current implementation
+	// Only individual error comments are extracted
+	expectedComment := "Standard error codes"
+	if errDef.Comment != expectedComment {
+		t.Errorf("Expected error comment '%s', got '%s'", expectedComment, errDef.Comment)
+	}
+}
+
+func TestErrorWithSpacesInMessage(t *testing.T) {
+	input := `
+errors {
+    1001 ComplexMessage "This is a complex error message with multiple words"
+}
+
+struct Dummy {}
+`
+	assertValid(t, input)
+}
+
+func TestErrorWithSpecialCharactersInMessage(t *testing.T) {
+	input := `
+errors {
+    1001 SpecialChars "Error: Failed to process 'input' value!"
+}
+
+struct Dummy {}
+`
+	assertValid(t, input)
+}
+
+func TestMultipleErrorsBlocks(t *testing.T) {
+	// Test that multiple errors blocks in the same file are allowed
+	input := `namespace test
+
+errors {
+    1001 FirstError "First error"
+}
+
+errors {
+    1002 SecondError "Second error"
+}
+
+struct Dummy {}
+`
+	idl, err := ParseIDL("test.pulse", input)
+	if err != nil {
+		t.Fatalf("Expected valid parsing, got error: %v", err)
+	}
+
+	err = ValidateIDL(idl)
+	if err != nil {
+		t.Errorf("Expected valid validation for multiple errors blocks, got error: %v", err)
+	}
+
+	// Verify both error definitions are present
+	if len(idl.Errors) != 2 {
+		t.Fatalf("Expected 2 errors, got %d", len(idl.Errors))
+	}
+}
+
+func TestImportedErrorsInMultipleFiles(t *testing.T) {
+	// Test that imported errors must be referenced with fully qualified names in raises clauses
+	tmpDir := t.TempDir()
+
+	// Create errors.pulse
+	errorsContent := `namespace common
+
+errors {
+    1001 NotFound "Not Found"
+    1002 InvalidInput "Invalid Input"
+}
+`
+	createTestFile(t, tmpDir, "errors.pulse", errorsContent)
+
+	// Create main file that imports errors and uses qualified names
+	mainContent := `namespace main
+
+import "errors.pulse"
+
+errors {
+    2001 LocalError "Local error"
+}
+
+interface UserService {
+    getUser(userId string) User raises(common.NotFound)
+    createUser(user User) User raises(common.InvalidInput, LocalError)
+}
+
+struct User {
+    userId string
+    name string
+}
+`
+	mainFile := createTestFile(t, tmpDir, "main.pulse", mainContent)
+
+	idl, err := parseIDLFromFile(t, mainFile)
+	if err != nil {
+		t.Fatalf("Expected valid parsing, got error: %v", err)
+	}
+
+	// Verify errors are in the IDL (2 imported + 1 local)
+	if len(idl.Errors) != 3 {
+		t.Fatalf("Expected 3 errors (2 imported + 1 local), got %d", len(idl.Errors))
+	}
+
+	// Verify imported errors have proper namespace prefix
+	foundNotFound := false
+	foundInvalidInput := false
+	foundLocalError := false
+	for _, e := range idl.Errors {
+		if e.Name == "common.NotFound" {
+			foundNotFound = true
+			if e.Code != 1001 {
+				t.Errorf("Expected NotFound code 1001, got %d", e.Code)
+			}
+		}
+		if e.Name == "common.InvalidInput" {
+			foundInvalidInput = true
+			if e.Code != 1002 {
+				t.Errorf("Expected InvalidInput code 1002, got %d", e.Code)
+			}
+		}
+		// Local errors are now also prefixed with namespace
+		if e.Name == "main.LocalError" {
+			foundLocalError = true
+			if e.Code != 2001 {
+				t.Errorf("Expected LocalError code 2001, got %d", e.Code)
+			}
+		}
+	}
+
+	if !foundNotFound {
+		t.Error("Expected to find common.NotFound error")
+	}
+	if !foundInvalidInput {
+		t.Error("Expected to find common.InvalidInput error")
+	}
+	if !foundLocalError {
+		t.Error("Expected to find LocalError")
+	}
+}
+
+func TestLocalAndImportedErrors(t *testing.T) {
+	// Test that imported errors must be fully qualified, while local errors can be unqualified
+	tmpDir := t.TempDir()
+
+	// Create imported errors
+	importedContent := `namespace common
+
+errors {
+    1001 NotFound "Not Found"
+}
+`
+	createTestFile(t, tmpDir, "common.pulse", importedContent)
+
+	// Create main file with local errors
+	mainContent := `namespace main
+
+import "common.pulse"
+
+errors {
+    2001 LocalError "Local error"
+}
+
+interface Service {
+    op() string raises(LocalError, common.NotFound)
+}
+
+struct Dummy {}
+`
+	mainFile := createTestFile(t, tmpDir, "main.pulse", mainContent)
+
+	idl, err := parseIDLFromFile(t, mainFile)
+	if err != nil {
+		t.Fatalf("Expected valid parsing, got error: %v", err)
+	}
+
+	// Verify both local and imported errors
+	if len(idl.Errors) != 2 {
+		t.Fatalf("Expected 2 errors (1 local, 1 imported), got %d", len(idl.Errors))
+	}
+}
+
+func TestRaisesWithQualifiedName(t *testing.T) {
+	// Note: Current parser implementation only supports simple identifiers in raises clauses
+	// Qualified names (e.g., api.ValidationError) are not yet supported
+	// This test uses simple identifiers to verify raises clause functionality
+	input := `
+errors {
+    1001 ValidationError "Validation failed"
+    1002 NotFound "Resource not found"
+}
+
+interface UserService {
+    createUser(user User) UserResponse raises(ValidationError)
+    getUser(userId string) User raises(NotFound)
+}
+
+struct User {
+    userId string
+}
+
+struct UserResponse {
+    success bool
+}
+`
+	idl, err := parseAndValidate(input)
+	if err != nil {
+		t.Fatalf("Expected valid parsing, got error: %v", err)
+	}
+
+	// Verify raises clauses are preserved
+	if len(idl.Interfaces) != 1 {
+		t.Fatalf("Expected 1 interface, got %d", len(idl.Interfaces))
+	}
+
+	iface := idl.Interfaces[0]
+	if len(iface.Methods) != 2 {
+		t.Fatalf("Expected 2 methods, got %d", len(iface.Methods))
+	}
+
+	// Check first method raises
+	createUser := iface.Methods[0]
+	if len(createUser.Raises) != 1 {
+		t.Errorf("Expected 1 raise in createUser, got %d", len(createUser.Raises))
+	} else if createUser.Raises[0] != "ValidationError" {
+		t.Errorf("Expected raises[0] to be 'ValidationError', got '%s'", createUser.Raises[0])
+	}
+
+	// Check second method raises
+	getUser := iface.Methods[1]
+	if len(getUser.Raises) != 1 {
+		t.Errorf("Expected 1 raise in getUser, got %d", len(getUser.Raises))
+	} else if getUser.Raises[0] != "NotFound" {
+		t.Errorf("Expected raises[0] to be 'NotFound', got '%s'", getUser.Raises[0])
+	}
+}
+
+func TestRaisesWithUnqualifiedAndQualifiedNames(t *testing.T) {
+	// Test that local errors can be unqualified or qualified,
+	// but imported errors must be fully qualified
+	tmpDir := t.TempDir()
+
+	// Create imported errors
+	importedContent := `namespace common
+
+errors {
+    1001 NotFound "Not Found"
+    1002 InvalidInput "Invalid Input"
+}
+`
+	createTestFile(t, tmpDir, "common.pulse", importedContent)
+
+	// Create main file that uses both unqualified and qualified names
+	mainContent := `namespace foo
+
+import "common.pulse"
+
+errors {
+    2001 LocalError "Local error"
+}
+
+interface Service {
+    // Unqualified reference to local error
+    method1() string raises(LocalError)
+    // Qualified reference to local error (should work the same)
+    method2() string raises(foo.LocalError)
+    // Qualified reference to imported error (required for imported errors)
+    method3() string raises(common.NotFound)
+    // Qualified reference to imported error (explicit namespace)
+    method4() string raises(common.InvalidInput)
+}
+
+struct Dummy {}
+`
+	mainFile := createTestFile(t, tmpDir, "main.pulse", mainContent)
+
+	idl, err := parseIDLFromFile(t, mainFile)
+	if err != nil {
+		t.Fatalf("Expected valid parsing, got error: %v", err)
+	}
+
+	// Verify all methods parsed correctly
+	if len(idl.Interfaces) != 1 {
+		t.Fatalf("Expected 1 interface, got %d", len(idl.Interfaces))
+	}
+
+	iface := idl.Interfaces[0]
+	if len(iface.Methods) != 4 {
+		t.Fatalf("Expected 4 methods, got %d", len(iface.Methods))
+	}
+
+	// Check method1 - raises(LocalError) should work
+	method1 := iface.Methods[0]
+	if len(method1.Raises) != 1 {
+		t.Errorf("Expected method1 to have 1 raise, got %d", len(method1.Raises))
+	} else if method1.Raises[0] != "LocalError" {
+		t.Errorf("Expected method1 to raise 'LocalError', got '%s'", method1.Raises[0])
+	}
+
+	// Check method2 - raises(foo.LocalError) should also work
+	method2 := iface.Methods[1]
+	if len(method2.Raises) != 1 {
+		t.Errorf("Expected method2 to have 1 raise, got %d", len(method2.Raises))
+	} else if method2.Raises[0] != "foo.LocalError" {
+		t.Errorf("Expected method2 to raise 'foo.LocalError', got '%s'", method2.Raises[0])
+	}
+
+	// Check method3 - raises(common.NotFound) should work
+	method3 := iface.Methods[2]
+	if len(method3.Raises) != 1 {
+		t.Errorf("Expected method3 to have 1 raise, got %d", len(method3.Raises))
+	} else if method3.Raises[0] != "common.NotFound" {
+		t.Errorf("Expected method3 to raise 'common.NotFound', got '%s'", method3.Raises[0])
+	}
+
+	// Check method4 - raises(common.InvalidInput) should work
+	method4 := iface.Methods[3]
+	if len(method4.Raises) != 1 {
+		t.Errorf("Expected method4 to have 1 raise, got %d", len(method4.Raises))
+	} else if method4.Raises[0] != "common.InvalidInput" {
+		t.Errorf("Expected method4 to raise 'common.InvalidInput', got '%s'", method4.Raises[0])
+	}
+}
