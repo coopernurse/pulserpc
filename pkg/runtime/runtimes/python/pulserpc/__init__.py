@@ -21,6 +21,9 @@ from .types import (
     find_enum,
     get_struct_fields,
 )
+from .server import Server
+from .client import Client, InterfaceProxy
+from .transport import Transport, HttpTransport, InProcTransport
 
 __all__ = [
     "RPCError",
@@ -36,5 +39,11 @@ __all__ = [
     "find_struct",
     "find_enum",
     "get_struct_fields",
+    "Server",
+    "Client",
+    "InterfaceProxy",
+    "Transport",
+    "HttpTransport",
+    "InProcTransport",
 ]
 
