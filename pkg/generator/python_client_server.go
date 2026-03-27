@@ -187,7 +187,19 @@ func generateNamespacePy(namespace string, types *NamespaceTypes) string {
 	sb.WriteString(fmt.Sprintf("# IDL-specific type definitions for namespace: %s\n", namespace))
 	sb.WriteString("ALL_STRUCTS = {\n")
 	for _, s := range types.Structs {
-		sb.WriteString(fmt.Sprintf("    '%s': {\n", s.Name))
+		// Use fully qualified name as key (e.g., "checkout.CartItem")
+		// The struct's Name field may be:
+		// - Simple name (e.g., "CartItem") for types defined in the current file
+		// - Qualified name (e.g., "inc.Response") for imported types
+		var qualifiedName string
+		if strings.Contains(s.Name, ".") {
+			// Name is already qualified (imported type)
+			qualifiedName = s.Name
+		} else {
+			// Name is simple, prefix with current namespace
+			qualifiedName = namespace + "." + s.Name
+		}
+		sb.WriteString(fmt.Sprintf("    '%s': {\n", qualifiedName))
 		if s.Extends != "" {
 			sb.WriteString(fmt.Sprintf("        'extends': '%s',\n", s.Extends))
 		}
@@ -210,7 +222,19 @@ func generateNamespacePy(namespace string, types *NamespaceTypes) string {
 
 	sb.WriteString("ALL_ENUMS = {\n")
 	for _, e := range types.Enums {
-		sb.WriteString(fmt.Sprintf("    '%s': {\n", e.Name))
+		// Use fully qualified name as key (e.g., "checkout.Status")
+		// The enum's Name field may be:
+		// - Simple name (e.g., "Status") for types defined in the current file
+		// - Qualified name (e.g., "inc.Status") for imported types
+		var qualifiedName string
+		if strings.Contains(e.Name, ".") {
+			// Name is already qualified (imported type)
+			qualifiedName = e.Name
+		} else {
+			// Name is simple, prefix with current namespace
+			qualifiedName = namespace + "." + e.Name
+		}
+		sb.WriteString(fmt.Sprintf("    '%s': {\n", qualifiedName))
 		sb.WriteString("        'values': [\n")
 		for _, val := range e.Values {
 			sb.WriteString(fmt.Sprintf("            {'name': '%s'},\n", val.Name))
@@ -255,7 +279,8 @@ func writeTypeDictWithNamespace(sb *strings.Builder, t *parser.Type, currentName
 					}
 				}
 			}
-			// If it's from the current namespace, qualify it
+			// If it's from the current namespace, qualify it with the namespace prefix
+			// This ensures type references match the qualified keys in ALL_STRUCTS
 			if isFromCurrentNamespace {
 				typeName = currentNamespace + "." + typeName
 			}
@@ -995,8 +1020,10 @@ func writeDefaultTestReturn(sb *strings.Builder, returnType *parser.Type, struct
 		sb.WriteString("        return {}\n\n")
 	} else if returnType.IsUserDefined() {
 		// Check if it's a struct
-		if structMap[returnType.UserDefined] != nil {
-			s := structMap[returnType.UserDefined]
+		// Extract base name to handle qualified names (e.g., "inc.Response" -> "Response")
+		baseTypeName := GetBaseName(returnType.UserDefined)
+		if structMap[baseTypeName] != nil {
+			s := structMap[baseTypeName]
 			sb.WriteString("        return {\n")
 			// Handle inheritance - get all fields including parent
 			// For now, just use the struct's direct fields
@@ -1028,9 +1055,9 @@ func writeDefaultTestReturn(sb *strings.Builder, returnType *parser.Type, struct
 				}
 			}
 			sb.WriteString("        }\n\n")
-		} else if enumMap[returnType.UserDefined] != nil {
+		} else if enumMap[baseTypeName] != nil {
 			// Return first enum value
-			e := enumMap[returnType.UserDefined]
+			e := enumMap[baseTypeName]
 			if len(e.Values) > 0 {
 				fmt.Fprintf(sb, "        return \"%s\"\n\n", e.Values[0].Name)
 			} else {
@@ -1064,10 +1091,12 @@ func writeDefaultTestValue(sb *strings.Builder, t *parser.Type, structMap map[st
 	} else if t.IsMap() {
 		sb.WriteString("{}")
 	} else if t.IsUserDefined() {
-		if structMap[t.UserDefined] != nil {
+		// Extract base name to handle qualified names (e.g., "inc.Response" -> "Response")
+		baseTypeName := GetBaseName(t.UserDefined)
+		if structMap[baseTypeName] != nil {
 			sb.WriteString("{}")
-		} else if enumMap[t.UserDefined] != nil {
-			e := enumMap[t.UserDefined]
+		} else if enumMap[baseTypeName] != nil {
+			e := enumMap[baseTypeName]
 			if len(e.Values) > 0 {
 				fmt.Fprintf(sb, "\"%s\"", e.Values[0].Name)
 			} else {
@@ -1267,7 +1296,7 @@ func generateTestParamValue(t *parser.Type, paramName string, structMap map[stri
 	} else if t.IsMap() {
 		return "{}"
 	} else if t.IsUserDefined() {
-		// Check if it's a struct
+		// Check if it's a struct (use full qualified name for lookup)
 		if structMap[t.UserDefined] != nil {
 			s := structMap[t.UserDefined]
 			// Build struct dict
@@ -1281,14 +1310,9 @@ func generateTestParamValue(t *parser.Type, paramName string, structMap map[stri
 					fields = append(fields, fmt.Sprintf("'%s': %s", field.Name, fieldValue))
 				}
 			}
-			// Handle inheritance
+			// Handle inheritance (use full qualified name for lookup)
 			if s.Extends != "" {
-				baseName := s.Extends
-				if strings.Contains(baseName, ".") {
-					parts := strings.Split(baseName, ".")
-					baseName = parts[len(parts)-1]
-				}
-				if baseStruct := structMap[baseName]; baseStruct != nil {
+				if baseStruct := structMap[s.Extends]; baseStruct != nil {
 					for _, field := range baseStruct.Fields {
 						if !field.Optional {
 							fieldValue := generateTestParamValue(field.Type, field.Name, structMap, enumMap)

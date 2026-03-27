@@ -73,7 +73,10 @@ pkg/runtime/runtimes/{lang}/
 │   ├── __init__.{ext}       # Package exports (if applicable)
 │   ├── rpc.{ext}            # RPC error handling
 │   ├── validation.{ext}     # Type validation functions
-│   └── types.{ext}          # Type helper functions
+│   ├── types.{ext}          # Type helper functions
+│   ├── transport.{ext}      # Transport abstraction (Python-specific)
+│   ├── client.{ext}         # Transport-independent Client (Python-specific)
+│   └── server.{ext}         # Transport-independent Server (Python-specific)
 ├── tests/                   # Unit tests for runtime
 │   ├── test_validation.{ext}
 │   ├── test_types.{ext}
@@ -81,6 +84,22 @@ pkg/runtime/runtimes/{lang}/
 ├── Makefile                 # Build/test targets
 └── README.md                # Runtime-specific documentation
 ```
+
+**Python-Specific Modular Architecture:**
+
+The Python runtime uses a modular architecture that separates transport logic from RPC handling:
+
+- **`pulserpc/Server`**: Transport-independent server class that processes JSON-RPC requests
+- **`pulserpc/Client`**: Transport-independent client class that sends JSON-RPC requests
+- **`pulserpc/Transport`**: Abstract transport interface
+- **`pulserpc/HttpTransport`**: HTTP transport implementation
+- **`pulserpc/InProcTransport`**: In-process transport for testing
+
+Generated code (`server.py`, `client.py`) creates thin wrappers around these core classes:
+- Generated `server.py` creates a module-level `Server` instance and provides `PulseRPCServer` HTTP wrapper
+- Generated `client.py` creates `{Interface}Client` classes that use the `Client` class
+
+This design allows the runtime to support multiple transports (HTTP, WebSocket, etc.) without code duplication.
 
 ### Runtime Library Components
 
@@ -364,20 +383,90 @@ ALL_ENUMS = {
      - Returns the IDL JSON document (from embedded constant in server file)
      - Allows clients to introspect the IDL
 
+   **Python-Specific Architecture:**
+   The Python runtime uses a two-tier server architecture:
+   - **Core `Server` class** (from `pulserpc` package): Transport-independent request processing
+   - **Generated `PulseRPCServer` class**: HTTP wrapper around the core `Server`
+
+   Generated `server.py` structure:
+   ```python
+   # At top of server.py:
+   from pulserpc import Server, RPCError
+
+   # Load IDL metadata from idl.json
+   with open('idl.json', 'r') as f:
+       IDL_DATA = json.load(f)
+
+   # Create module-level Server instance with validation enabled
+   server = Server(validate_requests=True, validate_responses=True)
+   server.load_idl(IDL_DATA, ALL_STRUCTS, ALL_ENUMS)
+
+   # Generate abstract interface stub classes
+   class CatalogService:
+       def listProducts(self) -> list: ...
+       def getProduct(self, productId: str) -> dict: ...
+
+   # HTTP wrapper class
+   class PulseRPCServer:
+       def __init__(self, host='localhost', port=8080):
+           self.host = host
+           self.port = port
+
+       def register(self, interface_name, instance):
+           server.add_handler(interface_name, instance)
+
+       def serve_forever(self):
+           # Start HTTP server that calls server.call() for each request
+   ```
+
 3. **Server Lifecycle**:
    - `serve_forever()` or equivalent - start server
    - `shutdown()` or equivalent - stop server
    - Configurable host and port
 
 **Example Server Structure**:
+
+For Python (using modular architecture):
+```python
+# Generated server.py imports Server from pulserpc runtime
+from pulserpc import Server, RPCError
+
+# Module-level server instance (created by generator)
+server = Server(validate_requests=True, validate_responses=True)
+server.load_idl(IDL_DATA, ALL_STRUCTS, ALL_ENUMS)
+
+# Abstract interface stub (generated)
+class CatalogService:
+    def listProducts(self) -> list: pass
+    def getProduct(self, productId: str) -> dict: pass
+
+# HTTP wrapper (generated)
+class PulseRPCServer:
+    def __init__(self, host='localhost', port=8080):
+        self.host = host
+        self.port = port
+        self._http_server = None
+
+    def register(self, interface_name, instance):
+        # Delegate to module-level server
+        server.add_handler(interface_name, instance)
+
+    def serve_forever(self):
+        # Start HTTP server that calls server.call() for each request
+        handler_class = self._create_handler_class()
+        self._http_server = HTTPServer((self.host, self.port), handler_class)
+        self._http_server.serve_forever()
+```
+
+For other languages (monolithic architecture):
 ```python
 class PulseRPCServer:
     def __init__(self, host='localhost', port=8080):
         self.handlers = {}
-    
+
     def register(self, interface_name, instance):
         self.handlers[interface_name] = instance
-    
+
     def handle_request(self, request_json):
         # Validate JSON-RPC structure
         # Handle pulserpc-idl
@@ -386,7 +475,7 @@ class PulseRPCServer:
         # Call handler method
         # Validate response
         # Return JSON-RPC response
-    
+
     def serve_forever(self):
         # Start HTTP server
 ```
@@ -418,7 +507,72 @@ class PulseRPCServer:
    - **Response validation**: Validate response before returning
    - Raise `RPCError` on JSON-RPC errors
 
+**Python-Specific Architecture:**
+The Python runtime provides transport and client classes in the `pulserpc` package:
+- **`pulserpc.Transport`**: Abstract transport interface
+- **`pulserpc.HttpTransport`**: HTTP transport implementation (note: camelCase `HttpTransport`, not `HTTPTransport`)
+- **`pulserpc.InProcTransport`**: In-process transport for testing (bypasses network)
+- **`pulserpc.Client`**: Transport-independent client class
+
+Generated `client.py` creates interface-specific client classes that use these:
+```python
+# At top of generated client.py:
+from pulserpc import Client, HttpTransport, RPCError
+
+# Generated interface client:
+class CatalogServiceClient:
+    def __init__(self, client: Client):
+        self._client = client
+        self._iface_name = 'CatalogService'
+
+    def listProducts(self):
+        method_name = 'CatalogService.listProducts'
+        params = {}
+        return self._client.call(method_name, params)
+```
+
 **Example Client Structure**:
+
+For Python (using modular architecture):
+```python
+# In pulserpc/transport.py (runtime library):
+class Transport(ABC):
+    @abstractmethod
+    def request(self, req: dict) -> dict:
+        pass
+
+class HttpTransport(Transport):
+    def __init__(self, base_url: str, headers: Optional[Dict[str, str]] = None):
+        self.base_url = base_url
+        self.headers = headers or {}
+
+    def request(self, req: dict) -> dict:
+        # Send HTTP POST request
+        # Return JSON-RPC response
+        pass
+
+# In pulserpc/client.py (runtime library):
+class Client:
+    def __init__(self, transport: Transport):
+        self.transport = transport
+
+    def call(self, method: str, params: dict) -> Any:
+        # Build JSON-RPC request
+        # Send via transport
+        # Handle response
+        pass
+
+# In generated client.py:
+class BookServiceClient:
+    def __init__(self, client: Client):
+        self._client = client
+
+    def getBook(self, bookId: str):
+        params = {'bookId': bookId}
+        return self._client.call('BookService.getBook', params)
+```
+
+For other languages (monolithic architecture):
 ```python
 class Transport(ABC):
     @abstractmethod
@@ -774,21 +928,47 @@ The test client must:
 - **Report test results**: Print pass/fail for each test and exit with appropriate code
 - **Wait for server**: Include logic to wait for server to be ready before running tests
 
-**Example structure**:
+**Example structure** (Python):
 ```python
+from pulserpc import HttpTransport
+from client import AClient
+
 def main():
-    transport = HTTPTransport("http://localhost:8080")
+    transport = HttpTransport("http://localhost:8080")
     client = AClient(transport)
-    
+
     errors = []
-    
+
     try:
         result = client.add(2, 3)
         assert result == 5
         print("✓ A.add passed")
     except Exception as e:
         errors.append(f"A.add failed: {e}")
-    
+
+    if errors:
+        print(f"FAILED: {len(errors)} test(s) failed")
+        sys.exit(1)
+    else:
+        print("SUCCESS: All tests passed!")
+        sys.exit(0)
+```
+
+**Example structure** (other languages):
+```python
+def main():
+    transport = HTTPTransport("http://localhost:8080")
+    client = AClient(transport)
+
+    errors = []
+
+    try:
+        result = client.add(2, 3)
+        assert result == 5
+        print("✓ A.add passed")
+    except Exception as e:
+        errors.append(f"A.add failed: {e}")
+
     if errors:
         print(f"FAILED: {len(errors)} test(s) failed")
         sys.exit(1)

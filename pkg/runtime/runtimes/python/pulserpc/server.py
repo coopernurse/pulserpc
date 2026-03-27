@@ -50,12 +50,24 @@ class Server:
         if all_structs is None:
             all_structs = {}
             for struct in idl_data.get('structs', []):
-                all_structs[struct['name']] = struct
+                # Use fully qualified name (e.g., "checkout.Product")
+                namespace = struct.get('namespace', '')
+                if namespace:
+                    qualified_name = f"{namespace}.{struct['name']}"
+                else:
+                    qualified_name = struct['name']
+                all_structs[qualified_name] = struct
 
         if all_enums is None:
             all_enums = {}
             for enum in idl_data.get('enums', []):
-                all_enums[enum['name']] = enum
+                # Use fully qualified name (e.g., "checkout.Status")
+                namespace = enum.get('namespace', '')
+                if namespace:
+                    qualified_name = f"{namespace}.{enum['name']}"
+                else:
+                    qualified_name = enum['name']
+                all_enums[qualified_name] = enum
 
         self.all_structs = all_structs
         self.all_enums = all_enums

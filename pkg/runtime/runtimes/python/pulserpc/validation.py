@@ -137,12 +137,28 @@ def validate_type(
     elif type_def.get('userDefined'):
         user_type = type_def['userDefined']
         # Check if it's a struct
+        # Try direct lookup first (for qualified names like "inc.Response")
         struct_def = find_struct(user_type, all_structs)
+        # If not found and it's a simple name (no dot), try qualifying with each namespace
+        if not struct_def and '.' not in user_type:
+            # Try to find the struct by looking for any qualified key that ends with this simple name
+            for qualified_key in all_structs:
+                if qualified_key.endswith('.' + user_type):
+                    struct_def = all_structs[qualified_key]
+                    user_type = qualified_key  # Update to use the qualified name
+                    break
         if struct_def:
             validate_struct(value, user_type, struct_def, all_structs, all_enums)
         # Check if it's an enum
         else:
             enum_def = find_enum(user_type, all_enums)
+            # If not found and it's a simple name (no dot), try qualifying with each namespace
+            if not enum_def and '.' not in user_type:
+                # Try to find the enum by looking for any qualified key that ends with this simple name
+                for qualified_key in all_enums:
+                    if qualified_key.endswith('.' + user_type):
+                        enum_def = all_enums[qualified_key]
+                        break
             if enum_def:
                 allowed_values = [v['name'] for v in enum_def.get('values', [])]
                 validate_enum(value, user_type, allowed_values)

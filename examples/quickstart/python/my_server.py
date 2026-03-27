@@ -47,7 +47,7 @@ class CartServiceImpl(CartService):
         # Use a counter instead of random for deterministic cart IDs
         global _call_count
         _call_count += 1
-        
+
         if request.get("cartId"):
             cart_id = request.get("cartId")
         else:

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 import os
-from client import HTTPTransport, CatalogServiceClient, CartServiceClient, OrderServiceClient
+from pulserpc import HttpTransport, Client
+from client import CatalogServiceClient, CartServiceClient, OrderServiceClient
 from pulserpc import RPCError
 
 # Connect to server
 port = os.environ.get("SERVER_PORT", "8080")
-transport = HTTPTransport(f"http://localhost:{port}")
-catalog = CatalogServiceClient(transport)
-cart = CartServiceClient(transport)
-orders = OrderServiceClient(transport)
+transport = HttpTransport(f"http://localhost:{port}")
+client = Client(transport)
+catalog = CatalogServiceClient(client)
+cart = CartServiceClient(client)
+orders = OrderServiceClient(client)
 
 # List products
 print("=== Products ===")
@@ -18,20 +20,20 @@ for p in products:
 
 # Create cart and add items
 print("\n=== Creating Cart ===")
-cart_data = cart.addToCart({
+cart_response = cart.addToCart({
     'productId': products[0]['productId'],
     'quantity': 2
 })
-my_cart = cart_data
+my_cart = cart_response
 print(f"Cart: {my_cart['cartId']}, Subtotal: ${my_cart['subtotal']:.2f}")
 
 # Add another item
-cart_data = cart.addToCart({
+cart_response = cart.addToCart({
     'cartId': my_cart['cartId'],
     'productId': products[1]['productId'],
     'quantity': 1
 })
-my_cart = cart_data
+my_cart = cart_response
 print(f"Updated Subtotal: ${my_cart['subtotal']:.2f}")
 
 # Create order

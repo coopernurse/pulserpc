@@ -170,7 +170,7 @@ func generateNamespaceTs(namespace string, types *NamespaceTypes) string {
 	sb.WriteString(fmt.Sprintf("// IDL-specific type definitions for namespace: %s\n", namespace))
 	sb.WriteString("const ALL_STRUCTS: StructMap = {\n")
 	for _, s := range types.Structs {
-		sb.WriteString(fmt.Sprintf("  '%s': {\n", s.Name))
+		sb.WriteString(fmt.Sprintf("  '%s.%s': {\n", namespace, GetBaseName(s.Name)))
 		if s.Extends != "" {
 			sb.WriteString(fmt.Sprintf("    extends: '%s',\n", s.Extends))
 		}
@@ -193,7 +193,7 @@ func generateNamespaceTs(namespace string, types *NamespaceTypes) string {
 
 	sb.WriteString("const ALL_ENUMS: EnumMap = {\n")
 	for _, e := range types.Enums {
-		sb.WriteString(fmt.Sprintf("  '%s': {\n", e.Name))
+		sb.WriteString(fmt.Sprintf("  '%s.%s': {\n", namespace, GetBaseName(e.Name)))
 		sb.WriteString("    values: [\n")
 		for _, val := range e.Values {
 			sb.WriteString(fmt.Sprintf("      { name: '%s' },\n", val.Name))
@@ -347,7 +347,7 @@ func generateServerTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string
 	sb.WriteString("  }\n\n")
 
 	// Generate handleRequest method
-	writeServerHandleRequestTs(&sb, idl.Interfaces)
+	writeServerHandleRequestTs(&sb, idl.Interfaces, namespaceMap)
 
 	// Generate serveForever and shutdown methods
 	sb.WriteString("  serveForever(): void {\n")
@@ -441,7 +441,7 @@ func writeInterfaceStubTs(sb *strings.Builder, iface *parser.Interface, packageP
 }
 
 // writeServerHandleRequestTs generates the handleRequest method for the server
-func writeServerHandleRequestTs(sb *strings.Builder, interfaces []*parser.Interface) {
+func writeServerHandleRequestTs(sb *strings.Builder, interfaces []*parser.Interface, namespaceMap map[string]*NamespaceTypes) {
 	sb.WriteString("  handleRequest(requestJson: any): any {\n")
 	sb.WriteString("    // Validate JSON-RPC 2.0 structure\n")
 	sb.WriteString("    if (typeof requestJson !== 'object' || requestJson === null || Array.isArray(requestJson)) {\n")
@@ -506,7 +506,7 @@ func writeServerHandleRequestTs(sb *strings.Builder, interfaces []*parser.Interf
 	// Find method definition
 	sb.WriteString("    // Find interface and method definition\n")
 	sb.WriteString("    let methodDef: any = null;\n\n")
-	writeInterfaceMethodLookupTs(sb, interfaces)
+	writeInterfaceMethodLookupTs(sb, interfaces, namespaceMap)
 	sb.WriteString("    if (!methodDef) {\n")
 	sb.WriteString("      return this.errorResponse(requestId, -32601, 'Method not found', `Method '${methodName}' not found in interface '${interfaceName}'`);\n")
 	sb.WriteString("    }\n\n")
@@ -585,7 +585,7 @@ func writeServerHandleRequestTs(sb *strings.Builder, interfaces []*parser.Interf
 }
 
 // writeInterfaceMethodLookupTs generates code to find method definitions
-func writeInterfaceMethodLookupTs(sb *strings.Builder, interfaces []*parser.Interface) {
+func writeInterfaceMethodLookupTs(sb *strings.Builder, interfaces []*parser.Interface, namespaceMap map[string]*NamespaceTypes) {
 	for i, iface := range interfaces {
 		if i == 0 {
 			fmt.Fprintf(sb, "    if (interfaceName === '%s') {\n", iface.Name)
@@ -600,13 +600,16 @@ func writeInterfaceMethodLookupTs(sb *strings.Builder, interfaces []*parser.Inte
 				sb.WriteString("            {\n")
 				fmt.Fprintf(sb, "              name: '%s',\n", param.Name)
 				sb.WriteString("              type: ")
-				writeTypeDictTs(sb, param.Type)
+				// Get namespace context for this interface
+				nsTypes := namespaceMap[iface.Namespace]
+				writeTypeDictWithNamespaceTs(sb, param.Type, iface.Namespace, nsTypes)
 				sb.WriteString(",\n")
 				sb.WriteString("            },\n")
 			}
 			sb.WriteString("          ],\n")
 			sb.WriteString("          returnType: ")
-			writeTypeDictTs(sb, method.ReturnType)
+			nsTypes := namespaceMap[iface.Namespace]
+			writeTypeDictWithNamespaceTs(sb, method.ReturnType, iface.Namespace, nsTypes)
 			sb.WriteString(",\n")
 			if method.ReturnOptional {
 				sb.WriteString("          returnOptional: true,\n")
@@ -684,7 +687,7 @@ func generateClientTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string
 
 	// Generate client classes for each interface
 	for _, iface := range idl.Interfaces {
-		writeInterfaceClientTs(&sb, iface, idl.Interfaces, packagePrefix)
+		writeInterfaceClientTs(&sb, iface, idl.Interfaces, packagePrefix, namespaceMap)
 	}
 
 	return sb.String()
@@ -775,7 +778,7 @@ func writeHTTPTransportTs(sb *strings.Builder, packagePrefix string) {
 }
 
 // writeInterfaceClientTs generates a client class for an interface
-func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, _ []*parser.Interface, packagePrefix string) {
+func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, _ []*parser.Interface, packagePrefix string, namespaceMap map[string]*NamespaceTypes) {
 	if iface.Comment != "" {
 		lines := strings.Split(strings.TrimSpace(iface.Comment), "\n")
 		for _, line := range lines {
@@ -793,6 +796,8 @@ func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, _ []*p
 	sb.WriteString("    this.transport = transport;\n")
 	sb.WriteString("    // Method definitions for validation\n")
 	sb.WriteString("    this.methodDefs = {\n")
+	// Get namespace context for this interface
+	nsTypes := namespaceMap[iface.Namespace]
 	for _, method := range iface.Methods {
 		fmt.Fprintf(sb, "      '%s': {\n", method.Name)
 		sb.WriteString("        parameters: [\n")
@@ -800,13 +805,13 @@ func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, _ []*p
 			sb.WriteString("          {\n")
 			fmt.Fprintf(sb, "            name: '%s',\n", param.Name)
 			sb.WriteString("            type: ")
-			writeTypeDictTs(sb, param.Type)
+			writeTypeDictWithNamespaceTs(sb, param.Type, iface.Namespace, nsTypes)
 			sb.WriteString(",\n")
 			sb.WriteString("          },\n")
 		}
 		sb.WriteString("        ],\n")
 		sb.WriteString("        returnType: ")
-		writeTypeDictTs(sb, method.ReturnType)
+		writeTypeDictWithNamespaceTs(sb, method.ReturnType, iface.Namespace, nsTypes)
 		sb.WriteString(",\n")
 		if method.ReturnOptional {
 			sb.WriteString("        returnOptional: true,\n")
