@@ -142,14 +142,28 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	namespaceMap := GroupTypesByNamespace(idl)
 
 	// Get the primary namespace for package name
+	// Prefer the namespace that has interfaces (the main IDL file)
+	// over namespaces that only have imported types
 	primaryNs := ""
 
-	for ns := range namespaceMap {
-		if ns != "" {
+	// First, try to find a namespace with interfaces
+	for ns, types := range namespaceMap {
+		if ns != "" && len(types.Interfaces) > 0 {
 			primaryNs = ns
 			break
 		}
 	}
+
+	// If no namespace has interfaces, pick the first non-empty one
+	if primaryNs == "" {
+		for ns := range namespaceMap {
+			if ns != "" {
+				primaryNs = ns
+				break
+			}
+		}
+	}
+
 	if primaryNs == "" {
 		primaryNs = "generated"
 	}
@@ -457,18 +471,25 @@ func getGoStructOrEnumTypeName(typeName string, structMap map[string]*parser.Str
 }
 
 // writeTypeDictGo writes a type definition as a Go map literal
-func writeTypeDictGo(sb *strings.Builder, t *parser.Type) {
+func writeTypeDictGo(sb *strings.Builder, t *parser.Type, namespace string) {
 	sb.WriteString("map[string]interface{}{")
 	if t.IsBuiltIn() {
 		fmt.Fprintf(sb, "\"builtIn\": \"%s\"", t.BuiltIn)
 	} else if t.IsArray() {
 		sb.WriteString("\"array\": ")
-		writeTypeDictGo(sb, t.Array)
+		writeTypeDictGo(sb, t.Array, namespace)
 	} else if t.IsMap() {
 		sb.WriteString("\"mapValue\": ")
-		writeTypeDictGo(sb, t.MapValue)
+		writeTypeDictGo(sb, t.MapValue, namespace)
 	} else if t.IsUserDefined() {
-		fmt.Fprintf(sb, "\"userDefined\": \"%s\"", t.UserDefined)
+		// Construct fully qualified name for user-defined types
+		// If the type is already qualified (e.g., "inc.Response"), use it as-is
+		// Otherwise, prefix it with the current namespace
+		typeName := t.UserDefined
+		if namespace != "" && !strings.Contains(typeName, ".") {
+			typeName = namespace + "." + typeName
+		}
+		fmt.Fprintf(sb, "\"userDefined\": \"%s\"", typeName)
 	}
 	sb.WriteString("}")
 }
@@ -497,7 +518,12 @@ func generateNamespaceGo(namespace string, primaryNs string, types *NamespaceTyp
 	nsUpper := strings.ToUpper(strings.ReplaceAll(namespace, ".", "_"))
 	sb.WriteString(fmt.Sprintf("var %s_ALL_STRUCTS = pulserpc.StructMap{\n", nsUpper))
 	for _, s := range types.Structs {
-		sb.WriteString(fmt.Sprintf("	\"%s\": pulserpc.StructDef{\n", s.Name))
+		// Ensure the struct name is fully qualified
+		structName := s.Name
+		if namespace != "" && !strings.Contains(structName, ".") {
+			structName = namespace + "." + structName
+		}
+		sb.WriteString(fmt.Sprintf("	\"%s\": pulserpc.StructDef{\n", structName))
 		if s.Extends != "" {
 			sb.WriteString(fmt.Sprintf("		\"extends\": \"%s\",\n", s.Extends))
 		}
@@ -506,7 +532,7 @@ func generateNamespaceGo(namespace string, primaryNs string, types *NamespaceTyp
 			sb.WriteString("			map[string]interface{}{\n")
 			sb.WriteString(fmt.Sprintf("				\"name\": \"%s\",\n", field.Name))
 			sb.WriteString("				\"type\": ")
-			writeTypeDictGo(&sb, field.Type)
+			writeTypeDictGo(&sb, field.Type, namespace)
 			sb.WriteString(",\n")
 			if field.Optional {
 				sb.WriteString("				\"optional\": true,\n")
@@ -520,7 +546,12 @@ func generateNamespaceGo(namespace string, primaryNs string, types *NamespaceTyp
 
 	sb.WriteString(fmt.Sprintf("var %s_ALL_ENUMS = pulserpc.EnumMap{\n", nsUpper))
 	for _, e := range types.Enums {
-		sb.WriteString(fmt.Sprintf("	\"%s\": pulserpc.EnumDef{\n", e.Name))
+		// Ensure the enum name is fully qualified
+		enumName := e.Name
+		if namespace != "" && !strings.Contains(enumName, ".") {
+			enumName = namespace + "." + enumName
+		}
+		sb.WriteString(fmt.Sprintf("	\"%s\": pulserpc.EnumDef{\n", enumName))
 		sb.WriteString("		\"values\": []interface{}{\n")
 		for _, val := range e.Values {
 			sb.WriteString("			map[string]interface{}{\n")
@@ -940,13 +971,13 @@ func writeInterfaceMethodLookupGo(sb *strings.Builder, interfaces []*parser.Inte
 				sb.WriteString("					map[string]interface{}{\n")
 				fmt.Fprintf(sb, "						\"name\": \"%s\",\n", param.Name)
 				sb.WriteString("						\"type\": ")
-				writeTypeDictGo(sb, param.Type)
+				writeTypeDictGo(sb, param.Type, iface.Namespace)
 				sb.WriteString(",\n")
 				sb.WriteString("					},\n")
 			}
 			sb.WriteString("				},\n")
 			sb.WriteString("				\"returnType\": ")
-			writeTypeDictGo(sb, method.ReturnType)
+			writeTypeDictGo(sb, method.ReturnType, iface.Namespace)
 			sb.WriteString(",\n")
 			if method.ReturnOptional {
 				sb.WriteString("				\"returnOptional\": true,\n")
@@ -1268,7 +1299,7 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 		sb.WriteString("			map[string]interface{}{\n")
 		fmt.Fprintf(sb, "				\"name\": \"%s\",\n", param.Name)
 		sb.WriteString("				\"type\": ")
-		writeTypeDictGo(sb, param.Type)
+		writeTypeDictGo(sb, param.Type, iface.Namespace)
 		sb.WriteString(",\n")
 		sb.WriteString("			},\n")
 	}
@@ -1332,7 +1363,7 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 
 		sb.WriteString("	// Validate result\n")
 		sb.WriteString("	returnType := ")
-		writeTypeDictGo(sb, method.ReturnType)
+		writeTypeDictGo(sb, method.ReturnType, iface.Namespace)
 		sb.WriteString("\n")
 		sb.WriteString("	returnOptional := ")
 		if method.ReturnOptional {

@@ -165,7 +165,7 @@ func generateNamespacePy(namespace string, types *NamespaceTypes) string {
 			sb.WriteString("            {\n")
 			sb.WriteString(fmt.Sprintf("                'name': '%s',\n", field.Name))
 			sb.WriteString("                'type': ")
-			writeTypeDict(&sb, field.Type)
+			writeTypeDictWithNamespace(&sb, field.Type, namespace, types)
 			sb.WriteString(",\n")
 			if field.Optional {
 				sb.WriteString("                'optional': True,\n")
@@ -194,17 +194,47 @@ func generateNamespacePy(namespace string, types *NamespaceTypes) string {
 
 // writeTypeDict writes a type definition as a Python dict
 func writeTypeDict(sb *strings.Builder, t *parser.Type) {
+	writeTypeDictWithNamespace(sb, t, "", nil)
+}
+
+// writeTypeDictWithNamespace writes a type definition as a Python dict, with namespace context
+// It qualifies user-defined types from the same namespace with the namespace prefix
+func writeTypeDictWithNamespace(sb *strings.Builder, t *parser.Type, currentNamespace string, types *NamespaceTypes) {
 	sb.WriteString("{")
 	if t.IsBuiltIn() {
 		fmt.Fprintf(sb, "'builtIn': '%s'", t.BuiltIn)
 	} else if t.IsArray() {
 		sb.WriteString("'array': ")
-		writeTypeDict(sb, t.Array)
+		writeTypeDictWithNamespace(sb, t.Array, currentNamespace, types)
 	} else if t.IsMap() {
 		sb.WriteString("'mapValue': ")
-		writeTypeDict(sb, t.MapValue)
+		writeTypeDictWithNamespace(sb, t.MapValue, currentNamespace, types)
 	} else if t.IsUserDefined() {
-		fmt.Fprintf(sb, "'userDefined': '%s'", t.UserDefined)
+		// Determine if the type is from the current namespace
+		typeName := t.UserDefined
+		if currentNamespace != "" && types != nil && !strings.Contains(typeName, ".") {
+			// Check if this type is defined in the current namespace
+			isFromCurrentNamespace := false
+			for _, s := range types.Structs {
+				if GetBaseName(s.Name) == typeName {
+					isFromCurrentNamespace = true
+					break
+				}
+			}
+			if !isFromCurrentNamespace {
+				for _, e := range types.Enums {
+					if GetBaseName(e.Name) == typeName {
+						isFromCurrentNamespace = true
+						break
+					}
+				}
+			}
+			// If it's from the current namespace, qualify it
+			if isFromCurrentNamespace {
+				typeName = currentNamespace + "." + typeName
+			}
+		}
+		fmt.Fprintf(sb, "'userDefined': '%s'", typeName)
 	}
 	sb.WriteString("}")
 }
@@ -979,7 +1009,13 @@ func writeTestMethodImpl(sb *strings.Builder, iface *parser.Interface, method *p
 		sb.WriteString("        return getattr(p, 'personId', '')\n\n")
 	default:
 		// Default implementation: return appropriate type based on return type
-		writeDefaultTestReturn(sb, method.ReturnType, structMap, enumMap)
+		// If return type is optional, return None
+		if method.ReturnOptional {
+			sb.WriteString("        # Optional return type - return None\n")
+			sb.WriteString("        return None\n\n")
+		} else {
+			writeDefaultTestReturn(sb, method.ReturnType, structMap, enumMap)
+		}
 	}
 }
 
@@ -1219,6 +1255,10 @@ func writeTestClientCall(sb *strings.Builder, iface *parser.Interface, method *p
 	} else if methodNameLower == "putperson" {
 		sb.WriteString("        assert isinstance(result, str), f\"Expected str, got {type(result)}\"\n")
 		sb.WriteString("        assert result == \"person123\", f\"Expected 'person123', got {result}\"\n")
+	} else if methodNameLower == "finditem" {
+		// findItem has optional return type - it can return None
+		sb.WriteString("        # findItem has optional return type\n")
+		sb.WriteString("        assert result is None, f\"Expected None (optional return), got {result}\"\n")
 	} else {
 		// Generic assertion - just check that we got a result
 		sb.WriteString("        assert result is not None, \"Expected non-None result\"\n")

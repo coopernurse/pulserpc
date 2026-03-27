@@ -179,7 +179,7 @@ func generateNamespaceTs(namespace string, types *NamespaceTypes) string {
 			sb.WriteString("      {\n")
 			sb.WriteString(fmt.Sprintf("        name: '%s',\n", field.Name))
 			sb.WriteString("        type: ")
-			writeTypeDictTs(&sb, field.Type)
+			writeTypeDictWithNamespaceTs(&sb, field.Type, namespace, types)
 			sb.WriteString(",\n")
 			if field.Optional {
 				sb.WriteString("        optional: true,\n")
@@ -210,17 +210,47 @@ func generateNamespaceTs(namespace string, types *NamespaceTypes) string {
 
 // writeTypeDictTs writes a type definition as a TypeScript object
 func writeTypeDictTs(sb *strings.Builder, t *parser.Type) {
+	writeTypeDictWithNamespaceTs(sb, t, "", nil)
+}
+
+// writeTypeDictWithNamespaceTs writes a type definition as a TypeScript object, with namespace context
+// It qualifies user-defined types from the same namespace with the namespace prefix
+func writeTypeDictWithNamespaceTs(sb *strings.Builder, t *parser.Type, currentNamespace string, types *NamespaceTypes) {
 	sb.WriteString("{")
 	if t.IsBuiltIn() {
 		fmt.Fprintf(sb, "builtIn: '%s'", t.BuiltIn)
 	} else if t.IsArray() {
 		sb.WriteString("array: ")
-		writeTypeDictTs(sb, t.Array)
+		writeTypeDictWithNamespaceTs(sb, t.Array, currentNamespace, types)
 	} else if t.IsMap() {
 		sb.WriteString("mapValue: ")
-		writeTypeDictTs(sb, t.MapValue)
+		writeTypeDictWithNamespaceTs(sb, t.MapValue, currentNamespace, types)
 	} else if t.IsUserDefined() {
-		fmt.Fprintf(sb, "userDefined: '%s'", t.UserDefined)
+		// Determine if the type is from the current namespace
+		typeName := t.UserDefined
+		if currentNamespace != "" && types != nil && !strings.Contains(typeName, ".") {
+			// Check if this type is defined in the current namespace
+			isFromCurrentNamespace := false
+			for _, s := range types.Structs {
+				if GetBaseName(s.Name) == typeName {
+					isFromCurrentNamespace = true
+					break
+				}
+			}
+			if !isFromCurrentNamespace {
+				for _, e := range types.Enums {
+					if GetBaseName(e.Name) == typeName {
+						isFromCurrentNamespace = true
+						break
+					}
+				}
+			}
+			// If it's from the current namespace, qualify it
+			if isFromCurrentNamespace {
+				typeName = currentNamespace + "." + typeName
+			}
+		}
+		fmt.Fprintf(sb, "userDefined: '%s'", typeName)
 	}
 	sb.WriteString("}")
 }
@@ -1024,11 +1054,16 @@ func writeDefaultTestReturnTs(sb *strings.Builder, returnType *parser.Type, stru
 			// If extends, add parent fields
 			if s.Extends != "" {
 				baseName := s.Extends
-				if strings.Contains(baseName, ".") {
+				// First try looking up with full name (including namespace)
+				baseStruct := structMap[baseName]
+				// If not found and has a namespace prefix, try with just the base name
+				if baseStruct == nil && strings.Contains(baseName, ".") {
 					parts := strings.Split(baseName, ".")
 					baseName = parts[len(parts)-1]
+					baseStruct = structMap[baseName]
 				}
-				if baseStruct := structMap[baseName]; baseStruct != nil {
+				// If we found the parent struct, add its fields
+				if baseStruct != nil {
 					for _, field := range baseStruct.Fields {
 						if field.Optional {
 							continue
@@ -1078,15 +1113,28 @@ func writeDefaultTestValueTs(sb *strings.Builder, t *parser.Type, structMap map[
 	} else if t.IsUserDefined() {
 		if structMap[t.UserDefined] != nil {
 			sb.WriteString("{}")
-		} else if enumMap[t.UserDefined] != nil {
+		} else {
+			// Try to find enum
 			e := enumMap[t.UserDefined]
-			if len(e.Values) > 0 {
-				fmt.Fprintf(sb, "'%s'", e.Values[0].Name)
+			// If not found with exact name, try to find by base name
+			// (e.g., 'Status' might be registered as 'inc.Status')
+			if e == nil {
+				for enumKey, enumVal := range enumMap {
+					if strings.HasSuffix(enumKey, "."+t.UserDefined) || enumKey == t.UserDefined {
+						e = enumVal
+						break
+					}
+				}
+			}
+			if e != nil {
+				if len(e.Values) > 0 {
+					fmt.Fprintf(sb, "'%s'", e.Values[0].Name)
+				} else {
+					sb.WriteString("null")
+				}
 			} else {
 				sb.WriteString("null")
 			}
-		} else {
-			sb.WriteString("null")
 		}
 	} else {
 		sb.WriteString("null")
@@ -1353,11 +1401,16 @@ func generateTestParamValueTs(t *parser.Type, paramName string, structMap map[st
 			// Handle inheritance
 			if s.Extends != "" {
 				baseName := s.Extends
-				if strings.Contains(baseName, ".") {
+				// First try looking up with full name (including namespace)
+				baseStruct := structMap[baseName]
+				// If not found and has a namespace prefix, try with just the base name
+				if baseStruct == nil && strings.Contains(baseName, ".") {
 					parts := strings.Split(baseName, ".")
 					baseName = parts[len(parts)-1]
+					baseStruct = structMap[baseName]
 				}
-				if baseStruct := structMap[baseName]; baseStruct != nil {
+				// If we found the parent struct, add its fields
+				if baseStruct != nil {
 					for _, field := range baseStruct.Fields {
 						if !field.Optional {
 							fieldValue := generateTestParamValueTs(field.Type, field.Name, structMap, enumMap)
