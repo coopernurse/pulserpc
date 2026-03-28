@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 from .rpc import RPCError
-from .validation import validate_type, find_struct, find_enum, get_struct_fields
+from .contract import Contract
 
 
 class Server:
@@ -12,17 +12,17 @@ class Server:
     It can be used with any HTTP server (http.server, Flask, FastAPI, etc.)
     """
 
-    def __init__(self, validate_requests: bool = True, validate_responses: bool = True):
+    def __init__(self, contract: Contract, validate_requests: bool = True,
+                 validate_responses: bool = True):
         """Initialize Server
 
         Args:
+            contract: Contract instance for validation
             validate_requests: Validate request parameters against IDL
             validate_responses: Validate response values against IDL
         """
         self.handlers: Dict[str, Any] = {}
-        self.idl_data: Optional[Dict[str, Any]] = None
-        self.all_structs: Dict[str, Any] = {}
-        self.all_enums: Dict[str, Any] = {}
+        self.contract = contract
         self.validate_requests = validate_requests
         self.validate_responses = validate_responses
 
@@ -34,43 +34,6 @@ class Server:
             handler: Handler instance with methods matching the interface
         """
         self.handlers[iface_name] = handler
-
-    def load_idl(self, idl_data: Dict[str, Any], all_structs: Dict[str, Any] = None,
-                 all_enums: Dict[str, Any] = None) -> None:
-        """Load IDL metadata for validation
-
-        Args:
-            idl_data: Full IDL data dict from parser
-            all_structs: Optional merged structs dict (will be extracted from idl_data if not provided)
-            all_enums: Optional merged enums dict (will be extracted from idl_data if not provided)
-        """
-        self.idl_data = idl_data
-
-        # Extract structs and enums from IDL if not provided
-        if all_structs is None:
-            all_structs = {}
-            for struct in idl_data.get('structs', []):
-                # Use fully qualified name (e.g., "checkout.Product")
-                namespace = struct.get('namespace', '')
-                if namespace:
-                    qualified_name = f"{namespace}.{struct['name']}"
-                else:
-                    qualified_name = struct['name']
-                all_structs[qualified_name] = struct
-
-        if all_enums is None:
-            all_enums = {}
-            for enum in idl_data.get('enums', []):
-                # Use fully qualified name (e.g., "checkout.Status")
-                namespace = enum.get('namespace', '')
-                if namespace:
-                    qualified_name = f"{namespace}.{enum['name']}"
-                else:
-                    qualified_name = enum['name']
-                all_enums[qualified_name] = enum
-
-        self.all_structs = all_structs
-        self.all_enums = all_enums
 
     def call(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process a single JSON-RPC request
@@ -105,6 +68,15 @@ class Server:
             return self._error_response(req.get('id'), -32600, "Invalid Request",
                                       "Method must be a string")
 
+        # Handle pulserpc-idl request
+        if method == 'pulserpc-idl':
+            req_id = req.get('id')
+            return {
+                'jsonrpc': '2.0',
+                'result': self.contract.idl_parsed,
+                'id': req_id
+            }
+
         # Check for notification (no 'id' means no response expected)
         req_id = req.get('id')
         is_notification = req_id is None
@@ -135,6 +107,13 @@ class Server:
 
         # Normalize params to dict if it's a list
         if isinstance(params, list):
+            # Validate request using positional params
+            if self.validate_requests:
+                try:
+                    self.contract.validate_request(iface_name, func_name, params)
+                except (TypeError, ValueError) as e:
+                    return self._error_response(req_id, -32602, "Invalid params", str(e))
+
             # Convert positional params to named params using IDL signature
             try:
                 params = self._positional_to_named_params(iface_name, func_name, params)
@@ -147,11 +126,15 @@ class Server:
             return self._error_response(req_id, -32602, "Invalid params",
                                       "Parameters must be an object or array")
 
-        # Validate request if IDL is loaded and validation is enabled
-        if self.validate_requests and self.idl_data:
-            validation_error = self._validate_request_params(iface_name, func_name, params)
-            if validation_error:
-                return self._error_response(req_id, -32602, "Invalid params", validation_error)
+        # Validate request if using named params (dict)
+        if self.validate_requests and isinstance(req.get('params'), dict):
+            # Convert dict to list for validation
+            param_list = self._named_to_positional_params(iface_name, func_name, params)
+            if param_list is not None:
+                try:
+                    self.contract.validate_request(iface_name, func_name, param_list)
+                except (TypeError, ValueError) as e:
+                    return self._error_response(req_id, -32602, "Invalid params", str(e))
 
         # Invoke handler method
         try:
@@ -172,11 +155,12 @@ class Server:
                                           f"Handler exception: {e}")
 
         # Validate response if validation is enabled
-        if self.validate_responses and self.idl_data and result is not None:
-            validation_error = self._validate_response_result(iface_name, func_name, result)
-            if validation_error:
+        if self.validate_responses and result is not None:
+            try:
+                self.contract.validate_response(iface_name, func_name, result)
+            except (TypeError, ValueError) as e:
                 return self._error_response(req_id, -32603, "Internal error",
-                                          f"Response validation failed: {validation_error}")
+                                          f"Response validation failed: {e}")
 
         # Don't respond to notifications
         if is_notification:
@@ -217,113 +201,6 @@ class Server:
 
         return response
 
-    def _validate_request_params(self, iface_name: str, func_name: str,
-                                  params: Dict[str, Any]) -> Optional[str]:
-        """Validate request parameters against IDL
-
-        Args:
-            iface_name: Interface name
-            func_name: Function name
-            params: Parameters dict
-
-        Returns:
-            Error message string, or None if validation passes
-        """
-        if not self.idl_data:
-            return None
-
-        # Find interface in IDL
-        interface = None
-        for iface in self.idl_data.get('interfaces', []):
-            if iface['name'] == iface_name:
-                interface = iface
-                break
-
-        if not interface:
-            return f"Interface not found in IDL: {iface_name}"
-
-        # Find function in interface
-        func = None
-        for f in interface.get('methods', []):
-            if f['name'] == func_name:
-                func = f
-                break
-
-        if not func:
-            return f"Function not found in IDL: {iface_name}.{func_name}"
-
-        # Validate each parameter
-        for param in func.get('parameters', []):
-            param_name = param['name']
-            param_type = param['type']
-            is_optional = param.get('optional', False)
-
-            if param_name not in params:
-                if not is_optional:
-                    return f"Missing required parameter: {param_name}"
-            else:
-                param_value = params[param_name]
-                try:
-                    validate_type(param_value, param_type, self.all_structs,
-                                self.all_enums, is_optional)
-                except (TypeError, ValueError) as e:
-                    return f"Parameter '{param_name}' validation failed: {e}"
-
-        return None
-
-    def _validate_response_result(self, iface_name: str, func_name: str,
-                                   result: Any) -> Optional[str]:
-        """Validate response result against IDL
-
-        Args:
-            iface_name: Interface name
-            func_name: Function name
-            result: Result value
-
-        Returns:
-            Error message string, or None if validation passes
-        """
-        if not self.idl_data:
-            return None
-
-        # Find interface in IDL
-        interface = None
-        for iface in self.idl_data.get('interfaces', []):
-            if iface['name'] == iface_name:
-                interface = iface
-                break
-
-        if not interface:
-            return f"Interface not found in IDL: {iface_name}"
-
-        # Find function in interface
-        func = None
-        for f in interface.get('methods', []):
-            if f['name'] == func_name:
-                func = f
-                break
-
-        if not func:
-            return f"Function not found in IDL: {iface_name}.{func_name}"
-
-        # Check if function has a return type
-        return_type = func.get('returnType')
-        if not return_type:
-            # Function returns void/None
-            if result is not None:
-                return f"Function should return None, got: {type(result).__name__}"
-            return None
-
-        # Validate return type
-        is_optional = func.get('returnOptional', False)
-        try:
-            validate_type(result, return_type, self.all_structs,
-                        self.all_enums, is_optional)
-        except (TypeError, ValueError) as e:
-            return f"Return type validation failed: {e}"
-
-        return None
-
     def _positional_to_named_params(self, iface_name: str, func_name: str,
                                      positional_params: List[Any]) -> Dict[str, Any]:
         """Convert positional parameters to named parameters using IDL signature
@@ -337,29 +214,14 @@ class Server:
             Dict mapping parameter names to values
 
         Raises:
-            ValueError: If parameter count doesn't match or IDL not loaded
+            ValueError: If parameter count doesn't match or interface not found
         """
-        if not self.idl_data:
-            # Without IDL, can't map positional to named
-            return {str(i): v for i, v in enumerate(positional_params)}
-
-        # Find interface in IDL
-        interface = None
-        for iface in self.idl_data.get('interfaces', []):
-            if iface['name'] == iface_name:
-                interface = iface
-                break
-
+        interface = self.contract.get_interface(iface_name)
         if not interface:
+            # Without contract, can't map positional to named
             return {str(i): v for i, v in enumerate(positional_params)}
 
-        # Find function in interface
-        func = None
-        for f in interface.get('methods', []):
-            if f['name'] == func_name:
-                func = f
-                break
-
+        func = interface.get_function(func_name)
         if not func:
             return {str(i): v for i, v in enumerate(positional_params)}
 
@@ -385,3 +247,34 @@ class Server:
                 named_params[str(i)] = param_value
 
         return named_params
+
+    def _named_to_positional_params(self, iface_name: str, func_name: str,
+                                     named_params: Dict[str, Any]) -> Optional[List[Any]]:
+        """Convert named parameters to positional parameters using IDL signature
+
+        Args:
+            iface_name: Interface name
+            func_name: Function name
+            named_params: Dict mapping parameter names to values
+
+        Returns:
+            List of parameter values in IDL order, or None if interface not found
+        """
+        interface = self.contract.get_interface(iface_name)
+        if not interface:
+            return None
+
+        func = interface.get_function(func_name)
+        if not func:
+            return None
+
+        # Get parameter names from IDL
+        param_defs = func.get('parameters', [])
+
+        # Build positional list in IDL order
+        positional_params = []
+        for param_def in param_defs:
+            param_name = param_def['name']
+            positional_params.append(named_params.get(param_name))
+
+        return positional_params

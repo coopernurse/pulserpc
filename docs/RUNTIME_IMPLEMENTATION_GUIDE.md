@@ -72,11 +72,12 @@ pkg/runtime/runtimes/{lang}/
 ├── pulserpc/              # Runtime library package/module
 │   ├── __init__.{ext}       # Package exports (if applicable)
 │   ├── rpc.{ext}            # RPC error handling
+│   ├── contract.{ext}       # Contract class for IDL parsing and validation
 │   ├── validation.{ext}     # Type validation functions
 │   ├── types.{ext}          # Type helper functions
-│   ├── transport.{ext}      # Transport abstraction (Python-specific)
-│   ├── client.{ext}         # Transport-independent Client (Python-specific)
-│   └── server.{ext}         # Transport-independent Server (Python-specific)
+│   ├── transport.{ext}      # Transport abstraction
+│   ├── client.{ext}         # Transport-independent Client
+│   └── server.{ext}         # Transport-independent Server
 ├── tests/                   # Unit tests for runtime
 │   ├── test_validation.{ext}
 │   ├── test_types.{ext}
@@ -85,19 +86,20 @@ pkg/runtime/runtimes/{lang}/
 └── README.md                # Runtime-specific documentation
 ```
 
-**Python-Specific Modular Architecture:**
+**Reference Architecture (Python Implementation):**
 
-The Python runtime uses a modular architecture that separates transport logic from RPC handling:
+The runtime uses a modular architecture that separates transport logic from RPC handling:
 
+- **`pulserpc/Contract`**: Encapsulates IDL parsing and request/response validation
 - **`pulserpc/Server`**: Transport-independent server class that processes JSON-RPC requests
-- **`pulserpc/Client`**: Transport-independent client class that sends JSON-RPC requests
+- **`pulserpc/Client`**: Transport-independent client class that auto-discovers interfaces
 - **`pulserpc/Transport`**: Abstract transport interface
 - **`pulserpc/HttpTransport`**: HTTP transport implementation
 - **`pulserpc/InProcTransport`**: In-process transport for testing
 
 Generated code (`server.py`, `client.py`) creates thin wrappers around these core classes:
 - Generated `server.py` creates a module-level `Server` instance and provides `PulseRPCServer` HTTP wrapper
-- Generated `client.py` creates `{Interface}Client` classes that use the `Client` class
+- Generated `client.py` uses the `Client` class with auto-discovery
 
 This design allows the runtime to support multiple transports (HTTP, WebSocket, etc.) without code duplication.
 
@@ -151,7 +153,55 @@ Type definitions are passed as dictionaries/objects with the following structure
 }
 ```
 
-#### 3. Type Helpers (`types.{ext}`)
+#### 3. Contract Class (`contract.{ext}`)
+
+The Contract class encapsulates IDL parsing and request/response validation. This is a core architectural pattern that provides:
+
+- **Single point of IDL parsing**: Parses the IDL JSON once and stores parsed interface/struct/enum definitions
+- **Centralized validation**: `validate_request()` and `validate_response()` methods use the parsed IDL
+- **Interface metadata**: `get_interface(name)` and `has_interface(name)` helpers for runtime lookup
+
+**Class structure**:
+```python
+class Interface:
+    """Represents an interface from the IDL"""
+    name: str
+    functions: Dict[str, FunctionDef]  # maps function name to metadata
+
+class Contract:
+    """Represents a parsed IDL contract"""
+    interfaces: Dict[str, Interface]
+    structs: Dict[str, StructDef]
+    enums: Dict[str, EnumDef]
+
+    def __init__(self, idl_data):
+        """Initialize from IDL JSON (supports both PulseRPC dict and Barrister list formats)"""
+
+    def validate_request(self, iface_name: str, func_name: str, params: List[Any]) -> None:
+        """Validate request parameters against IDL signature"""
+
+    def validate_response(self, iface_name: str, func_name: str, result: Any) -> None:
+        """Validate response against IDL return type"""
+
+    def get_interface(self, iface_name: str) -> Optional[Interface]
+    def has_interface(self, iface_name: str) -> bool
+```
+
+**Python Example**:
+```python
+from pulserpc import Contract
+
+# Parse IDL and create contract
+contract = Contract(idl_data)
+
+# Validate a request
+contract.validate_request("UserService", "getUser", [{"userId": "123"}])
+
+# Validate a response
+contract.validate_response("UserService", "getUser", {"name": "John", "email": "john@example.com"})
+```
+
+#### 4. Type Helpers (`types.{ext}`)
 
 Must provide utility functions for working with type definitions:
 
@@ -353,112 +403,98 @@ ALL_ENUMS = {
    - **For dynamic languages**: May use generic types (e.g., `object`, `dict`, `Any`)
      - Example (Python): `def repeat(self, req1: dict) -> dict:`
 
-2. **Server Class**:
+2. **Transport-Independent Server Class**:
+   - **Constructor**: Takes a `Contract` instance and validation flags
+     ```python
+     server = Server(contract, validate_requests=True, validate_responses=True)
+     ```
    - **Registration**: Easy way to register interface implementations
      ```python
-     server.register("InterfaceName", implementation_instance)
+     server.add_handler("InterfaceName", implementation_instance)
      ```
-   - **HTTP Compatibility**: Use standard HTTP server for the language
-     - Python: `http.server.BaseHTTPRequestHandler`
-     - Java: `javax.servlet.http.HttpServlet` or `com.sun.net.httpserver.HttpServer`
-     - Node.js: `http.Server` or Express middleware
-     - Go: `net/http.Server`
-   - **Request Handling**:
-     - Parse JSON-RPC 2.0 requests
-     - Handle batch requests (array of requests)
-     - Handle notifications (requests without `id`)
-     - Route to appropriate interface/method handler
-   - **Validation**:
+   - **`call(req)` Method**: Process a single JSON-RPC request dict
+     - Returns JSON-RPC response dict or `None` for notifications
+     - Works with any transport layer (HTTP, WebSocket, etc.)
+   - **Request Processing**:
      - Validate JSON-RPC 2.0 structure (jsonrpc, method, params, id)
-     - Validate method name format (`interface.method`)
-     - Validate parameter count matches IDL
-     - Validate each parameter type using runtime validation
-     - Validate return value type using runtime validation
+     - Handle `pulserpc-idl` method (returns embedded IDL JSON)
+     - Parse `Interface.method` to find handler
+     - Normalize params (list to dict using IDL signature)
+     - Validate request against Contract (if enabled)
+     - Invoke handler method
+     - Validate response against Contract (if enabled)
    - **Error Handling**:
      - Return JSON-RPC 2.0 error responses
      - Handle `RPCError` exceptions from handlers
      - Handle validation errors
      - Handle internal errors
-   - **Special Method**: `pulserpc-idl`
-     - Returns the IDL JSON document (from embedded constant in server file)
-     - Allows clients to introspect the IDL
 
-   **Python-Specific Architecture:**
-   The Python runtime uses a two-tier server architecture:
-   - **Core `Server` class** (from `pulserpc` package): Transport-independent request processing
-   - **Generated `PulseRPCServer` class**: HTTP wrapper around the core `Server`
+3. **HTTP Adapter (Generated)**:
+   - HTTP binding is separate from the core Server
+   - Takes a `Server` instance and feeds it parsed JSON-RPC dicts
+   - Example: `PulseRPCServer` wraps `Server` and implements HTTP request handling
 
-   Generated `server.py` structure:
-   ```python
-   # At top of server.py:
-   from pulserpc import Server, RPCError
+**Python Architecture (Reference Implementation)**:
+```python
+# In pulserpc/server.py (runtime library):
+class Server:
+    def __init__(self, contract: Contract, validate_requests=True, validate_responses=True):
+        self.handlers: Dict[str, Any] = {}
+        self.contract = contract
+        self.validate_requests = validate_requests
+        self.validate_responses = validate_responses
 
-   # Load IDL metadata from idl.json
-   with open('idl.json', 'r') as f:
-       IDL_DATA = json.load(f)
+    def add_handler(self, iface_name: str, handler: Any) -> None:
+        self.handlers[iface_name] = handler
 
-   # Create module-level Server instance with validation enabled
-   server = Server(validate_requests=True, validate_responses=True)
-   server.load_idl(IDL_DATA, ALL_STRUCTS, ALL_ENUMS)
+    def call(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        # Validates JSON-RPC format
+        # Handles pulserpc-idl method
+        # Parses Interface.method
+        # Looks up handler
+        # Normalizes params
+        # Validates request (if enabled)
+        # Invokes handler.method(**params)
+        # Validates response (if enabled)
+        # Returns JSON-RPC response dict or None
+        pass
 
-   # Generate abstract interface stub classes
-   class CatalogService:
-       def listProducts(self) -> list: ...
-       def getProduct(self, productId: str) -> dict: ...
+# Generated server.py:
+from pulserpc import Server, Contract, RPCError
 
-   # HTTP wrapper class
-   class PulseRPCServer:
-       def __init__(self, host='localhost', port=8080):
-           self.host = host
-           self.port = port
+# Create Contract from embedded IDL
+contract = Contract(idl_data)
 
-       def register(self, interface_name, instance):
-           server.add_handler(interface_name, instance)
+# Create module-level Server instance
+rpc_server = Server(contract, validate_requests=True, validate_responses=True)
 
-       def serve_forever(self):
-           # Start HTTP server that calls server.call() for each request
-   ```
+# Abstract interface stubs (generated)
+class CatalogService:
+    def listProducts(self) -> list: pass
+    def getProduct(self, productId: str) -> dict: pass
+
+# HTTP adapter (generated)
+class PulseRPCServer:
+    def __init__(self, host='localhost', port=8080):
+        self.host = host
+        self.port = port
+
+    def register(self, interface_name, instance):
+        rpc_server.add_handler(interface_name, instance)
+
+    def serve_forever(self):
+        # HTTP server that parses JSON and calls rpc_server.call(req)
+        pass
+```
+
+**Key Design Principle**: The `Server` class is transport-independent. It processes JSON-RPC dicts, not HTTP requests. This allows the same Server to work with HTTP, WebSocket, or any other transport by feeding it parsed JSON-RPC requests.
 
 3. **Server Lifecycle**:
    - `serve_forever()` or equivalent - start server
    - `shutdown()` or equivalent - stop server
    - Configurable host and port
 
-**Example Server Structure**:
-
-For Python (using modular architecture):
-```python
-# Generated server.py imports Server from pulserpc runtime
-from pulserpc import Server, RPCError
-
-# Module-level server instance (created by generator)
-server = Server(validate_requests=True, validate_responses=True)
-server.load_idl(IDL_DATA, ALL_STRUCTS, ALL_ENUMS)
-
-# Abstract interface stub (generated)
-class CatalogService:
-    def listProducts(self) -> list: pass
-    def getProduct(self, productId: str) -> dict: pass
-
-# HTTP wrapper (generated)
-class PulseRPCServer:
-    def __init__(self, host='localhost', port=8080):
-        self.host = host
-        self.port = port
-        self._http_server = None
-
-    def register(self, interface_name, instance):
-        # Delegate to module-level server
-        server.add_handler(interface_name, instance)
-
-    def serve_forever(self):
-        # Start HTTP server that calls server.call() for each request
-        handler_class = self._create_handler_class()
-        self._http_server = HTTPServer((self.host, self.port), handler_class)
-        self._http_server.serve_forever()
-```
-
-For other languages (monolithic architecture):
+**Legacy/Monolithic Architecture (pre-refactor)**:
 ```python
 class PulseRPCServer:
     def __init__(self, host='localhost', port=8080):
@@ -482,7 +518,7 @@ class PulseRPCServer:
 
 ### 3. Client File (`client.{ext}`)
 
-**Purpose**: Client classes for making RPC calls
+**Purpose**: Client classes for making RPC calls with automatic interface discovery
 
 **Requirements**:
 
@@ -499,41 +535,73 @@ class PulseRPCServer:
    - Handles errors (HTTP errors, JSON-RPC errors)
    - Generates unique request IDs
 
-3. **Client Classes**:
-   - One class per interface: `{Interface}Client`
-   - Constructor takes `Transport` instance
-   - One method per interface method
-   - **Parameter validation**: Validate parameters before sending
-   - **Response validation**: Validate response before returning
+3. **Client Class with Auto-Discovery**:
+   - Single `Client` class that takes a `Transport` in constructor
+   - On construction, fetches IDL from server via `pulserpc-idl` RPC method
+   - Creates a `Contract` instance from the IDL
+   - Creates dynamic interface proxies (e.g., `client.UserService.getUser(...)`)
+   - **Parameter validation**: Validate parameters before sending (using Contract)
+   - **Response validation**: Validate response before returning (using Contract)
    - Raise `RPCError` on JSON-RPC errors
 
-**Python-Specific Architecture:**
-The Python runtime provides transport and client classes in the `pulserpc` package:
-- **`pulserpc.Transport`**: Abstract transport interface
-- **`pulserpc.HttpTransport`**: HTTP transport implementation (note: camelCase `HttpTransport`, not `HTTPTransport`)
-- **`pulserpc.InProcTransport`**: In-process transport for testing (bypasses network)
-- **`pulserpc.Client`**: Transport-independent client class
-
-Generated `client.py` creates interface-specific client classes that use these:
+**Python Architecture (Reference Implementation):**
 ```python
-# At top of generated client.py:
-from pulserpc import Client, HttpTransport, RPCError
-
-# Generated interface client:
-class CatalogServiceClient:
-    def __init__(self, client: Client):
+# In pulserpc/client.py (runtime library):
+class InterfaceClientProxy:
+    """Dynamic proxy for an interface that provides callable methods"""
+    def __init__(self, client: 'Client', iface):
         self._client = client
-        self._iface_name = 'CatalogService'
+        self._iface = iface
+        for func_name in iface.functions.keys():
+            setattr(self, func_name, self._create_methodcaller(func_name))
 
-    def listProducts(self):
-        method_name = 'CatalogService.listProducts'
-        params = {}
-        return self._client.call(method_name, params)
+class Client:
+    def __init__(self, transport: Transport, validate_request=False, validate_response=False):
+        self.transport = transport
+        self._bootstrap()  # Fetches IDL and creates Contract
+
+    def _bootstrap(self):
+        # Fetch IDL via pulserpc-idl
+        resp = self.transport.request({'method': 'pulserpc-idl', 'id': 'bootstrap'})
+        self.contract = Contract(resp['result'])
+        # Create interface proxies
+        for iface_name, iface in self.contract.interfaces.items():
+            setattr(self, iface_name, InterfaceClientProxy(self, iface))
+
+    def call(self, method: str, params=None) -> Any:
+        # Build JSON-RPC request and send via transport
+        # Handle response, raise RPCError on error
+        pass
 ```
 
-**Example Client Structure**:
+**Usage Example**:
+```python
+from pulserpc import Client, HttpTransport
 
-For Python (using modular architecture):
+transport = HttpTransport("http://localhost:8080")
+client = Client(transport)  # Auto-discovers interfaces
+
+# Use dynamic interface proxies - no need for generated client classes
+products = client.CatalogService.listProducts()
+user = client.UserService.getUser({"userId": "123"})
+```
+
+**For languages without dynamic proxies**, generated code may create static interface client classes that delegate to the `Client`:
+```python
+# Generated client.py:
+from pulserpc import Client, HttpTransport
+
+# Create client instance
+transport = HttpTransport("http://localhost:8080")
+_client = Client(transport)
+
+# Generated interface client (delegates to Client):
+class CatalogServiceClient:
+    def listProducts(self):
+        return _client.CatalogService.listProducts()
+```
+
+**Transport Interface**:
 ```python
 # In pulserpc/transport.py (runtime library):
 class Transport(ABC):
@@ -551,28 +619,13 @@ class HttpTransport(Transport):
         # Return JSON-RPC response
         pass
 
-# In pulserpc/client.py (runtime library):
-class Client:
-    def __init__(self, transport: Transport):
-        self.transport = transport
-
-    def call(self, method: str, params: dict) -> Any:
-        # Build JSON-RPC request
-        # Send via transport
-        # Handle response
-        pass
-
-# In generated client.py:
-class BookServiceClient:
-    def __init__(self, client: Client):
-        self._client = client
-
-    def getBook(self, bookId: str):
-        params = {'bookId': bookId}
-        return self._client.call('BookService.getBook', params)
+class InProcTransport(Transport):
+    """For testing - bypasses network"""
+    def __init__(self, server_call_fn):
+        self.server_call_fn = server_call_fn
 ```
 
-For other languages (monolithic architecture):
+**Legacy/Monolithic Architecture (pre-refactor):**
 ```python
 class Transport(ABC):
     @abstractmethod

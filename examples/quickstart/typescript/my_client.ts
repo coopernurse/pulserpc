@@ -1,27 +1,28 @@
-import { HTTPTransport, CatalogServiceClient, CartServiceClient, OrderServiceClient } from './client';
-import { RPCError } from './pulserpc/rpc';
+import { HttpTransport, Client } from './pulserpc';
 
 const port = parseInt(process.env.SERVER_PORT || '8080', 10);
-const transport = new HTTPTransport(`http://localhost:${port}`);
-const catalog = new CatalogServiceClient(transport);
-const cart = new CartServiceClient(transport);
-const orders = new OrderServiceClient(transport);
+const transport = new HttpTransport(`http://localhost:${port}`);
+const client = new Client(transport);
 
 async function main() {
-  const products = await catalog.listProducts();
+  // Wait for client to finish initializing (fetches IDL from server)
+  await client.ready();
+
+  // Client automatically fetches IDL from server and creates interface proxies
+  const products = await client.CatalogService.listProducts();
   console.log('=== Products ===');
   for (const p of products) {
     console.log(`${p.name} - $${p.price}`);
   }
 
-  const result = await cart.addToCart({
+  const result = await client.CartService.addToCart({
     cartId: null,
     productId: products[0].productId,
     quantity: 2
   });
   console.log(`\nCart: ${result.cartId}`);
 
-  const response = await orders.createOrder({
+  const response = await client.OrderService.createOrder({
     cartId: result.cartId,
     shippingAddress: {
       street: '123 Main St',
@@ -36,9 +37,9 @@ async function main() {
 
   // Test error case: empty cart
   console.log('\n=== Testing Error Case ===');
-  await cart.clearCart(result.cartId);
+  await client.CartService.clearCart(result.cartId);
   try {
-    await orders.createOrder({
+    await client.OrderService.createOrder({
       cartId: result.cartId,
       shippingAddress: {
         street: '123 Main St',
@@ -50,12 +51,8 @@ async function main() {
       paymentMethod: 'credit_card'
     });
     console.log('✗ Should have failed!');
-  } catch (e) {
-    if (e instanceof RPCError) {
-      console.log(`✓ Got expected error: ${e.code} - ${e.message}`);
-    } else {
-      throw e;
-    }
+  } catch (e: any) {
+    console.log(`✓ Got expected error: ${e.code} - ${e.message}`);
   }
 }
 

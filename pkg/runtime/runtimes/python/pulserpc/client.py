@@ -1,57 +1,118 @@
 """Client class for making JSON-RPC 2.0 requests"""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from .transport import Transport
 from .rpc import RPCError
+from .contract import Contract
+
+
+class InterfaceClientProxy:
+    """Proxy for an interface that provides callable methods
+
+    Created dynamically by Client for each interface in the IDL.
+    """
+
+    def __init__(self, client: 'Client', iface):
+        """Initialize interface proxy
+
+        Args:
+            client: Client instance
+            iface: Interface object from contract
+        """
+        self._client = client
+        self._iface = iface
+        self._iface_name = iface.name
+
+        # Create callable methods for each function in the interface
+        for func_name in iface.functions.keys():
+            setattr(self, func_name, self._create_methodcaller(func_name))
+
+    def _create_methodcaller(self, func_name: str):
+        """Create a method that calls the RPC function
+
+        Args:
+            func_name: Name of the function
+
+        Returns:
+            Callable that invokes the RPC method
+        """
+        def methodcaller(*params, **kwargs):
+            # If keyword args were provided, convert to positional list
+            if kwargs:
+                # Use named params - send as dict
+                return self._client.call(
+                    f"{self._iface_name}.{func_name}",
+                    kwargs if kwargs else None
+                )
+            else:
+                # Use positional params - send as list
+                return self._client.call(
+                    f"{self._iface_name}.{func_name}",
+                    list(params) if params else None
+                )
+        return methodcaller
 
 
 class Client:
-    """JSON-RPC 2.0 client with transport abstraction and optional validation
+    """JSON-RPC 2.0 client with automatic interface discovery
 
     The Client class sends JSON-RPC requests via a Transport implementation.
-    It supports both single requests and notifications.
+    On initialization, it fetches the IDL from the server and dynamically
+    creates interface proxies.
+
+    Example:
+        >>> transport = HttpTransport("http://localhost:8080")
+        >>> client = Client(transport)
+        >>> result = client.UserService.getUser("123")
     """
 
-    def __init__(self, transport: Transport, validate_requests: bool = False,
-                 validate_responses: bool = False):
+    def __init__(self, transport: Transport, validate_request: bool = False,
+                 validate_response: bool = False):
         """Initialize Client
 
         Args:
             transport: Transport implementation (HttpTransport, InProcTransport, etc.)
-            validate_requests: Validate request parameters against IDL before sending
-            validate_responses: Validate response values against IDL after receiving
+            validate_request: Validate request parameters against IDL before sending
+            validate_response: Validate response values against IDL after receiving
         """
         self.transport = transport
-        self.idl_data: Optional[Dict[str, Any]] = None
-        self.all_structs: Dict[str, Any] = {}
-        self.all_enums: Dict[str, Any] = {}
-        self.validate_requests = validate_requests
-        self.validate_responses = validate_responses
+        self.validate_request = validate_request
+        self.validate_response = validate_response
         self._request_id = 0
+        self.contract: Optional[Contract] = None
 
-    def load_idl(self, idl_data: Dict[str, Any], all_structs: Dict[str, Any] = None,
-                 all_enums: Dict[str, Any] = None) -> None:
-        """Load IDL metadata for validation
+        # Bootstrap: fetch IDL from server
+        self._bootstrap()
 
-        Args:
-            idl_data: Full IDL data dict from parser
-            all_structs: Optional merged structs dict
-            all_enums: Optional merged enums dict
+    def _bootstrap(self) -> None:
+        """Fetch IDL from server and create interface proxies
+
+        Makes a 'pulserpc-idl' request to get the IDL JSON,
+        then creates Contract and interface proxies.
         """
-        self.idl_data = idl_data
+        # Make request to get IDL
+        req = {
+            'jsonrpc': '2.0',
+            'method': 'pulserpc-idl',
+            'id': 'bootstrap'
+        }
 
-        if all_structs is None:
-            all_structs = {}
-            for struct in idl_data.get('structs', []):
-                all_structs[struct['name']] = struct
+        resp = self.transport.request(req)
 
-        if all_enums is None:
-            all_enums = {}
-            for enum in idl_data.get('enums', []):
-                all_enums[enum['name']] = enum
+        if 'error' in resp:
+            error = resp['error']
+            raise RuntimeError(f"Failed to fetch IDL from server: {error.get('message', 'Unknown error')}")
 
-        self.all_structs = all_structs
-        self.all_enums = all_enums
+        idl_json = resp.get('result')
+        if not idl_json:
+            raise RuntimeError("Server returned empty IDL")
+
+        # Create contract
+        self.contract = Contract(idl_json)
+
+        # Create interface proxies as attributes
+        for iface_name, iface in list(self.contract.interfaces.items()):
+            setattr(self, iface_name, InterfaceClientProxy(self, iface))
 
     def call(self, method: str, params: Optional[Any] = None,
              expect_response: bool = True) -> Any:
@@ -73,6 +134,28 @@ class Client:
         Example:
             >>> result = client.call("UserService.getUser", {"user_id": "123"})
         """
+        # Parse method name
+        try:
+            iface_name, func_name = method.rsplit('.', 1)
+        except ValueError:
+            raise ValueError(f"Invalid method name format: {method}")
+
+        # Validate request if enabled
+        if self.validate_request and self.contract:
+            # Convert params to list for validation
+            if isinstance(params, dict):
+                # Named params - need to convert to positional
+                param_list = self._named_to_positional(iface_name, func_name, params)
+            elif isinstance(params, list):
+                param_list = params
+            else:
+                param_list = [] if params is None else [params]
+
+            try:
+                self.contract.validate_request(iface_name, func_name, param_list)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"Request validation failed: {e}") from e
+
         # Generate request ID
         self._request_id += 1
         req_id = self._request_id if expect_response else None
@@ -103,8 +186,17 @@ class Client:
                 data=error.get('data')
             )
 
-        # Return result
-        return response.get('result')
+        # Get result
+        result = response.get('result')
+
+        # Validate response if enabled
+        if self.validate_response and self.contract and result is not None:
+            try:
+                self.contract.validate_response(iface_name, func_name, result)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"Response validation failed: {e}") from e
+
+        return result
 
     def notify(self, method: str, params: Optional[Any] = None) -> None:
         """Send a JSON-RPC notification (no response expected)
@@ -118,54 +210,36 @@ class Client:
         """
         self.call(method, params, expect_response=False)
 
-    def get_interface(self, iface_name: str, iface_class: type) -> Any:
-        """Get a dynamic proxy for an interface
-
-        This method creates an instance of a generated interface proxy class
-        that provides type-safe method calls.
+    def _named_to_positional(self, iface_name: str, func_name: str,
+                              named_params: Dict[str, Any]) -> Optional[List[Any]]:
+        """Convert named parameters to positional parameters using IDL signature
 
         Args:
-            iface_name: Name of the interface (e.g., "UserService")
-            iface_class: The generated proxy class for this interface
+            iface_name: Interface name
+            func_name: Function name
+            named_params: Dict mapping parameter names to values
 
         Returns:
-            An instance of the proxy class
-
-        Example:
-            >>> user_service = client.get_interface("UserService", UserServiceClient)
-            >>> user = user_service.get_user("123")
+            List of parameter values in IDL order, or None if interface not found
         """
-        return iface_class(self)
+        if not self.contract:
+            return None
 
+        interface = self.contract.get_interface(iface_name)
+        if not interface:
+            return None
 
-class InterfaceProxy:
-    """Base class for generated interface proxy classes
+        func = interface.get_function(func_name)
+        if not func:
+            return None
 
-    Generated interface proxy classes should inherit from this class
-    to get common functionality.
-    """
+        # Get parameter names from IDL
+        param_defs = func.get('parameters', [])
 
-    def __init__(self, client: Client, iface_name: str):
-        """Initialize interface proxy
+        # Build positional list in IDL order
+        positional_params = []
+        for param_def in param_defs:
+            param_name = param_def['name']
+            positional_params.append(named_params.get(param_name))
 
-        Args:
-            client: Client instance
-            iface_name: Interface name (used for method routing)
-        """
-        self._client = client
-        self._iface_name = iface_name
-
-    def _call(self, method_name: str, **kwargs) -> Any:
-        """Make a call through the client
-
-        Args:
-            method_name: Method name (without interface prefix)
-
-        Returns:
-            Result from the RPC call
-
-        Raises:
-            RPCError: For JSON-RPC errors
-        """
-        full_method = f"{self._iface_name}.{method_name}"
-        return self._client.call(full_method, kwargs if kwargs else None)
+        return positional_params

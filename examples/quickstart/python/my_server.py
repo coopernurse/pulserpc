@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import os
-from server import PulseRPCServer, CatalogService, CartService, OrderService
-from pulserpc import RPCError
+import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Any
+from server import CatalogService, CartService, OrderService
+from pulserpc import Server, Contract, RPCError
 import random
 import time
 
@@ -146,11 +149,77 @@ class OrderServiceImpl(OrderService):
     def getOrder(self, orderId):
         return orders_db.get(orderId)
 
+# Create JSON-RPC handler
+class PulseRPCHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        # Read request body
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length == 0:
+            self._send_error_response(None, -32700, "Parse error", "Empty request body")
+            return
+
+        body = self.rfile.read(content_length)
+
+        # Parse JSON request
+        try:
+            req = json.loads(body.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            self._send_error_response(None, -32700, "Parse error", f"Invalid JSON: {e}")
+            return
+
+        # Handle request
+        response = rpc_server.call(req)
+        if response is None:
+            self._send_response(204, b'')
+        else:
+            self._send_json_response(200, response)
+
+    def _send_json_response(self, status: int, data: Any) -> None:
+        """Send a JSON response"""
+        response_body = json.dumps(data).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+
+    def _send_response(self, status: int, body: bytes) -> None:
+        """Send a response with raw body"""
+        self.send_response(status)
+        if len(body) > 0:
+            self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        if len(body) > 0:
+            self.wfile.write(body)
+
+    def _send_error_response(self, request_id: Any, code: int, message: str, data: Any = None) -> None:
+        """Send a JSON-RPC 2.0 error response"""
+        error = {'code': code, 'message': message}
+        if data is not None:
+            error['data'] = data
+        response = {'jsonrpc': '2.0', 'error': error, 'id': request_id}
+        self._send_json_response(200, response)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Suppress default logging"""
+        pass
+
 # Start server
 if __name__ == "__main__":
     port = int(os.environ.get("SERVER_PORT", "8080"))
-    server = PulseRPCServer(host="0.0.0.0", port=port)
-    server.register("CatalogService", CatalogServiceImpl())
-    server.register("CartService", CartServiceImpl())
-    server.register("OrderService", OrderServiceImpl())
-    server.serve_forever()
+
+    # Load IDL and create Contract
+    with open('idl.json', 'r') as f:
+        idl_data = json.load(f)
+    contract = Contract(idl_data)
+
+    # Create Server instance
+    rpc_server = Server(contract, validate_requests=True, validate_responses=True)
+    rpc_server.add_handler("CatalogService", CatalogServiceImpl())
+    rpc_server.add_handler("CartService", CartServiceImpl())
+    rpc_server.add_handler("OrderService", OrderServiceImpl())
+
+    # Start HTTP server
+    http_server = HTTPServer(("0.0.0.0", port), PulseRPCHandler)
+    print(f"PulseRPC server listening on http://0.0.0.0:{port}")
+    http_server.serve_forever()

@@ -1,26 +1,21 @@
 #!/usr/bin/env python3
 import os
-from pulserpc import HttpTransport, Client
-from client import CatalogServiceClient, CartServiceClient, OrderServiceClient
-from pulserpc import RPCError
+from pulserpc import HttpTransport, Client, RPCError
 
 # Connect to server
 port = os.environ.get("SERVER_PORT", "8080")
 transport = HttpTransport(f"http://localhost:{port}")
 client = Client(transport)
-catalog = CatalogServiceClient(client)
-cart = CartServiceClient(client)
-orders = OrderServiceClient(client)
 
 # List products
 print("=== Products ===")
-products = catalog.listProducts()
+products = client.CatalogService.listProducts()
 for p in products:
     print(f"{p['name']} - ${p['price']:.2f}")
 
 # Create cart and add items
 print("\n=== Creating Cart ===")
-cart_response = cart.addToCart({
+cart_response = client.CartService.addToCart({
     'productId': products[0]['productId'],
     'quantity': 2
 })
@@ -28,7 +23,7 @@ my_cart = cart_response
 print(f"Cart: {my_cart['cartId']}, Subtotal: ${my_cart['subtotal']:.2f}")
 
 # Add another item
-cart_response = cart.addToCart({
+cart_response = client.CartService.addToCart({
     'cartId': my_cart['cartId'],
     'productId': products[1]['productId'],
     'quantity': 1
@@ -39,7 +34,7 @@ print(f"Updated Subtotal: ${my_cart['subtotal']:.2f}")
 # Create order
 print("\n=== Creating Order ===")
 try:
-    response_data = orders.createOrder({
+    response_data = client.OrderService.createOrder({
         'cartId': my_cart['cartId'],
         'shippingAddress': {
             'street': '123 Main St',
@@ -57,9 +52,9 @@ except RPCError as e:
 
 # Test error case: empty cart
 print("\n=== Testing Error Case ===")
-cart.clearCart(my_cart['cartId'])
+client.CartService.clearCart(my_cart['cartId'])
 try:
-    orders.createOrder({
+    client.OrderService.createOrder({
         'cartId': my_cart['cartId'],
         'shippingAddress': {
             'street': '123 Main St',

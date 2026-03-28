@@ -22,7 +22,8 @@ from .types import (
     get_struct_fields,
 )
 from .server import Server
-from .client import Client, InterfaceProxy
+from .client import Client
+from .contract import Contract
 from .transport import Transport, HttpTransport, InProcTransport
 
 __all__ = [
@@ -41,7 +42,7 @@ __all__ = [
     "get_struct_fields",
     "Server",
     "Client",
-    "InterfaceProxy",
+    "Contract",
     "Transport",
     "HttpTransport",
     "InProcTransport",
