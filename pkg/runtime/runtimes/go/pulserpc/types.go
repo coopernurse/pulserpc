@@ -1,5 +1,7 @@
 package pulserpc
 
+import "strings"
+
 // StructDef represents a struct definition
 type StructDef map[string]interface{}
 
@@ -13,10 +15,26 @@ type StructMap map[string]StructDef
 type EnumMap map[string]EnumDef
 
 // FindStruct finds a struct definition by name
+// Tries qualified name first, then unqualified name
 func FindStruct(structName string, allStructs StructMap) StructDef {
+	// Try qualified name first
 	if structDef, ok := allStructs[structName]; ok {
 		return structDef
 	}
+
+	// Try unqualified name (extract base name from qualified name)
+	if idx := len(structName) - 1; idx >= 0 {
+		for i := idx; i >= 0; i-- {
+			if structName[i] == '.' {
+				baseName := structName[i+1:]
+				if structDef, ok := allStructs[baseName]; ok {
+					return structDef
+				}
+				break
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -28,16 +46,18 @@ func FindEnum(enumName string, allEnums EnumMap) EnumDef {
 		return enumDef
 	}
 
-	// Try unqualified name (extract base name from qualified name)
-	if idx := len(enumName) - 1; idx >= 0 {
-		for i := idx; i >= 0; i-- {
-			if enumName[i] == '.' {
-				baseName := enumName[i+1:]
-				if enumDef, ok := allEnums[baseName]; ok {
-					return enumDef
-				}
-				break
-			}
+	// If enumName contains a dot, extract the base name and try that
+	if strings.Contains(enumName, ".") {
+		baseName := enumName[strings.LastIndex(enumName, ".")+1:]
+		if enumDef, ok := allEnums[baseName]; ok {
+			return enumDef
+		}
+	}
+
+	// Try looking for the enum in allEnums with matching base name
+	for key, enumDef := range allEnums {
+		if strings.HasSuffix(key, "."+enumName) {
+			return enumDef
 		}
 	}
 

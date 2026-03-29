@@ -1316,6 +1316,7 @@ func GetCSharpType(typeDef map[string]interface{}, allStructs map[string]*parser
 }
 
 // generateClientCs generates the Client.cs file with transport abstraction and client classes
+// Note: ITransport and HttpTransport are provided by the runtime Transport.cs, not generated here
 func generateClientCs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, namespaceMap map[string]*NamespaceTypes) string {
 	var sb strings.Builder
 
@@ -1348,12 +1349,6 @@ func generateClientCs(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	sb.WriteString("namespace PulseRPC\n")
 	sb.WriteString("{\n")
 
-	// Generate ITransport interface
-	writeITransportCs(&sb)
-
-	// Generate HttpTransport
-	writeHttpTransportCs(&sb)
-
 	// Generate client classes for each interface
 	for _, iface := range idl.Interfaces {
 		writeInterfaceClientCs(&sb, iface, structMap, enumMap)
@@ -1364,80 +1359,6 @@ func generateClientCs(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	return sb.String()
 }
 
-// writeITransportCs generates the ITransport interface
-func writeITransportCs(sb *strings.Builder) {
-	sb.WriteString("public interface ITransport\n")
-	sb.WriteString("{\n")
-	sb.WriteString("    Task<Dictionary<string, object?>> CallAsync(string method, object[] parameters);\n")
-	sb.WriteString("}\n\n")
-}
-
-// writeHttpTransportCs generates the HttpTransport class
-func writeHttpTransportCs(sb *strings.Builder) {
-	sb.WriteString("public class HttpTransport : ITransport\n")
-	sb.WriteString("{\n")
-	sb.WriteString("    private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions\n")
-	sb.WriteString("    {\n")
-	sb.WriteString("        PropertyNamingPolicy = JsonNamingPolicy.CamelCase\n")
-	sb.WriteString("    };\n\n")
-	sb.WriteString("    static HttpTransport()\n")
-	sb.WriteString("    {\n")
-	sb.WriteString("        _jsonOptions.Converters.Add(new JsonStringEnumConverter());\n")
-	sb.WriteString("    }\n\n")
-	sb.WriteString("    private readonly HttpClient _httpClient;\n")
-	sb.WriteString("    private readonly string _baseUrl;\n\n")
-	sb.WriteString("    public HttpTransport(string baseUrl, Dictionary<string, string>? headers = null)\n")
-	sb.WriteString("    {\n")
-	sb.WriteString("        _baseUrl = baseUrl.TrimEnd('/');\n")
-	sb.WriteString("        _httpClient = new HttpClient();\n")
-	sb.WriteString("        if (headers != null)\n")
-	sb.WriteString("        {\n")
-	sb.WriteString("            foreach (var header in headers)\n")
-	sb.WriteString("            {\n")
-	sb.WriteString("                _httpClient.DefaultRequestHeaders.Add(header.Key, header.Value);\n")
-	sb.WriteString("            }\n")
-	sb.WriteString("        }\n")
-	sb.WriteString("    }\n\n")
-	sb.WriteString("    public async Task<Dictionary<string, object?>> CallAsync(string method, object[] parameters)\n")
-	sb.WriteString("    {\n")
-	sb.WriteString("        var requestId = Guid.NewGuid().ToString();\n")
-	sb.WriteString("        var request = new Dictionary<string, object?>\n")
-	sb.WriteString("        {\n")
-	sb.WriteString("            { \"jsonrpc\", \"2.0\" },\n")
-	sb.WriteString("            { \"method\", method },\n")
-	sb.WriteString("            { \"params\", parameters },\n")
-	sb.WriteString("            { \"id\", requestId }\n")
-	sb.WriteString("        };\n\n")
-	sb.WriteString("        var json = JsonSerializer.Serialize(request, _jsonOptions);\n")
-	sb.WriteString("        var content = new StringContent(json, System.Text.Encoding.UTF8, \"application/json\");\n\n")
-	sb.WriteString("        var response = await _httpClient.PostAsync(_baseUrl, content);\n")
-	sb.WriteString("        response.EnsureSuccessStatusCode();\n\n")
-	sb.WriteString("        var responseJson = await response.Content.ReadAsStringAsync();\n")
-	sb.WriteString("        var responseDict = JsonSerializer.Deserialize<Dictionary<string, object?>>(responseJson);\n\n")
-	sb.WriteString("        if (responseDict != null && responseDict.TryGetValue(\"error\", out var errorObj) && errorObj != null)\n")
-	sb.WriteString("        {\n")
-	sb.WriteString("            // errorObj might be JsonElement or Dictionary<string, object?>\n")
-	sb.WriteString("            var code = -32603;\n")
-	sb.WriteString("            var message = \"Unknown error\";\n")
-	sb.WriteString("            object? data = null;\n")
-	sb.WriteString("            if (errorObj is System.Text.Json.JsonElement errorElem)\n")
-	sb.WriteString("            {\n")
-	sb.WriteString("                if (errorElem.TryGetProperty(\"code\", out var codeProp)) code = codeProp.GetInt32();\n")
-	sb.WriteString("                if (errorElem.TryGetProperty(\"message\", out var msgProp)) message = msgProp.GetString() ?? \"Unknown error\";\n")
-	sb.WriteString("                if (errorElem.TryGetProperty(\"data\", out var dataProp)) data = dataProp;\n")
-	sb.WriteString("            }\n")
-	sb.WriteString("            else if (errorObj is Dictionary<string, object?> errorDict)\n")
-	sb.WriteString("            {\n")
-	sb.WriteString("                if (errorDict.TryGetValue(\"code\", out var codeObj)) code = Convert.ToInt32(codeObj);\n")
-	sb.WriteString("                if (errorDict.TryGetValue(\"message\", out var msgObj)) message = msgObj?.ToString() ?? \"Unknown error\";\n")
-	sb.WriteString("                if (errorDict.TryGetValue(\"data\", out var dataObj)) data = dataObj;\n")
-	sb.WriteString("            }\n")
-	sb.WriteString("            throw new RPCError(code, message, data);\n")
-	sb.WriteString("        }\n\n")
-	sb.WriteString("        return responseDict ?? new Dictionary<string, object?>();\n")
-	sb.WriteString("    }\n")
-	sb.WriteString("}\n\n")
-}
 
 // writeInterfaceClientCs generates a client class for an interface that implements the interface
 func writeInterfaceClientCs(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
