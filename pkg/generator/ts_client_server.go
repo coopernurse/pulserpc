@@ -28,7 +28,9 @@ func (p *TSClientServer) Name() string {
 
 // RegisterFlags registers CLI flags for this plugin
 func (p *TSClientServer) RegisterFlags(fs *flag.FlagSet) {
-	fs.String("package", "", "Package prefix for generated types and classes (for namespace isolation)")
+	if fs.Lookup("package") == nil {
+		fs.String("package", "", "Package prefix for generated types and classes (for namespace isolation)")
+	}
 }
 
 // Generate generates TypeScript HTTP server and client code from the parsed IDL

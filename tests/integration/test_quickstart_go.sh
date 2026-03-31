@@ -56,8 +56,8 @@ mkdir -p "$OUTPUT_DIR"
 cd "$OUTPUT_DIR"
 go mod init checkout-service
 mkdir -p pkg/checkout
-# Use -go-module flag to explicitly specify module path for runtime imports
-"$PULSERPC" -plugin go-client-server -dir pkg/checkout -go-module checkout-service/pkg \
+# Use -package flag to specify base import path for generated code
+"$PULSERPC" -plugin go-client-server -dir pkg/checkout -package checkout-service/pkg/checkout \
     "$QUICKSTART_DIR/checkout.pulse"
 
 # 2. Copy quickstart implementations
@@ -65,6 +65,16 @@ echo -e "${YELLOW}Copying quickstart implementations...${NC}"
 mkdir -p cmd/server cmd/client
 cp "$QUICKSTART_DIR/go/server.go" cmd/server/main.go
 cp "$QUICKSTART_DIR/go/client.go" cmd/client/main.go
+
+# Update import paths: generated code is now in <outputDir>/<namespace>/ instead of <outputDir>/
+# e.g., checkout-service/pkg/checkout becomes checkout-service/pkg/checkout/checkout
+# and pulserpc runtime moves from checkout-service/pkg/pulserpc to checkout-service/pkg/checkout/pulserpc
+sed -i.bak "s|checkout-service/pkg/checkout\"|checkout-service/pkg/checkout/checkout\"|g" cmd/server/main.go
+sed -i.bak "s|checkout-service/pkg/pulserpc\"|checkout-service/pkg/checkout/pulserpc\"|g" cmd/server/main.go
+rm -f cmd/server/main.go.bak
+sed -i.bak "s|checkout-service/pkg/checkout\"|checkout-service/pkg/checkout/checkout\"|g" cmd/client/main.go
+sed -i.bak "s|checkout-service/pkg/pulserpc\"|checkout-service/pkg/checkout/pulserpc\"|g" cmd/client/main.go
+rm -f cmd/client/main.go.bak
 
 # Update server and client to use test port instead of default 8080
 sed -i.bak "s/8080/$SERVER_PORT/g" cmd/server/main.go
