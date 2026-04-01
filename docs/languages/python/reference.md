@@ -43,6 +43,13 @@ cart = {
 }
 ```
 
+When generating multi-namespace output, import generated symbols from the namespace package instead of the flat output file:
+
+```python
+from myapp.lib.rpc.book import BookServiceClient
+from myapp.lib.rpc.pulserpc import RPCError
+```
+
 ## Optional Fields
 
 Optional fields can be `None`:
@@ -132,6 +139,18 @@ product = catalog.getProduct("prod001")
 if product:
     print(product['name'])
 ```
+
+## Migration Notes
+
+- If `-package` is not set, the generator keeps the legacy flat Python layout.
+- With `-package`, namespace folders become importable packages under the chosen base path.
+- Runtime imports always come from `pulserpc` under the same generated root.
+
+## Troubleshooting
+
+- `ModuleNotFoundError` usually means the generated root directory is not on `PYTHONPATH`.
+- If a namespace import fails, verify the namespace directory name matches the IDL namespace exactly.
+- If runtime imports fail, confirm you are importing `pulserpc` from the generated base package, not from the project root.
 
 ## Validation
 

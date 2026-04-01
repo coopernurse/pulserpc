@@ -75,6 +75,12 @@ pulserpc [flags] <idl-file>
 |------|------|-------------|
 | `-package` | string | Package prefix for generated types and classes. Used for namespace isolation. |
 
+#### Python Plugin (`python-client-server`)
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `-package` | string | Base import path for namespace packages and runtime imports. Use this when generating multi-namespace Python output. |
+
 #### C# Plugin (`csharp-client-server`)
 
 The C# plugin has no plugin-specific flags.

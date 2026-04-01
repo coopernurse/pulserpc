@@ -38,6 +38,14 @@ This creates:
 - `client.py` - HTTPTransport and service client classes
 - `pulserpc/` - Runtime library (RPCError, validation, types)
 
+For multi-namespace projects, add `-dir` and `-package` so each namespace is generated into its own package directory:
+
+```bash
+pulserpc -plugin python-client-server -dir ./generated -package myapp.lib.rpc checkout.pulse
+```
+
+That layout places runtime files in `./generated/pulserpc/` and namespace code in `./generated/<namespace>/`.
+
 The IDL is embedded directly in `server.py` for the `pulserpc-idl` RPC method.
 
 Note: the Python generator only creates classes for interfaces (service stubs). Structs are plain dicts and enums are strings, so use maps and lists directly in your handlers and client code.
