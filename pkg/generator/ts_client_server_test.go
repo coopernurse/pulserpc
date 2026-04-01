@@ -323,3 +323,210 @@ func TestTsBackwardsCompatibleSingleNamespaceFlat(t *testing.T) {
 		assertTsFileExists(t, outputDir, "pulserpc/index.ts")
 	})
 }
+
+func TestTsImportPaths(t *testing.T) {
+	t.Run("multi-namespace book/types.ts uses ../pulserpc runtime import", func(t *testing.T) {
+		withTempOutputDir(t, func(outputDir string) {
+			idl := buildMultiNamespaceIDL()
+
+			gen := NewTSClientServer()
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.String("dir", "", "output dir")
+			gen.RegisterFlags(fs)
+			if err := fs.Set("dir", outputDir); err != nil {
+				t.Fatalf("failed to set dir flag: %v", err)
+			}
+
+			err := gen.Generate(idl, fs)
+			if err != nil {
+				t.Fatalf("Generate() failed: %v", err)
+			}
+
+			// book/types.ts should NOT contain './pulserpc' (flat import)
+			content, err := os.ReadFile(filepath.Join(outputDir, "book/types.ts"))
+			if err != nil {
+				t.Fatalf("failed to read book/types.ts: %v", err)
+			}
+			if strings.Contains(string(content), "from './pulserpc'") {
+				t.Error("book/types.ts should not contain flat import from './pulserpc'")
+			}
+		})
+	})
+
+	t.Run("multi-namespace book/types.ts contains ../common cross-namespace import", func(t *testing.T) {
+		withTempOutputDir(t, func(outputDir string) {
+			// Build IDL where book has a type referencing common.Category
+			idl := buildMultiNamespaceWithCrossRefIDL()
+
+			gen := NewTSClientServer()
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.String("dir", "", "output dir")
+			gen.RegisterFlags(fs)
+			if err := fs.Set("dir", outputDir); err != nil {
+				t.Fatalf("failed to set dir flag: %v", err)
+			}
+
+			err := gen.Generate(idl, fs)
+			if err != nil {
+				t.Fatalf("Generate() failed: %v", err)
+			}
+
+			assertTsFileContains(t, outputDir, "book/types.ts", "from '../common'")
+		})
+	})
+
+	t.Run("single-namespace flat output uses ./pulserpc import", func(t *testing.T) {
+		withTempOutputDir(t, func(outputDir string) {
+			// Single namespace with empty namespace name - flat output
+			idl := &parser.IDL{
+				Structs: []*parser.Struct{
+					{
+						Name: "User",
+						Fields: []*parser.Field{
+							{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+						},
+					},
+				},
+				Interfaces: []*parser.Interface{
+					{
+						Name: "UserService",
+						Methods: []*parser.Method{
+							{
+								Name:       "getUser",
+								Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+								ReturnType: &parser.Type{UserDefined: "User"},
+							},
+						},
+					},
+				},
+			}
+
+			gen := NewTSClientServer()
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.String("dir", "", "output dir")
+			gen.RegisterFlags(fs)
+			// No -dir flag set: flat output
+			// But we need to set output dir for the test to work
+			// With empty namespace and no -dir, it should stay flat
+			// We'll test the flat output by checking server.ts content
+
+			// Actually, with empty namespace and -dir set, it stays flat per isMultiNamespaceMode
+			if err := fs.Set("dir", outputDir); err != nil {
+				t.Fatalf("failed to set dir flag: %v", err)
+			}
+
+			err := gen.Generate(idl, fs)
+			if err != nil {
+				t.Fatalf("Generate() failed: %v", err)
+			}
+
+			// Flat output: server.ts should use ./pulserpc
+			assertTsFileContains(t, outputDir, "server.ts", "from './pulserpc/rpc'")
+			// Flat output: client.ts should use ./pulserpc
+			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc'")
+		})
+	})
+
+	t.Run("multi-namespace server.ts uses ../pulserpc/rpc import", func(t *testing.T) {
+		withTempOutputDir(t, func(outputDir string) {
+			idl := buildMultiNamespaceIDL()
+
+			gen := NewTSClientServer()
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.String("dir", "", "output dir")
+			gen.RegisterFlags(fs)
+			if err := fs.Set("dir", outputDir); err != nil {
+				t.Fatalf("failed to set dir flag: %v", err)
+			}
+
+			err := gen.Generate(idl, fs)
+			if err != nil {
+				t.Fatalf("Generate() failed: %v", err)
+			}
+
+			assertTsFileContains(t, outputDir, "book/server.ts", "from '../pulserpc/rpc'")
+			assertTsFileContains(t, outputDir, "common/server.ts", "from '../pulserpc/rpc'")
+		})
+	})
+
+	t.Run("multi-namespace client.ts uses ../pulserpc import", func(t *testing.T) {
+		withTempOutputDir(t, func(outputDir string) {
+			idl := buildMultiNamespaceIDL()
+
+			gen := NewTSClientServer()
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.String("dir", "", "output dir")
+			gen.RegisterFlags(fs)
+			if err := fs.Set("dir", outputDir); err != nil {
+				t.Fatalf("failed to set dir flag: %v", err)
+			}
+
+			err := gen.Generate(idl, fs)
+			if err != nil {
+				t.Fatalf("Generate() failed: %v", err)
+			}
+
+			assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc'")
+			assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc'")
+		})
+	})
+}
+
+// buildMultiNamespaceWithCrossRefIDL creates an IDL with two namespaces where
+// book has a struct field that references a type from common.
+func buildMultiNamespaceWithCrossRefIDL() *parser.IDL {
+	return &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "Category",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "id", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "Book",
+				Namespace: "book",
+				Fields: []*parser.Field{
+					{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+					{
+						Name: "category",
+						Type: &parser.Type{UserDefined: "Category"},
+					},
+				},
+			},
+		},
+		Enums: []*parser.Enum{
+			{
+				Name:      "Status",
+				Namespace: "common",
+				Values:    []*parser.EnumValue{{Name: "ACTIVE"}, {Name: "INACTIVE"}},
+			},
+		},
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "CommonService",
+				Namespace: "common",
+				Methods: []*parser.Method{
+					{
+						Name:       "getCategory",
+						Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "Category"},
+					},
+				},
+			},
+			{
+				Name:      "BookService",
+				Namespace: "book",
+				Methods: []*parser.Method{
+					{
+						Name:       "getBook",
+						Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "Book"},
+					},
+				},
+			},
+		},
+	}
+}

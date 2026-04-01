@@ -119,7 +119,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			}
 
 			// Generate types.ts for this namespace
-			typesCode := generateTypesTsForNamespace(nsTypes, nsStructMap, nsEnumMap)
+			typesCode := generateTypesTsForNamespace(nsTypes, ns, nsStructMap, nsEnumMap, true, namespaceMap)
 			typesPath := filepath.Join(nsDir, "types.ts")
 			if err := os.WriteFile(typesPath, []byte(typesCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s/types.ts: %w", ns, err)
@@ -127,7 +127,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			PrintFileCreated(typesPath, fs)
 
 			// Generate server.ts for this namespace
-			serverCode := generateServerTsForNamespace(nsTypes, nsStructMap, nsEnumMap, nsInterfaceMap, packagePrefix)
+			serverCode := generateServerTsForNamespace(nsTypes, nsStructMap, nsEnumMap, nsInterfaceMap, packagePrefix, true)
 			serverPath := filepath.Join(nsDir, "server.ts")
 			if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s/server.ts: %w", ns, err)
@@ -135,7 +135,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			PrintFileCreated(serverPath, fs)
 
 			// Generate client.ts for this namespace
-			clientCode := generateClientTsForNamespace(nsTypes, nsStructMap, nsEnumMap, nsInterfaceMap, packagePrefix)
+			clientCode := generateClientTsForNamespace(nsTypes, nsStructMap, nsEnumMap, nsInterfaceMap, packagePrefix, true)
 			clientPath := filepath.Join(nsDir, "client.ts")
 			if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s/client.ts: %w", ns, err)
@@ -218,6 +218,140 @@ func writeIDLJSONTs(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 	}
 	PrintFileCreated(idlPath, fs)
 	return nil
+}
+
+// collectCrossNamespaceImports identifies which external namespaces are referenced
+// by types in the given namespace's structs and enums. Returns a map of namespace
+// names that need to be imported.
+func collectCrossNamespaceImports(nsTypes *NamespaceTypes, currentNs string, allNamespaceMap map[string]*NamespaceTypes) map[string]bool {
+	imports := make(map[string]bool)
+
+	// Build a set of type names that belong to the current namespace
+	localTypes := make(map[string]bool)
+	for _, s := range nsTypes.Structs {
+		localTypes[GetBaseName(s.Name)] = true
+	}
+	for _, e := range nsTypes.Enums {
+		localTypes[GetBaseName(e.Name)] = true
+	}
+
+	// Check struct fields for references to types in other namespaces
+	for _, s := range nsTypes.Structs {
+		for _, field := range s.Fields {
+			if field.Type != nil && field.Type.IsUserDefined() {
+				typeName := GetBaseName(field.Type.UserDefined)
+				if !localTypes[typeName] {
+					// Find which namespace this type belongs to
+					for ns, nsTypes := range allNamespaceMap {
+						if ns == currentNs {
+							continue
+						}
+						for _, otherStruct := range nsTypes.Structs {
+							if GetBaseName(otherStruct.Name) == typeName {
+								imports[ns] = true
+								break
+							}
+						}
+						if !imports[ns] {
+							for _, otherEnum := range nsTypes.Enums {
+								if GetBaseName(otherEnum.Name) == typeName {
+									imports[ns] = true
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return imports
+}
+
+// getTypeScriptTypeForNamespace converts a parser.Type to a TypeScript type string,
+// with support for cross-namespace type references in multi-namespace mode.
+// If useTypesPrefix is true, user-defined types are prefixed with "types." (for use in server.ts).
+// When inNamespaceSubdir is true and the type belongs to another namespace, it prefixes with that namespace.
+func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, useTypesPrefix bool, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes) string {
+	if t == nil {
+		return "void"
+	}
+	if t.IsBuiltIn() {
+		switch t.BuiltIn {
+		case "string":
+			return "string"
+		case "int", "float":
+			return "number"
+		case "bool":
+			return "boolean"
+		default:
+			return "any"
+		}
+	}
+	if t.IsArray() {
+		return getTypeScriptTypeForNamespace(t.Array, structMap, enumMap, useTypesPrefix, inNamespaceSubdir, allNamespaceMap) + "[]"
+	}
+	if t.IsMap() {
+		return "Record<string, " + getTypeScriptTypeForNamespace(t.MapValue, structMap, enumMap, useTypesPrefix, inNamespaceSubdir, allNamespaceMap) + ">"
+	}
+	if t.IsUserDefined() {
+		typeName := t.UserDefined
+		// Check if it's a struct
+		if structMap[typeName] != nil {
+			if useTypesPrefix {
+				return "types." + GetBaseName(typeName)
+			}
+			return typeName
+		}
+		// Check if it's an enum
+		if enumMap[typeName] != nil {
+			if useTypesPrefix {
+				return "types." + GetBaseName(typeName)
+			}
+			return typeName
+		}
+		// Try to find by base name (for namespaced types like "inc.Response")
+		for key := range structMap {
+			if strings.HasSuffix(key, "."+typeName) {
+				if useTypesPrefix {
+					return "types." + key
+				}
+				return key
+			}
+		}
+		for key := range enumMap {
+			if strings.HasSuffix(key, "."+typeName) {
+				if useTypesPrefix {
+					return "types." + GetBaseName(key)
+				}
+				return GetBaseName(key)
+			}
+		}
+
+		// In multi-namespace mode, check if this type belongs to another namespace
+		if inNamespaceSubdir && allNamespaceMap != nil {
+			baseTypeName := GetBaseName(typeName)
+			for ns, nsTypes := range allNamespaceMap {
+				for _, s := range nsTypes.Structs {
+					if GetBaseName(s.Name) == baseTypeName {
+						return ns + "." + baseTypeName
+					}
+				}
+				for _, e := range nsTypes.Enums {
+					if GetBaseName(e.Name) == baseTypeName {
+						return ns + "." + baseTypeName
+					}
+				}
+			}
+		}
+
+		if useTypesPrefix {
+			return "types." + GetBaseName(typeName)
+		}
+		return typeName
+	}
+	return "any"
 }
 
 // applyPackagePrefix applies package prefix to a name if provided.
@@ -427,11 +561,36 @@ func generateTypesTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumM
 
 // generateTypesTsForNamespace generates a types.ts file with TypeScript interfaces for structs and enums
 // belonging to a single namespace. Used in multi-namespace mode.
-func generateTypesTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) string {
+// When inNamespaceSubdir is true, cross-namespace type references use '../{namespace}' imports.
+func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
 	sb.WriteString("// TypeScript interfaces and enums for all IDL types\n\n")
+
+	// Collect cross-namespace imports needed by types in this namespace
+	crossNsImports := collectCrossNamespaceImports(nsTypes, currentNs, allNamespaceMap)
+
+	// Write cross-namespace imports if any
+	if inNamespaceSubdir && len(crossNsImports) > 0 {
+		importedNs := make([]string, 0, len(crossNsImports))
+		for ns := range crossNsImports {
+			importedNs = append(importedNs, ns)
+		}
+		// Sort for deterministic output
+		for i := 0; i < len(importedNs); i++ {
+			for j := i + 1; j < len(importedNs); j++ {
+				if importedNs[i] > importedNs[j] {
+					importedNs[i], importedNs[j] = importedNs[j], importedNs[i]
+				}
+			}
+		}
+		for _, ns := range importedNs {
+			importPath := tsCrossNamespaceImportPath("", ns)
+			fmt.Fprintf(&sb, "import * as %s from '%s';\n", ns, importPath)
+		}
+		sb.WriteString("\n")
+	}
 
 	// Generate enums first (they may be used by structs)
 	for _, enum := range nsTypes.Enums {
@@ -483,7 +642,7 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*
 			if fieldComment != "" {
 				fmt.Fprintf(&sb, "  // %s\n", fieldComment)
 			}
-			tsType := getTypeScriptType(field.Type, structMap, enumMap, false)
+			tsType := getTypeScriptTypeForNamespace(field.Type, structMap, enumMap, false, inNamespaceSubdir, allNamespaceMap)
 			optionalMarker := ""
 			if field.Optional {
 				optionalMarker = "?"
@@ -498,13 +657,14 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*
 
 // generateServerTsForNamespace generates the server.ts file with abstract interface classes
 // for a single namespace. Used in multi-namespace mode.
-func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string) string {
+func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, packagePrefix string, inNamespaceSubdir bool) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
 	sb.WriteString("// Abstract service classes\n")
 	sb.WriteString("// Implement these classes to create your service\n\n")
-	sb.WriteString("import { RPCError } from '../pulserpc/rpc';\n")
+	runtimeImport := tsRuntimeImportPath(inNamespaceSubdir)
+	sb.WriteString(fmt.Sprintf("import { RPCError } from '%s/rpc';\n", runtimeImport))
 	sb.WriteString("import * as types from './types';\n\n")
 
 	// Generate interface stub abstract classes
@@ -517,13 +677,14 @@ func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 
 // generateClientTsForNamespace generates the client.ts file for a single namespace.
 // Used in multi-namespace mode.
-func generateClientTsForNamespace(nsTypes *NamespaceTypes, _ map[string]*parser.Struct, _ map[string]*parser.Enum, _ map[string]*parser.Interface, _ string) string {
+func generateClientTsForNamespace(nsTypes *NamespaceTypes, _ map[string]*parser.Struct, _ map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, inNamespaceSubdir bool) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
 	sb.WriteString("// This file contains example code showing how to use the PulseRPC client\n")
 	sb.WriteString("// The client automatically discovers interfaces from the server\n\n")
-	sb.WriteString("import { HttpTransport, Client } from '../pulserpc';\n\n")
+	runtimeImport := tsRuntimeImportPath(inNamespaceSubdir)
+	sb.WriteString(fmt.Sprintf("import { HttpTransport, Client } from '%s';\n\n", runtimeImport))
 	sb.WriteString("// Example: Create a client and call a method\n")
 	sb.WriteString("// \n")
 	sb.WriteString("// const transport = new HttpTransport(\"http://localhost:8080\");\n")
