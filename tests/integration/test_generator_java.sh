@@ -88,7 +88,7 @@ mkdir -p "$OUTPUT_DIR"
 # Step 3: Generate Java code with Jackson (default)
 echo -e "${YELLOW}Generating Java code with Jackson...${NC}"
 cd "$PROJECT_ROOT"
-"$BINARY_PATH" -plugin java-client-server -base-package com.example.server -generate-test-files -dir "$OUTPUT_DIR" "$TEST_IDL"
+"$BINARY_PATH" -plugin java-client-server -package com.example.server -generate-test-files -dir "$OUTPUT_DIR" "$TEST_IDL"
 
 # Verify generated files
 echo -e "${YELLOW}Verifying generated files...${NC}"
@@ -209,7 +209,7 @@ echo -e "${YELLOW}Testing GSON code generation...${NC}"
 cd "$PROJECT_ROOT"
 GSON_OUTPUT_DIR="/tmp/pulserpc_test_java_gson_$$"
 mkdir -p "$GSON_OUTPUT_DIR"
-"$BINARY_PATH" -plugin java-client-server -base-package com.example.server -json-lib gson -generate-test-files -dir "$GSON_OUTPUT_DIR" "$TEST_IDL"
+"$BINARY_PATH" -plugin java-client-server -package com.example.server -json-lib gson -generate-test-files -dir "$GSON_OUTPUT_DIR" "$TEST_IDL"
 
 # Verify GSON files
 if [ ! -f "$GSON_OUTPUT_DIR/src/main/java/com/bitmechanic/pulserpc/GsonJsonParser.java" ]; then

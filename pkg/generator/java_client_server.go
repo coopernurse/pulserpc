@@ -87,6 +87,14 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		interfaceMap[i.Name] = i
 	}
 
+	// Generate pom.xml for Maven builds
+	pomCode := generatePomXml(jsonLib)
+	pomPath := filepath.Join(outputDir, "pom.xml")
+	if err := os.WriteFile(pomPath, []byte(pomCode), 0644); err != nil {
+		return fmt.Errorf("failed to write pom.xml: %w", err)
+	}
+	PrintFileCreated(pomPath, fs)
+
 	// Copy runtime library files with selective copying based on json-lib
 	// Runtime goes to {dir}/pulserpc/ regardless of -package flag
 	if err := p.copyRuntimeFiles(outputDir, jsonLib, isSilent()); err != nil {
@@ -248,14 +256,6 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			return fmt.Errorf("failed to write TestClient.java: %w", err)
 		}
 		PrintFileCreated(testClientPath, fs)
-
-		// Generate pom.xml
-		pomCode := generatePomXml(jsonLib)
-		pomPath := filepath.Join(dirFlag.Value.String(), "pom.xml")
-		if err := os.WriteFile(pomPath, []byte(pomCode), 0644); err != nil {
-			return fmt.Errorf("failed to write pom.xml: %w", err)
-		}
-		PrintFileCreated(pomPath, fs)
 	}
 
 	return nil
@@ -264,20 +264,51 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 // copyRuntimeFiles copies the Java runtime library files to the output directory
 // Selectively copies files based on json-lib flag
 func (p *JavaClientServer) copyRuntimeFiles(outputDir string, jsonLib string, silent bool) error {
-	// Delegate to centralized runtime copying
-	if err := runtime.CopyRuntimeFiles("java", outputDir, silent); err != nil {
-		return fmt.Errorf("failed to copy runtime files: %w", err)
+	// Check if pom.xml exists in outputDir - this indicates a Maven project
+	pomPath := filepath.Join(outputDir, "pom.xml")
+	isMavenProject := false
+	if _, err := os.Stat(pomPath); err == nil {
+		isMavenProject = true
+	}
+
+	var runtimeBaseDir string
+	if isMavenProject {
+		// Maven project - copy to src/main/java/com/bitmechanic/pulserpc/
+		runtimeBaseDir = filepath.Join(outputDir, "src", "main", "java", "com", "bitmechanic", "pulserpc")
+	} else {
+		// Non-Maven project - use legacy location
+		runtimeBaseDir = filepath.Join(outputDir, getRuntimePackageDirName())
+	}
+
+	// Get runtime files
+	files, err := runtime.GetRuntimeFiles("java")
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(runtimeBaseDir, 0755); err != nil {
+		return fmt.Errorf("failed to create runtime directory: %w", err)
+	}
+
+	// Copy all files
+	for filename, data := range files {
+		dstPath := filepath.Join(runtimeBaseDir, filename)
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)
+		}
+		if !silent {
+			fmt.Println(dstPath)
+		}
 	}
 
 	// Remove the JSON parser implementation we don't want (keep only selected jsonLib)
-	runtimeDir := filepath.Join(outputDir, getRuntimePackageDirName())
 	switch jsonLib {
 	case "jackson":
 		// remove Gson implementation if present
-		_ = os.Remove(filepath.Join(runtimeDir, "GsonJsonParser.java"))
+		_ = os.Remove(filepath.Join(runtimeBaseDir, "GsonJsonParser.java"))
 	case "gson":
 		// remove Jackson implementation if present
-		_ = os.Remove(filepath.Join(runtimeDir, "JacksonJsonParser.java"))
+		_ = os.Remove(filepath.Join(runtimeBaseDir, "JacksonJsonParser.java"))
 	}
 
 	return nil

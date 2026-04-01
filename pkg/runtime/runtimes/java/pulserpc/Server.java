@@ -1,4 +1,4 @@
-package com.bitmechanic.pulserpc;
+package pulserpc;
 
 import java.lang.reflect.Method;
 import java.util.HashMap;

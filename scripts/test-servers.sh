@@ -96,10 +96,10 @@ generate_code() {
     IFS='|' read -r name plugin image port start_cmd <<< "$(parse_runtime "$runtime_config")"
     
     echo -e "${YELLOW}Generating $name code...${NC}"
-    # For Java code generation, the generator requires a base-package flag.
+    # For Java code generation, the generator requires a package flag.
     if [ "$plugin" = "java-client-server" ]; then
         JAVA_BASE_PACKAGE="com.pulserpc.test"
-        if ! "$BINARY_PATH" -plugin "$plugin" -base-package "$JAVA_BASE_PACKAGE" -generate-test-files -dir "$output_dir" "$TEST_IDL"; then
+        if ! "$BINARY_PATH" -plugin "$plugin" -package "$JAVA_BASE_PACKAGE" -generate-test-files -dir "$output_dir" "$TEST_IDL"; then
             echo -e "${RED}ERROR: Code generation failed for $name${NC}"
             return 1
         fi

@@ -1,4 +1,4 @@
-package com.bitmechanic.pulserpc;
+package pulserpc;
 
 /**
  * Exception class for JSON-RPC 2.0 errors

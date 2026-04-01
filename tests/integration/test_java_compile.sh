@@ -10,7 +10,7 @@ trap cleanup EXIT
 echo "Generating Java project in $tmpdir"
 
 # Use the CLI to generate Java code for examples/book.pulse
-go run ./cmd/pulserpc --plugin java-client-server -dir "$tmpdir" -base-package com.example -json-lib jackson -generate-test-files=true examples/book.pulse
+go run ./cmd/pulserpc --plugin java-client-server -dir "$tmpdir" -package com.example -json-lib jackson -generate-test-files=true examples/book.pulse
 
 echo "Running mvn package in $tmpdir"
 pushd "$tmpdir" > /dev/null
