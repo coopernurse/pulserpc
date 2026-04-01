@@ -202,6 +202,198 @@ func TestCollectSortedNamespaces(t *testing.T) {
 	}
 }
 
+func TestCSharpNamespacePaths_GetRuntimeImport(t *testing.T) {
+	tests := []struct {
+		name        string
+		packageBase string
+		expected    string
+	}{
+		{
+			name:        "no package base",
+			packageBase: "",
+			expected:    "PulseRPC",
+		},
+		{
+			name:        "with package base",
+			packageBase: "MyApp.Lib.Rpc",
+			expected:    "MyApp.Lib.Rpc.PulseRPC",
+		},
+		{
+			name:        "simple package base",
+			packageBase: "MyApp",
+			expected:    "MyApp.PulseRPC",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paths := NewCSharpNamespacePaths("/output", tt.packageBase)
+			result := paths.GetRuntimeImport()
+			if result != tt.expected {
+				t.Errorf("GetRuntimeImport() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCSharpNamespacePaths_GetNamespaceImportPrefix(t *testing.T) {
+	tests := []struct {
+		name        string
+		packageBase string
+		expected    string
+	}{
+		{
+			name:        "no package base",
+			packageBase: "",
+			expected:    "",
+		},
+		{
+			name:        "with package base",
+			packageBase: "MyApp.Lib.Rpc",
+			expected:    "MyApp.Lib.Rpc.",
+		},
+		{
+			name:        "simple package base",
+			packageBase: "MyApp",
+			expected:    "MyApp.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paths := NewCSharpNamespacePaths("/output", tt.packageBase)
+			result := paths.GetNamespaceImportPrefix()
+			if result != tt.expected {
+				t.Errorf("GetNamespaceImportPrefix() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCSharpCrossNamespaceImports(t *testing.T) {
+	paths := NewCSharpNamespacePaths("/output", "MyApp.Lib.Rpc")
+
+	allNamespaces := []string{"common", "book", "user"}
+
+	tests := []struct {
+		name      string
+		currentNS string
+	}{
+		{
+			name:      "book imports common and user",
+			currentNS: "book",
+		},
+		{
+			name:      "user imports common and book",
+			currentNS: "user",
+		},
+		{
+			name:      "common imports book and user",
+			currentNS: "common",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtimeImport := paths.GetRuntimeImport()
+			prefix := paths.GetNamespaceImportPrefix()
+
+			var otherNS []string
+			for _, ns := range allNamespaces {
+				if ns != tt.currentNS {
+					otherNS = append(otherNS, prefix+ns)
+				}
+			}
+
+			if runtimeImport != "MyApp.Lib.Rpc.PulseRPC" {
+				t.Errorf("runtime import = %v, want MyApp.Lib.Rpc.PulseRPC", runtimeImport)
+			}
+
+			if len(otherNS) != 2 {
+				t.Fatalf("expected 2 other namespaces, got %d", len(otherNS))
+			}
+
+			otherNSMap := make(map[string]bool)
+			for _, ns := range otherNS {
+				otherNSMap[ns] = true
+			}
+
+			expectedOthers := map[string]bool{
+				"MyApp.Lib.Rpc.common": true,
+				"MyApp.Lib.Rpc.user":   true,
+				"MyApp.Lib.Rpc.book":   true,
+			}
+			delete(expectedOthers, prefix+tt.currentNS)
+
+			for expectedNS := range expectedOthers {
+				if !otherNSMap[expectedNS] {
+					t.Errorf("missing import: %v", expectedNS)
+				}
+			}
+		})
+	}
+}
+
+func TestCSharpCrossNamespaceImportsNoPackage(t *testing.T) {
+	paths := NewCSharpNamespacePaths("/output", "")
+
+	allNamespaces := []string{"common", "book", "user"}
+
+	tests := []struct {
+		name      string
+		currentNS string
+	}{
+		{
+			name:      "book imports common and user without package",
+			currentNS: "book",
+		},
+		{
+			name:      "user imports common and book without package",
+			currentNS: "user",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtimeImport := paths.GetRuntimeImport()
+			prefix := paths.GetNamespaceImportPrefix()
+
+			var otherNS []string
+			for _, ns := range allNamespaces {
+				if ns != tt.currentNS {
+					otherNS = append(otherNS, prefix+ns)
+				}
+			}
+
+			if runtimeImport != "PulseRPC" {
+				t.Errorf("runtime import = %v, want PulseRPC", runtimeImport)
+			}
+
+			if len(otherNS) != 2 {
+				t.Fatalf("expected 2 other namespaces, got %d", len(otherNS))
+			}
+
+			otherNSMap := make(map[string]bool)
+			for _, ns := range otherNS {
+				otherNSMap[ns] = true
+			}
+
+			expectedOthers := map[string]bool{
+				"common": true,
+				"user":   true,
+				"book":   true,
+			}
+			delete(expectedOthers, prefix+tt.currentNS)
+
+			for expectedNS := range expectedOthers {
+				if !otherNSMap[expectedNS] {
+					t.Errorf("missing import: %v", expectedNS)
+				}
+			}
+		})
+	}
+}
+
 func TestCSharpNamespacePaths_EnsureAllNamespaceDirs(t *testing.T) {
 	tmpDir := t.TempDir()
 	paths := NewCSharpNamespacePaths(tmpDir, "MyApp.Lib.Rpc")
