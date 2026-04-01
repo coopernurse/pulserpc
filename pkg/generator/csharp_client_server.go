@@ -15,6 +15,7 @@ import (
 
 // CSharpClientServer is a plugin that generates C# HTTP server and client code from IDL
 type CSharpClientServer struct {
+	packageBase string
 }
 
 // NewCSharpClientServer creates a new CSharpClientServer plugin instance
@@ -29,7 +30,9 @@ func (p *CSharpClientServer) Name() string {
 
 // RegisterFlags registers CLI flags for this plugin
 func (p *CSharpClientServer) RegisterFlags(fs *flag.FlagSet) {
-	// No plugin-specific flags
+	if fs.Lookup("package") == nil {
+		fs.String("package", "", "Base namespace for generated C# code (e.g., MyApp.Lib.Rpc)")
+	}
 }
 
 // Generate generates C# HTTP server and client code from the parsed IDL
@@ -45,6 +48,12 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	outputDir := ""
 	if dirFlag != nil && dirFlag.Value.String() != "" {
 		outputDir = dirFlag.Value.String()
+	}
+
+	// Get package base flag
+	packageFlag := fs.Lookup("package")
+	if packageFlag != nil && packageFlag.Value.String() != "" {
+		p.packageBase = packageFlag.Value.String()
 	}
 
 	// Build type registries
@@ -1358,7 +1367,6 @@ func generateClientCs(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 
 	return sb.String()
 }
-
 
 // writeInterfaceClientCs generates a client class for an interface that implements the interface
 func writeInterfaceClientCs(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
