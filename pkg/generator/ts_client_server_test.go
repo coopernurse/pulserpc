@@ -685,7 +685,100 @@ func TestTsMultiFileEndToEnd(t *testing.T) {
 		// Assert cross-namespace import: user/types.ts references common
 		assertTsFileContains(t, outputDir, "user/types.ts", "from '../common'")
 
-		// Assert runtime import: book/types.ts uses ../pulserpc
-		assertTsFileContains(t, outputDir, "book/types.ts", "from '../pulserpc'")
+		// Note: book/types.ts does NOT need a runtime import (../pulserpc) because
+		// it only contains struct/enum types, not RPC types. Runtime imports are
+		// only needed in server.ts and client.ts which use RPCError, Server, etc.
+	})
+}
+
+func TestTsPackageFlag(t *testing.T) {
+	t.Run("-package flag does not affect class names", func(t *testing.T) {
+		withTempOutputDir(t, func(outputDir string) {
+			idl := &parser.IDL{
+				Interfaces: []*parser.Interface{
+					{
+						Name: "UserService",
+						Methods: []*parser.Method{
+							{
+								Name:       "getUser",
+								Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+								ReturnType: &parser.Type{BuiltIn: "string"},
+							},
+						},
+					},
+				},
+			}
+
+			gen := NewTSClientServer()
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.String("dir", "", "output dir")
+			fs.String("package", "", "base module path")
+			gen.RegisterFlags(fs)
+			if err := fs.Set("dir", outputDir); err != nil {
+				t.Fatalf("failed to set dir flag: %v", err)
+			}
+			if err := fs.Set("package", "@myapp/lib/rpc"); err != nil {
+				t.Fatalf("failed to set package flag: %v", err)
+			}
+
+			err := gen.Generate(idl, fs)
+			if err != nil {
+				t.Fatalf("Generate() failed: %v", err)
+			}
+
+			// Class name should be exactly "UserService", not "MyAppUserService" or any prefixed version
+			assertTsFileContains(t, outputDir, "server.ts", "export abstract class UserService")
+
+			// Verify package value is not prepended to class names
+			content, err := os.ReadFile(filepath.Join(outputDir, "server.ts"))
+			if err != nil {
+				t.Fatalf("failed to read server.ts: %v", err)
+			}
+			if strings.Contains(string(content), "@myapp/lib/rpcUserService") {
+				t.Error("class name should not contain package prefix")
+			}
+			if strings.Contains(string(content), "myappUserService") {
+				t.Error("class name should not contain package prefix")
+			}
+		})
+	})
+
+	t.Run("-package flag with multi-namespace output", func(t *testing.T) {
+		withTempOutputDir(t, func(outputDir string) {
+			idl := buildMultiNamespaceIDL()
+
+			gen := NewTSClientServer()
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.String("dir", "", "output dir")
+			fs.String("package", "", "base module path")
+			gen.RegisterFlags(fs)
+			if err := fs.Set("dir", outputDir); err != nil {
+				t.Fatalf("failed to set dir flag: %v", err)
+			}
+			if err := fs.Set("package", "@mycompany/api"); err != nil {
+				t.Fatalf("failed to set package flag: %v", err)
+			}
+
+			err := gen.Generate(idl, fs)
+			if err != nil {
+				t.Fatalf("Generate() failed: %v", err)
+			}
+
+			// Class names should not be prefixed with the package value
+			assertTsFileContains(t, outputDir, "book/server.ts", "export abstract class BookService")
+			assertTsFileContains(t, outputDir, "common/server.ts", "export abstract class CommonService")
+
+			// Verify package value is not prepended to class names
+			content, err := os.ReadFile(filepath.Join(outputDir, "book/server.ts"))
+			if err != nil {
+				t.Fatalf("failed to read book/server.ts: %v", err)
+			}
+			if strings.Contains(string(content), "@mycompany/apiBookService") {
+				t.Error("class name should not contain package prefix")
+			}
+			if strings.Contains(string(content), "mycompanyBookService") {
+				t.Error("class name should not contain package prefix")
+			}
+		})
 	})
 }
