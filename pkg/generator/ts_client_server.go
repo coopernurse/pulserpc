@@ -206,6 +206,13 @@ func (p *TSClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
 }
 
 // writeIDLJSONTs writes the IDL metadata as JSON to idl.json
+//
+// IDL Placement Note (2026-04-01):
+// This function intentionally writes idl.json directly to outputDir (the root -dir),
+// NOT to a namespace subdirectory. The idl.json file is consumed by the runtime
+// Contract class at startup, and it must be accessible as {root}/idl.json regardless
+// of which namespace mode is active. This mirrors the behavior of the original
+// single-namespace generator and ensures the runtime can locate the contract.
 func writeIDLJSONTs(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 	idlJSON, err := json.MarshalIndent(idl, "", "  ")
 	if err != nil {

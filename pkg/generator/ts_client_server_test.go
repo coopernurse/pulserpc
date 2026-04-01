@@ -472,6 +472,35 @@ func TestTsImportPaths(t *testing.T) {
 	})
 }
 
+func TestTsIdlAndRuntime(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := buildMultiNamespaceIDL()
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		// idl.json should be at root (lib/rpc/idl.json), NOT inside any namespace subdir
+		assertTsFileExists(t, outputDir, "idl.json")
+
+		// pulserpc/index.ts should exist for runtime re-exports
+		// This allows "import { ... } from '../pulserpc'" to work from inside namespace subdirs
+		assertTsFileExists(t, outputDir, "pulserpc/index.ts")
+
+		// Verify pulserpc/index.ts contains re-exports from runtime modules
+		assertTsFileContains(t, outputDir, "pulserpc/index.ts", "export")
+	})
+}
+
 // buildMultiNamespaceWithCrossRefIDL creates an IDL with two namespaces where
 // book has a struct field that references a type from common.
 func buildMultiNamespaceWithCrossRefIDL() *parser.IDL {
