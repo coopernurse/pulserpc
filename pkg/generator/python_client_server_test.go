@@ -65,6 +65,12 @@ func TestPythonGeneratorBasicFiles(t *testing.T) {
 		t.Fatalf("expected client.py at %s, missing: %v", clientPath, err)
 	}
 
+	// Check types.py in default namespace (root dir for single-namespace)
+	typesPath := filepath.Join(tmpDir, "types.py")
+	if _, err := os.Stat(typesPath); err != nil {
+		t.Fatalf("expected types.py at %s, missing: %v", typesPath, err)
+	}
+
 	// Check idl.json
 	idlPath := filepath.Join(tmpDir, "idl.json")
 	if _, err := os.Stat(idlPath); err != nil {
@@ -422,7 +428,7 @@ func TestPythonGeneratorInitPyIdempotent(t *testing.T) {
 	}
 
 	// Verify other generated files are still intact
-	for _, filename := range []string{"server.py", "client.py", "idl.json"} {
+	for _, filename := range []string{"types.py", "server.py", "client.py", "idl.json"} {
 		path := filepath.Join(tmpDir, filename)
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s at %s after regeneration, missing: %v", filename, path, err)
@@ -514,7 +520,7 @@ func TestPythonGeneratorNamespaceSplitFiles(t *testing.T) {
 	}
 
 	// Verify namespace-local file placement for "common" namespace
-	for _, filename := range []string{"server.py", "client.py", "test_server.py", "test_client.py"} {
+	for _, filename := range []string{"types.py", "server.py", "client.py", "test_server.py", "test_client.py"} {
 		path := filepath.Join(tmpDir, "common", filename)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected %s in common namespace at %s, missing: %v", filename, path, err)
@@ -522,7 +528,7 @@ func TestPythonGeneratorNamespaceSplitFiles(t *testing.T) {
 	}
 
 	// Verify namespace-local file placement for "book" namespace
-	for _, filename := range []string{"server.py", "client.py", "test_server.py", "test_client.py"} {
+	for _, filename := range []string{"types.py", "server.py", "client.py", "test_server.py", "test_client.py"} {
 		path := filepath.Join(tmpDir, "book", filename)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected %s in book namespace at %s, missing: %v", filename, path, err)
@@ -597,7 +603,7 @@ func TestPythonGeneratorSingleNamespaceEquivalence(t *testing.T) {
 	}
 
 	// For single-namespace, files should be at root level (backwards compatible)
-	for _, filename := range []string{"server.py", "client.py", "test_server.py", "test_client.py"} {
+	for _, filename := range []string{"types.py", "server.py", "client.py", "test_server.py", "test_client.py"} {
 		path := filepath.Join(tmpDir, filename)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected %s at root %s, missing: %v", filename, path, err)
@@ -622,6 +628,167 @@ func TestPythonGeneratorSingleNamespaceEquivalence(t *testing.T) {
 	for _, entry := range entries {
 		if entry.IsDir() && entry.Name() != "pulserpc" {
 			t.Errorf("unexpected directory %s in single-namespace output", entry.Name())
+		}
+	}
+}
+
+func TestPythonGeneratorTypesPyContent(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-typespy-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "common.Response",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "status", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "code", Type: &parser.Type{BuiltIn: "int"}},
+				},
+			},
+			{
+				Name:      "book.Book",
+				Namespace: "book",
+				Fields: []*parser.Field{
+					{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "author", Type: &parser.Type{BuiltIn: "string"}, Optional: true},
+				},
+			},
+		},
+		Enums: []*parser.Enum{
+			{
+				Name:      "common.Status",
+				Namespace: "common",
+				Values:    []*parser.EnumValue{{Name: "active"}, {Name: "inactive"}},
+			},
+		},
+		Interfaces: []*parser.Interface{
+			{Name: "book.BookService", Namespace: "book", Methods: []*parser.Method{
+				{Name: "getBook", Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}}, ReturnType: &parser.Type{UserDefined: "book.Book"}},
+			}},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify types.py in common namespace contains struct and enum
+	commonTypesPath := filepath.Join(tmpDir, "common", "types.py")
+	content, err := os.ReadFile(commonTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read common/types.py: %v", err)
+	}
+	commonTypesContent := string(content)
+	if !strings.Contains(commonTypesContent, "class Response:") {
+		t.Errorf("common/types.py should contain Response dataclass")
+	}
+	if !strings.Contains(commonTypesContent, "class Status:") {
+		t.Errorf("common/types.py should contain Status enum")
+	}
+	if !strings.Contains(commonTypesContent, "@dataclass") {
+		t.Errorf("common/types.py should use @dataclass decorator")
+	}
+
+	// Verify types.py in book namespace contains struct
+	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	content, err = os.ReadFile(bookTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read book/types.py: %v", err)
+	}
+	bookTypesContent := string(content)
+	if !strings.Contains(bookTypesContent, "class Book:") {
+		t.Errorf("book/types.py should contain Book dataclass")
+	}
+
+	// Verify server.py imports types from local types.py
+	bookServerPath := filepath.Join(tmpDir, "book", "server.py")
+	content, err = os.ReadFile(bookServerPath)
+	if err != nil {
+		t.Fatalf("failed to read book/server.py: %v", err)
+	}
+	if !strings.Contains(string(content), "from .types import") {
+		t.Errorf("book/server.py should import from .types")
+	}
+}
+
+func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-filestruct-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	// Multi-namespace IDL matching the spec's common/book/user example
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{Name: "common.Response", Namespace: "common", Fields: []*parser.Field{
+				{Name: "status", Type: &parser.Type{BuiltIn: "string"}},
+			}},
+			{Name: "book.Book", Namespace: "book", Fields: []*parser.Field{
+				{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+			}},
+			{Name: "user.User", Namespace: "user", Fields: []*parser.Field{
+				{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+			}},
+		},
+		Interfaces: []*parser.Interface{
+			{Name: "book.BookService", Namespace: "book"},
+			{Name: "user.UserService", Namespace: "user"},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Assert output tree includes pulserpc/, common/, book/, user/
+	expectedDirs := []string{"pulserpc", "common", "book", "user"}
+	for _, dir := range expectedDirs {
+		dirPath := filepath.Join(tmpDir, dir)
+		info, err := os.Stat(dirPath)
+		if err != nil {
+			t.Errorf("expected directory %s at %s, missing: %v", dir, dirPath, err)
+		} else if !info.IsDir() {
+			t.Errorf("expected %s to be a directory", dirPath)
+		}
+	}
+
+	// Each namespace dir should have types.py, server.py, client.py, __init__.py
+	for _, ns := range []string{"common", "book", "user"} {
+		for _, filename := range []string{"types.py", "server.py", "client.py", "__init__.py"} {
+			path := filepath.Join(tmpDir, ns, filename)
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("expected %s in %s namespace at %s, missing: %v", filename, ns, path, err)
+			}
+		}
+	}
+
+	// pulserpc runtime dir should have its files
+	runtimeFiles := []string{"__init__.py", "rpc.py", "server.py", "client.py", "transport.py", "types.py"}
+	for _, filename := range runtimeFiles {
+		path := filepath.Join(tmpDir, "pulserpc", filename)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected runtime file %s at %s, missing: %v", filename, path, err)
 		}
 	}
 }
