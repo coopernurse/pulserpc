@@ -1,9 +1,13 @@
 package generator
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/coopernurse/pulserpc/pkg/parser"
 )
 
 func TestCSharpNamespacePaths_ResolveNamespaceDir(t *testing.T) {
@@ -436,5 +440,136 @@ func TestCSharpNamespacePaths_EnsureAllNamespaceDirs(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Error("Expected runtime directory to exist")
+	}
+}
+
+func buildCSharpMultiNamespaceIDL() *parser.IDL {
+	return &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "Address",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "street", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "city", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "Book",
+				Namespace: "book",
+				Fields: []*parser.Field{
+					{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "address", Type: &parser.Type{UserDefined: "common.Address"}},
+				},
+			},
+			{
+				Name:      "User",
+				Namespace: "user",
+				Fields: []*parser.Field{
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "address", Type: &parser.Type{UserDefined: "common.Address"}},
+				},
+			},
+		},
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "BookService",
+				Namespace: "book",
+				Methods: []*parser.Method{
+					{
+						Name: "getBook",
+						Parameters: []*parser.Parameter{
+							{Name: "id", Type: &parser.Type{BuiltIn: "string"}},
+						},
+						ReturnType: &parser.Type{UserDefined: "Book"},
+					},
+				},
+			},
+			{
+				Name:      "UserService",
+				Namespace: "user",
+				Methods: []*parser.Method{
+					{
+						Name: "getUser",
+						Parameters: []*parser.Parameter{
+							{Name: "id", Type: &parser.Type{BuiltIn: "string"}},
+						},
+						ReturnType: &parser.Type{UserDefined: "User"},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestCSharpMultiFileEndToEnd(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	idl := buildCSharpMultiNamespaceIDL()
+
+	gen := NewCSharpClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", tmpDir, "output dir")
+	fs.String("package", "MyApp.Lib.Rpc", "base namespace")
+	gen.RegisterFlags(fs)
+
+	if err := gen.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate() failed: %v", err)
+	}
+
+	assertCSharpFileExists(t, tmpDir, "Common/Types.cs")
+	assertCSharpFileExists(t, tmpDir, "Common/Server.cs")
+	assertCSharpFileExists(t, tmpDir, "Common/Client.cs")
+	assertCSharpFileExists(t, tmpDir, "Book/Types.cs")
+	assertCSharpFileExists(t, tmpDir, "Book/Server.cs")
+	assertCSharpFileExists(t, tmpDir, "Book/Client.cs")
+	assertCSharpFileExists(t, tmpDir, "User/Types.cs")
+	assertCSharpFileExists(t, tmpDir, "User/Server.cs")
+	assertCSharpFileExists(t, tmpDir, "User/Client.cs")
+
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/PulseRPC/Client.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/PulseRPC/Server.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/PulseRPC/Types.cs")
+
+	assertCSharpDirExists(t, tmpDir, "MyApp/Lib/Rpc/PulseRPC")
+
+	assertCSharpFileContains(t, tmpDir, "Book/Types.cs", "using MyApp.Lib.Rpc.Common;")
+	assertCSharpFileContains(t, tmpDir, "User/Types.cs", "using MyApp.Lib.Rpc.Common;")
+	assertCSharpFileContains(t, tmpDir, "Book/Server.cs", "using MyApp.Lib.Rpc.PulseRPC;")
+	assertCSharpFileContains(t, tmpDir, "User/Server.cs", "using MyApp.Lib.Rpc.PulseRPC;")
+}
+
+func assertCSharpFileExists(t *testing.T, dir, relPath string) {
+	path := filepath.Join(dir, relPath)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Errorf("expected file to exist: %s", path)
+	}
+}
+
+func assertCSharpDirExists(t *testing.T, dir, relPath string) {
+	path := filepath.Join(dir, relPath)
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		t.Errorf("expected directory to exist: %s", path)
+	} else if err != nil {
+		t.Errorf("error checking directory %s: %v", path, err)
+	} else if !info.IsDir() {
+		t.Errorf("expected %s to be a directory", path)
+	}
+}
+
+func assertCSharpFileContains(t *testing.T, dir, relPath, substr string) {
+	path := filepath.Join(dir, relPath)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read file %s: %v", path, err)
+	}
+	if !strings.Contains(string(content), substr) {
+		maxLen := 2000
+		if len(content) < maxLen {
+			maxLen = len(content)
+		}
+		t.Logf("file content of %s:\n%s", relPath, content[:maxLen])
+		t.Errorf("file %s does not contain %q", relPath, substr)
 	}
 }
