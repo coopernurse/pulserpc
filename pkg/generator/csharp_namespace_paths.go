@@ -105,3 +105,17 @@ func CollectSortedNamespaces(namespaceMap map[string]*NamespaceTypes) []string {
 
 	return namespaces
 }
+
+func (p CSharpNamespacePaths) GetRuntimeImport() string {
+	if p.PackageBase != "" {
+		return p.PackageBase + ".PulseRPC"
+	}
+	return "PulseRPC"
+}
+
+func (p CSharpNamespacePaths) GetNamespaceImportPrefix() string {
+	if p.PackageBase != "" {
+		return p.PackageBase + "."
+	}
+	return ""
+}
