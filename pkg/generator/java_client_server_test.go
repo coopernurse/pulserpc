@@ -717,3 +717,197 @@ func TestJavaQualifiedImportWithoutAsterisk(t *testing.T) {
 		t.Fatalf("Book.java should contain 'import com.myapp.rpc.common.User;' but got:\n%s", string(content))
 	}
 }
+
+func TestJavaMultiFileProjectStructure(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-java-gen-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "common.CommonTypes",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "id", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "book.Book",
+				Namespace: "book",
+				Fields: []*parser.Field{
+					{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "author", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "user.User",
+				Namespace: "user",
+				Fields: []*parser.Field{
+					{Name: "username", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "email", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "favoriteBook", Type: &parser.Type{UserDefined: "book.Book"}},
+					{Name: "favoriteAuthor", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+		},
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "book.BookService",
+				Namespace: "book",
+				Methods: []*parser.Method{
+					{
+						Name:       "getBook",
+						Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "book.Book"},
+					},
+				},
+			},
+			{
+				Name:      "user.UserService",
+				Namespace: "user",
+				Methods: []*parser.Method{
+					{
+						Name:       "getUser",
+						Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "user.User"},
+					},
+				},
+			},
+			{
+				Name:      "common.CommonService",
+				Namespace: "common",
+				Methods: []*parser.Method{
+					{
+						Name:       "ping",
+						ReturnType: &parser.Type{BuiltIn: "bool"},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewJavaClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "src/main/java", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "com.myapp.rpc"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	pulserpcDir := filepath.Join(tmpDir, "pulserpc")
+	if _, err := os.Stat(pulserpcDir); err != nil {
+		t.Fatalf("expected pulserpc runtime directory at %s, missing: %v", pulserpcDir, err)
+	}
+	rpcErrorPath := filepath.Join(pulserpcDir, "RPCError.java")
+	if _, err := os.Stat(rpcErrorPath); err != nil {
+		t.Fatalf("expected RPCError.java at %s, missing: %v", rpcErrorPath, err)
+	}
+	rpcErrorContent, err := os.ReadFile(rpcErrorPath)
+	if err != nil {
+		t.Fatalf("failed to read RPCError.java: %v", err)
+	}
+	if !containsString(string(rpcErrorContent), "package pulserpc;") {
+		t.Fatalf("RPCError.java should contain 'package pulserpc;' but got:\n%s", string(rpcErrorContent))
+	}
+
+	basePath := filepath.Join(tmpDir, "src", "main", "java")
+
+	bookDir := filepath.Join(basePath, "com", "myapp", "rpc", "book")
+	if _, err := os.Stat(bookDir); err != nil {
+		t.Fatalf("expected book namespace directory at %s, missing: %v", bookDir, err)
+	}
+	bookPath := filepath.Join(bookDir, "Book.java")
+	if _, err := os.Stat(bookPath); err != nil {
+		t.Fatalf("expected Book.java at %s, missing: %v", bookPath, err)
+	}
+	bookContent, err := os.ReadFile(bookPath)
+	if err != nil {
+		t.Fatalf("failed to read Book.java: %v", err)
+	}
+	if !containsString(string(bookContent), "package com.myapp.rpc.book;") {
+		t.Fatalf("Book.java should contain 'package com.myapp.rpc.book;' but got:\n%s", string(bookContent))
+	}
+
+	bookClientPath := filepath.Join(bookDir, "BookServiceClient.java")
+	if _, err := os.Stat(bookClientPath); err != nil {
+		t.Fatalf("expected BookServiceClient.java at %s, missing: %v", bookClientPath, err)
+	}
+	bookClientContent, err := os.ReadFile(bookClientPath)
+	if err != nil {
+		t.Fatalf("failed to read BookServiceClient.java: %v", err)
+	}
+	if !containsString(string(bookClientContent), "import pulserpc.*;") {
+		t.Fatalf("BookServiceClient.java should contain 'import pulserpc.*;' but got:\n%s", string(bookClientContent))
+	}
+
+	userDir := filepath.Join(basePath, "com", "myapp", "rpc", "user")
+	if _, err := os.Stat(userDir); err != nil {
+		t.Fatalf("expected user namespace directory at %s, missing: %v", userDir, err)
+	}
+	userPath := filepath.Join(userDir, "User.java")
+	if _, err := os.Stat(userPath); err != nil {
+		t.Fatalf("expected User.java at %s, missing: %v", userPath, err)
+	}
+	userContent, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("failed to read User.java: %v", err)
+	}
+	if !containsString(string(userContent), "package com.myapp.rpc.user;") {
+		t.Fatalf("User.java should contain 'package com.myapp.rpc.user;' but got:\n%s", string(userContent))
+	}
+
+	userClientPath := filepath.Join(userDir, "UserServiceClient.java")
+	if _, err := os.Stat(userClientPath); err != nil {
+		t.Fatalf("expected UserServiceClient.java at %s, missing: %v", userClientPath, err)
+	}
+	userClientContent, err := os.ReadFile(userClientPath)
+	if err != nil {
+		t.Fatalf("failed to read UserServiceClient.java: %v", err)
+	}
+	if !containsString(string(userClientContent), "import pulserpc.*;") {
+		t.Fatalf("UserServiceClient.java should contain 'import pulserpc.*;' but got:\n%s", string(userClientContent))
+	}
+
+	commonDir := filepath.Join(basePath, "com", "myapp", "rpc", "common")
+	if _, err := os.Stat(commonDir); err != nil {
+		t.Fatalf("expected common namespace directory at %s, missing: %v", commonDir, err)
+	}
+	commonTypesPath := filepath.Join(commonDir, "CommonTypes.java")
+	if _, err := os.Stat(commonTypesPath); err != nil {
+		t.Fatalf("expected CommonTypes.java at %s, missing: %v", commonTypesPath, err)
+	}
+	commonContent, err := os.ReadFile(commonTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read CommonTypes.java: %v", err)
+	}
+	if !containsString(string(commonContent), "package com.myapp.rpc.common;") {
+		t.Fatalf("CommonTypes.java should contain 'package com.myapp.rpc.common;' but got:\n%s", string(commonContent))
+	}
+
+	bookIdlPath := filepath.Join(bookDir, "bookIdl.java")
+	if _, err := os.Stat(bookIdlPath); err != nil {
+		t.Fatalf("expected bookIdl.java at %s, missing: %v", bookIdlPath, err)
+	}
+	bookIdlContent, err := os.ReadFile(bookIdlPath)
+	if err != nil {
+		t.Fatalf("failed to read bookIdl.java: %v", err)
+	}
+	if !containsString(string(bookIdlContent), "package com.myapp.rpc.book;") {
+		t.Fatalf("bookIdl.java should contain 'package com.myapp.rpc.book;' but got:\n%s", string(bookIdlContent))
+	}
+}
+
+func TestJavaMultiFileWithGradleLayout(t *testing.T) {
+	t.Skip("Gradle layout requires different -dir handling not yet implemented")
+}
