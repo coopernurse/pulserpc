@@ -1156,3 +1156,29 @@ func TestBuildCrossNamespaceImports(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateTestServerPyForNamespaceRuntimeImport(t *testing.T) {
+	baseNs := &NamespaceTypes{Interfaces: []*parser.Interface{{Name: "A"}}}
+	configured := generateTestServerPyForNamespace(baseNs, nil, nil, "", "myapp.lib.rpc")
+	if !strings.Contains(configured, "from myapp.lib.rpc.pulserpc import Server, Contract, RPCError") {
+		t.Fatalf("expected configured runtime import, got:\n%s", configured)
+	}
+
+	backwardsCompatible := generateTestServerPyForNamespace(baseNs, nil, nil, "", "")
+	if !strings.Contains(backwardsCompatible, "from pulserpc import Server, Contract, RPCError") {
+		t.Fatalf("expected default runtime import, got:\n%s", backwardsCompatible)
+	}
+}
+
+func TestGenerateTestClientPyForNamespaceRuntimeImport(t *testing.T) {
+	baseNs := &NamespaceTypes{Interfaces: []*parser.Interface{{Name: "A"}}}
+	configured := generateTestClientPyForNamespace(baseNs, nil, nil, "", "myapp.lib.rpc")
+	if !strings.Contains(configured, "from myapp.lib.rpc.pulserpc import HttpTransport, Client") {
+		t.Fatalf("expected configured runtime import, got:\n%s", configured)
+	}
+
+	backwardsCompatible := generateTestClientPyForNamespace(baseNs, nil, nil, "", "")
+	if !strings.Contains(backwardsCompatible, "from pulserpc import HttpTransport, Client") {
+		t.Fatalf("expected default runtime import, got:\n%s", backwardsCompatible)
+	}
+}
