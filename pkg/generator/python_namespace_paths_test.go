@@ -135,11 +135,7 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 }
 
 func TestPythonNamespacePathsEnsureNamespaceDir(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "pulserpc-ns-paths-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := newPythonTestTempDir(t, "pulserpc-ns-paths-")
 
 	tests := []struct {
 		name      string
@@ -167,33 +163,19 @@ func TestPythonNamespacePathsEnsureNamespaceDir(t *testing.T) {
 				t.Fatalf("EnsureNamespaceDir(%q) failed: %v", tt.namespace, err)
 			}
 
-			// Verify directory exists
-			info, err := os.Stat(dir)
-			if err != nil {
-				t.Fatalf("directory %s does not exist: %v", dir, err)
-			}
-			if !info.IsDir() {
-				t.Fatalf("%s is not a directory", dir)
-			}
+			assertDirExists(t, dir)
 
-			// Verify path is correct
 			expected := filepath.Join(tmpDir, tt.namespace)
 			if tt.namespace == "" {
 				expected = tmpDir
 			}
-			if dir != expected {
-				t.Errorf("EnsureNamespaceDir(%q) = %q, want %q", tt.namespace, dir, expected)
-			}
+			assertPathEqual(t, dir, expected)
 		})
 	}
 }
 
 func TestPythonNamespacePathsEnsureRuntimeDir(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "pulserpc-runtime-dir-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := newPythonTestTempDir(t, "pulserpc-runtime-dir-")
 
 	tests := []struct {
 		name        string
@@ -220,18 +202,8 @@ func TestPythonNamespacePathsEnsureRuntimeDir(t *testing.T) {
 				t.Fatalf("EnsureRuntimeDir() failed: %v", err)
 			}
 
-			// Verify directory exists
-			info, err := os.Stat(dir)
-			if err != nil {
-				t.Fatalf("directory %s does not exist: %v", dir, err)
-			}
-			if !info.IsDir() {
-				t.Fatalf("%s is not a directory", dir)
-			}
-
-			if dir != tt.expected {
-				t.Errorf("EnsureRuntimeDir() = %q, want %q", dir, tt.expected)
-			}
+			assertDirExists(t, dir)
+			assertPathEqual(t, dir, tt.expected)
 		})
 	}
 }
@@ -309,11 +281,7 @@ func TestCollectNamespaces(t *testing.T) {
 }
 
 func TestPythonNamespacePathsEnsureAllNamespaceDirs(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "pulserpc-all-ns-dirs-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := newPythonTestTempDir(t, "pulserpc-all-ns-dirs-")
 
 	namespaceMap := map[string]*NamespaceTypes{
 		"": {
@@ -343,36 +311,19 @@ func TestPythonNamespacePathsEnsureAllNamespaceDirs(t *testing.T) {
 	for ns, expectedDir := range expectedDirs {
 		if gotDir, ok := dirs[ns]; !ok {
 			t.Errorf("missing directory for namespace %q", ns)
-		} else if gotDir != expectedDir {
-			t.Errorf("directory for namespace %q = %q, want %q", ns, gotDir, expectedDir)
+		} else {
+			assertPathEqual(t, gotDir, expectedDir)
 		}
-
-		info, err := os.Stat(expectedDir)
-		if err != nil {
-			t.Fatalf("directory %s does not exist: %v", expectedDir, err)
-		}
-		if !info.IsDir() {
-			t.Fatalf("%s is not a directory", expectedDir)
-		}
+		assertDirExists(t, expectedDir)
 	}
 
 	// Verify runtime directory was created
 	runtimeDir := paths.ResolveRuntimeDir()
-	info, err := os.Stat(runtimeDir)
-	if err != nil {
-		t.Fatalf("runtime directory %s does not exist: %v", runtimeDir, err)
-	}
-	if !info.IsDir() {
-		t.Fatalf("%s is not a directory", runtimeDir)
-	}
+	assertDirExists(t, runtimeDir)
 }
 
 func TestPythonNamespacePathsWithNestedOutputDirs(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "pulserpc-nested-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := newPythonTestTempDir(t, "pulserpc-nested-")
 
 	// Test with nested output directory
 	nestedDir := filepath.Join(tmpDir, "gen", "python", "v1")
@@ -385,25 +336,19 @@ func TestPythonNamespacePathsWithNestedOutputDirs(t *testing.T) {
 	// Verify namespace dir resolution
 	got := paths.ResolveNamespaceDir("common")
 	expected := filepath.Join(nestedDir, "common")
-	if got != expected {
-		t.Errorf("ResolveNamespaceDir(\"common\") = %q, want %q", got, expected)
-	}
+	assertPathEqual(t, got, expected)
 
 	// Verify runtime dir resolution
 	got = paths.ResolveRuntimeDir()
 	expected = filepath.Join(nestedDir, "myapp", "lib", "rpc", "pulserpc")
-	if got != expected {
-		t.Errorf("ResolveRuntimeDir() = %q, want %q", got, expected)
-	}
+	assertPathEqual(t, got, expected)
 
 	// Ensure directories can be created
-	_, err = paths.EnsureNamespaceDir("common")
-	if err != nil {
+	if _, err := paths.EnsureNamespaceDir("common"); err != nil {
 		t.Fatalf("EnsureNamespaceDir(\"common\") failed: %v", err)
 	}
 
-	_, err = paths.EnsureRuntimeDir()
-	if err != nil {
+	if _, err := paths.EnsureRuntimeDir(); err != nil {
 		t.Fatalf("EnsureRuntimeDir() failed: %v", err)
 	}
 
@@ -417,11 +362,7 @@ func TestPythonNamespacePathsWithNestedOutputDirs(t *testing.T) {
 }
 
 func TestPythonNamespacePathsMultipleNamespaces(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "pulserpc-multi-ns-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := newPythonTestTempDir(t, "pulserpc-multi-ns-")
 
 	// Simulate multi-namespace IDL
 	namespaceMap := map[string]*NamespaceTypes{
@@ -459,25 +400,20 @@ func TestPythonNamespacePathsMultipleNamespaces(t *testing.T) {
 		if !ok {
 			t.Errorf("missing dir for namespace %q", ns)
 			continue
-		}
-		if gotPath != expectedPath {
-			t.Errorf("dir for %q = %q, want %q", ns, gotPath, expectedPath)
+		} else {
+			assertPathEqual(t, gotPath, expectedPath)
 		}
 
 		// Verify output paths for standard files
 		for _, filename := range []string{"types.py", "server.py", "client.py"} {
 			outputPath := paths.ResolveOutputPath(ns, filename)
 			expectedOutput := filepath.Join(expectedPath, filename)
-			if outputPath != expectedOutput {
-				t.Errorf("ResolveOutputPath(%q, %q) = %q, want %q", ns, filename, outputPath, expectedOutput)
-			}
+			assertPathEqual(t, outputPath, expectedOutput)
 		}
 	}
 
 	// Verify runtime path
 	runtimeDir := paths.ResolveRuntimeDir()
 	expectedRuntime := filepath.Join(tmpDir, "myapp", "rpc", "pulserpc")
-	if runtimeDir != expectedRuntime {
-		t.Errorf("ResolveRuntimeDir() = %q, want %q", runtimeDir, expectedRuntime)
-	}
+	assertPathEqual(t, runtimeDir, expectedRuntime)
 }
