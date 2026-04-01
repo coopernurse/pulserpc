@@ -15,6 +15,7 @@ import (
 // PythonClientServer is a plugin that generates Python HTTP server and client code from IDL
 type PythonClientServer struct {
 	usePydantic bool
+	packageBase string
 }
 
 // NewPythonClientServer creates a new PythonClientServer plugin instance
@@ -30,6 +31,9 @@ func (p *PythonClientServer) Name() string {
 // RegisterFlags registers CLI flags for this plugin
 func (p *PythonClientServer) RegisterFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&p.usePydantic, "use-pydantic", false, "Generate Pydantic models for types")
+	if fs.Lookup("package") == nil {
+		fs.String("package", "", "Base package prefix for generated Python imports (e.g., myapp.lib.rpc)")
+	}
 }
 
 // Generate generates Python HTTP server and client code from the parsed IDL
@@ -45,6 +49,12 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	outputDir := ""
 	if dirFlag != nil && dirFlag.Value.String() != "" {
 		outputDir = dirFlag.Value.String()
+	}
+
+	// Get package base flag
+	packageFlag := fs.Lookup("package")
+	if packageFlag != nil && packageFlag.Value.String() != "" {
+		p.packageBase = packageFlag.Value.String()
 	}
 
 	// Build type registries
@@ -460,7 +470,6 @@ func writeInterfaceStub(sb *strings.Builder, iface *parser.Interface) {
 	}
 	sb.WriteString("\n")
 }
-
 
 // generateTestServerPy generates test_server.py with concrete implementations of all interfaces
 func generateTestServerPy(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ map[string]*NamespaceTypes, _ string) string {
@@ -984,7 +993,6 @@ func generateTestParamValue(t *parser.Type, paramName string, structMap map[stri
 	}
 	return "None"
 }
-
 
 // escapePythonDocstring escapes a string for use inside a Python triple-double-quoted docstring
 // Escapes """ to \""" to avoid ending the docstring prematurely

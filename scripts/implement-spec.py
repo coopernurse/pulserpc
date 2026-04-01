@@ -1,44 +1,69 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import subprocess
 import os
 import sys
 
 ALLOWED_EXTENSIONS = {'.py', '.go', '.ts', '.cs', '.html', '.css', '.js', '.tmpl', '.txt', '.md'}
+STATE_FILE = os.path.expanduser('~/.implement-ai.json')
 
-def get_new_files():
-    result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
-    new_files = []
-    for line in result.stdout.strip().split('\n'):
-        if not line:
-            continue
-        status = line[:2]
-        filepath = line[3:].strip()
-        if status.startswith('??'):
-            ext = os.path.splitext(filepath)[1].lower()
-            if ext in ALLOWED_EXTENSIONS:
-                new_files.append(filepath)
-    return new_files
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        return {}
+    with open(STATE_FILE, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"state file must contain a JSON object: {STATE_FILE}")
+    return data
 
-def get_modified_files():
-    result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
-    modified_files = []
-    for line in result.stdout.strip().split('\n'):
-        if not line:
-            continue
-        status = line[:2]
-        filepath = line[3:].strip()
-        if status[0] in ('M', 'A'):
-            modified_files.append(filepath)
-    return modified_files
+def save_state(state):
+    state_dir = os.path.dirname(STATE_FILE)
+    if state_dir:
+        os.makedirs(state_dir, exist_ok=True)
+    with open(STATE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+        f.write('\n')
+
+def update_last_completed_step(spec_file, step):
+    state = load_state()
+    state[spec_file] = step
+    save_state(state)
+
+def get_start_step(spec_file):
+    state = load_state()
+    last_step = state.get(spec_file, 0)
+    if not isinstance(last_step, int) or last_step < 0:
+        raise ValueError(f"invalid stored step for {spec_file}: {last_step}")
+    return last_step + 1
+
+def get_changed_files():
+    """Return all new/modified files with allowed extensions using unambiguous git commands."""
+    cmds = [
+        # unstaged working-tree modifications to tracked files
+        ['git', 'diff', '--name-only'],
+        # staged modifications (index vs HEAD)
+        ['git', 'diff', '--cached', '--name-only'],
+        # untracked files not covered by .gitignore
+        ['git', 'ls-files', '--others', '--exclude-standard'],
+    ]
+    seen = set()
+    files = []
+    for cmd in cmds:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        for line in result.stdout.splitlines():
+            path = line.strip()
+            if path and path not in seen:
+                ext = os.path.splitext(path)[1].lower()
+                if ext in ALLOWED_EXTENSIONS:
+                    seen.add(path)
+                    files.append(path)
+    return files
 
 def stage_and_commit(step, spec_file):
-    new_files = get_new_files()
-    modified_files = get_modified_files()
-    
-    files_to_add = new_files + modified_files
-    
+    files_to_add = get_changed_files()
+
     if not files_to_add:
         print(f"No changes detected for step {step}; skipping commit")
         return
@@ -52,7 +77,7 @@ def run_opencode(spec_file, step, model, repo_root):
     prompt = f"load {spec_file} and implement step {step}. do not implement other steps. run 'make quality' to verify. make sure to complete all other acceptance test steps as specified in the spec."
     # opencode treats the first positional argument as a working directory.
     # Keep the spec file in the prompt instead of passing it positionally.
-    cmd = ['opencode', '--prompt', prompt, '--model', model]
+    cmd = ['opencode', 'run', prompt, '--model', model]
     result = subprocess.run(cmd, cwd=repo_root)
     return result.returncode
 
@@ -75,9 +100,15 @@ def main():
         check=True,
     ).stdout.strip()
 
-    print(f"Implementing spec: {spec_file} with {args.steps} steps")
+    start_step = get_start_step(spec_file)
 
-    for step in range(1, args.steps + 1):
+    if start_step > args.steps:
+        print(f"All steps already complete for {spec_file} (last completed: {start_step - 1})")
+        return
+
+    print(f"Implementing spec: {spec_file} with {args.steps} steps (starting at step {start_step})")
+
+    for step in range(start_step, args.steps + 1):
         print(f"\n=== Running step {step}/{args.steps} ===")
         
         ret = run_opencode(spec_file, step, args.model, repo_root)
@@ -88,6 +119,7 @@ def main():
         
         print(f"Committing step {step}...")
         stage_and_commit(step, spec_file)
+        update_last_completed_step(spec_file, step)
         print(f"Step {step} complete")
 
     print("\n=== All steps complete ===")
