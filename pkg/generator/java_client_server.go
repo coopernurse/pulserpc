@@ -101,11 +101,10 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			continue // Skip types without namespace (shouldn't happen with required namespaces)
 		}
 
-		// Convert namespace to package name (lowercase)
-		packageName := strings.ToLower(namespace)
+		// Use namespace as-is (preserve case for Java package names)
 		fullPackage := basePackage
-		if packageName != "" && packageName != strings.ToLower(basePackage) {
-			fullPackage = basePackage + "." + packageName
+		if namespace != "" {
+			fullPackage = basePackage + "." + namespace
 		}
 		packageDir := filepath.Join(outputDir, "src/main/java", strings.ReplaceAll(fullPackage, ".", string(filepath.Separator)))
 
@@ -215,7 +214,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
 			ifacePackage := basePackage
 			if ifaceNamespace != "" {
-				ifacePackage = basePackage + "." + strings.ToLower(ifaceNamespace)
+				ifacePackage = basePackage + "." + ifaceNamespace
 			}
 			implCode := generateTestInterfaceImplFile(iface, ifacePackage, structMap, enumMap, jsonLib, basePackage)
 			implName := GetBaseName(iface.Name) + "Impl"
@@ -335,7 +334,7 @@ func generateStructFile(structDef *parser.Struct, packageName string, structMap 
 		parentName := GetBaseName(structDef.Extends)
 		parentNamespace := GetNamespaceFromType(structDef.Extends, "")
 		if parentNamespace != "" {
-			parentPackage := basePackage + "." + strings.ToLower(parentNamespace)
+			parentPackage := basePackage + "." + parentNamespace
 			if parentPackage != packageName {
 				imports[parentPackage+"."+parentName] = true
 			}
@@ -360,7 +359,7 @@ func generateStructFile(structDef *parser.Struct, packageName string, structMap 
 		parentName := GetBaseName(structDef.Extends)
 		parentNamespace := GetNamespaceFromType(structDef.Extends, "")
 		if parentNamespace != "" {
-			parentPackage := basePackage + "." + strings.ToLower(parentNamespace)
+			parentPackage := basePackage + "." + parentNamespace
 			if parentPackage != packageName {
 				// Use fully qualified name
 				fmt.Fprintf(&sb, "public class %s extends %s.%s {\n", className, parentPackage, parentName)
@@ -591,7 +590,7 @@ func addTypeImports(t *parser.Type, basePackage string, currentPackage string, i
 	if t.IsUserDefined() {
 		typeNamespace := GetNamespaceFromType(t.UserDefined, "")
 		if typeNamespace != "" {
-			typePackage := basePackage + "." + strings.ToLower(typeNamespace)
+			typePackage := basePackage + "." + typeNamespace
 			if typePackage != currentPackage {
 				typeName := GetBaseName(t.UserDefined)
 				imports[typePackage+"."+typeName] = true
@@ -621,7 +620,7 @@ func getJavaTypeWithPackage(t *parser.Type, enumMap map[string]*parser.Enum, bas
 		typeName := GetBaseName(t.UserDefined)
 		typeNamespace := GetNamespaceFromType(t.UserDefined, "")
 		if typeNamespace != "" {
-			typePackage := basePackage + "." + strings.ToLower(typeNamespace)
+			typePackage := basePackage + "." + typeNamespace
 			if typePackage != currentPackage {
 				return typePackage + "." + typeName
 			}
@@ -656,7 +655,7 @@ func getJavaTypeWithPackageForGeneric(t *parser.Type, basePackage string, curren
 		typeName := GetBaseName(t.UserDefined)
 		typeNamespace := GetNamespaceFromType(t.UserDefined, "")
 		if typeNamespace != "" {
-			typePackage := basePackage + "." + strings.ToLower(typeNamespace)
+			typePackage := basePackage + "." + typeNamespace
 			if typePackage != currentPackage {
 				return typePackage + "." + typeName
 			}
@@ -878,7 +877,7 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	for _, iface := range idl.Interfaces {
 		ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
 		if ifaceNamespace != "" {
-			ifacePackage := basePackage + "." + strings.ToLower(ifaceNamespace)
+			ifacePackage := basePackage + "." + ifaceNamespace
 			ifaceName := GetBaseName(iface.Name)
 			imports[ifacePackage+"."+ifaceName] = true
 		}
@@ -1205,7 +1204,7 @@ func generateClientJava(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 	// Collect all structs and enums from namespace IDL classes
 	for namespace := range namespaceMap {
 		if namespace != "" {
-			nsPackage := basePackage + "." + strings.ToLower(namespace)
+			nsPackage := basePackage + "." + namespace
 			sb.WriteString(fmt.Sprintf("        this.allStructs.putAll(%s.%sIdl.ALL_STRUCTS);\n", nsPackage, namespace))
 			sb.WriteString(fmt.Sprintf("        this.allEnums.putAll(%s.%sIdl.ALL_ENUMS);\n", nsPackage, namespace))
 		}
@@ -1370,7 +1369,7 @@ func generateTestInterfaceImplFile(iface *parser.Interface, packageName string, 
 	interfaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
 	interfacePackage := basePackage
 	if interfaceNamespace != "" {
-		interfacePackage = basePackage + "." + strings.ToLower(interfaceNamespace)
+		interfacePackage = basePackage + "." + interfaceNamespace
 	}
 	if interfacePackage != packageName {
 		imports[interfacePackage+"."+interfaceName] = true
@@ -1548,7 +1547,7 @@ func generateTestServerJava(idl *parser.IDL, jsonLib string, basePackage string,
 		ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
 		ifacePackage := basePackage
 		if ifaceNamespace != "" {
-			ifacePackage = basePackage + "." + strings.ToLower(ifaceNamespace)
+			ifacePackage = basePackage + "." + ifaceNamespace
 		}
 		implName := GetBaseName(iface.Name) + "Impl"
 		imports[ifacePackage+"."+implName] = true
@@ -1580,7 +1579,7 @@ func generateTestServerJava(idl *parser.IDL, jsonLib string, basePackage string,
 		ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
 		ifacePackage := basePackage
 		if ifaceNamespace != "" {
-			ifacePackage = basePackage + "." + strings.ToLower(ifaceNamespace)
+			ifacePackage = basePackage + "." + ifaceNamespace
 		}
 		implName := GetBaseName(iface.Name) + "Impl"
 		interfaceName := GetBaseName(iface.Name)
@@ -1620,7 +1619,7 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 		typeNamespace := GetNamespaceFromType(s.Name, s.Namespace)
 		structPackage := basePackage
 		if typeNamespace != "" {
-			structPackage = basePackage + "." + strings.ToLower(typeNamespace)
+			structPackage = basePackage + "." + typeNamespace
 		}
 		if structPackage != basePackage {
 			imports[structPackage+"."+GetBaseName(s.Name)] = true
@@ -1630,7 +1629,7 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 		ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
 		ifacePackage := basePackage
 		if ifaceNamespace != "" {
-			ifacePackage = basePackage + "." + strings.ToLower(ifaceNamespace)
+			ifacePackage = basePackage + "." + ifaceNamespace
 		}
 		clientName := GetBaseName(iface.Name) + "Client"
 		imports[ifacePackage+"."+clientName] = true
@@ -1658,7 +1657,7 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 		ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
 		ifacePackage := basePackage
 		if ifaceNamespace != "" {
-			ifacePackage = basePackage + "." + strings.ToLower(ifaceNamespace)
+			ifacePackage = basePackage + "." + ifaceNamespace
 		}
 		clientName := GetBaseName(iface.Name) + "Client"
 		clientVar := strings.ToLower(GetBaseName(iface.Name)) + "Client"
@@ -1727,7 +1726,7 @@ func writeTestParamValue(sb *strings.Builder, param *parser.Parameter, structMap
 		typeNamespace := GetNamespaceFromType(param.Type.UserDefined, "")
 		fullTypeName := typeName
 		if typeNamespace != "" {
-			fullTypeName = basePackage + "." + strings.ToLower(typeNamespace) + "." + typeName
+			fullTypeName = basePackage + "." + typeNamespace + "." + typeName
 		}
 
 		if _, isEnum := enumMap[param.Type.UserDefined]; isEnum {
