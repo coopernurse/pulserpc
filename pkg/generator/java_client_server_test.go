@@ -394,3 +394,117 @@ func TestJavaNamespaceCasePreserved(t *testing.T) {
 		t.Fatalf("expected UserProfileIdl.java at %s, missing: %v", idlPath, err)
 	}
 }
+
+func TestJavaRuntimeInPulserpcDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-java-gen-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "book.Book",
+				Namespace: "book",
+				Fields:    []*parser.Field{{Name: "title", Type: &parser.Type{BuiltIn: "string"}}},
+			},
+		},
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "book.Library",
+				Namespace: "book",
+			},
+		},
+	}
+
+	p := NewJavaClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "src/main/java", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "com.myapp.rpc"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Runtime should be at {dir}/pulserpc/
+	runtimeDir := filepath.Join(tmpDir, "pulserpc")
+	if _, err := os.Stat(runtimeDir); err != nil {
+		t.Fatalf("expected runtime directory at %s, missing: %v", runtimeDir, err)
+	}
+
+	rpcErrorPath := filepath.Join(runtimeDir, "RPCError.java")
+	if _, err := os.Stat(rpcErrorPath); err != nil {
+		t.Fatalf("expected RPCError.java at %s, missing: %v", rpcErrorPath, err)
+	}
+
+	rpcErrorContent, err := os.ReadFile(rpcErrorPath)
+	if err != nil {
+		t.Fatalf("failed to read RPCError.java: %v", err)
+	}
+	if !containsString(string(rpcErrorContent), "package pulserpc;") {
+		t.Fatalf("RPCError.java should contain 'package pulserpc;' but got:\n%s", string(rpcErrorContent))
+	}
+
+	// Runtime should NOT be in namespace directory
+	namespaceDir := filepath.Join(tmpDir, "src", "main", "java", "com", "myapp", "rpc", "book")
+	if _, err := os.Stat(filepath.Join(namespaceDir, "RPCError.java")); err == nil {
+		t.Fatalf("runtime files should NOT be in namespace directory")
+	}
+}
+
+func TestJavaRuntimeLocationWithNestedDirAndPackage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-java-gen-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "user.User",
+				Namespace: "user",
+				Fields:    []*parser.Field{{Name: "name", Type: &parser.Type{BuiltIn: "string"}}},
+			},
+		},
+	}
+
+	p := NewJavaClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", tmpDir, "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "org.company.services"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Runtime should be at {dir}/pulserpc/
+	runtimeDir := filepath.Join(tmpDir, "pulserpc")
+	if _, err := os.Stat(runtimeDir); err != nil {
+		t.Fatalf("expected runtime directory at %s, missing: %v", runtimeDir, err)
+	}
+
+	rpcErrorPath := filepath.Join(runtimeDir, "RPCError.java")
+	if _, err := os.Stat(rpcErrorPath); err != nil {
+		t.Fatalf("expected RPCError.java at %s, missing: %v", rpcErrorPath, err)
+	}
+
+	// Runtime should NOT be in package hierarchy
+	wrongRuntimeDir := filepath.Join(tmpDir, "src", "main", "java", "org", "company", "services", "pulserpc")
+	if _, err := os.Stat(wrongRuntimeDir); err == nil {
+		t.Fatalf("runtime should NOT be at %s", wrongRuntimeDir)
+	}
+}

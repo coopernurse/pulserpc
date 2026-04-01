@@ -154,10 +154,8 @@ func CopyRuntimeFilesToPackage(lang string, outputDir string, packageName string
 // This is the directory name where runtime files are placed in the output
 func getRuntimePackageName(lang string) string {
 	switch lang {
-	case "go", "python", "ts":
+	case "go", "python", "ts", "java":
 		return "pulserpc"
-	case "java":
-		return "com/bitmechanic/pulserpc"
 	case "csharp":
 		return "PulseRPC"
 	default:
