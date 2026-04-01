@@ -154,7 +154,22 @@ func writeIDLJSONTs(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 	return nil
 }
 
-// applyPackagePrefix applies package prefix to a name if provided
+// applyPackagePrefix applies package prefix to a name if provided.
+//
+// AUDIT (2026-04-01): This function is used to prefix class names in the generated
+// TypeScript output (e.g., "MyApp" + "UserService" -> "MyAppUserService"). It is called
+// in the following locations:
+//   - generateServerTs -> writeInterfaceStubTs: prefixes abstract class names
+//   - generateTestServerTs: prefixes import statements and class names
+//   - writeTestInterfaceImplTs: prefixes implementation class names
+//
+// No existing test or quickstart exercises this behavior with a non-empty package prefix.
+// The -package flag currently serves dual purpose: class-name prefix AND (future) base module
+// path. Under the new spec (Step 1 of the multi-namespace implementation), -package will become
+// the base module path only. The class-name-prefix behavior will be handled separately (see
+// Step 10 of the implementation spec for the deprecation/migration plan).
+//
+// Until Step 10 is implemented, this function is preserved for backward compatibility.
 func applyPackagePrefix(name, prefix string) string {
 	if prefix != "" {
 		return prefix + name
