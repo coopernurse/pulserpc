@@ -277,7 +277,8 @@ func TestTsBackwardsCompatibleSingleNamespace(t *testing.T) {
 
 func TestTsBackwardsCompatibleSingleNamespaceFlat(t *testing.T) {
 	withTempOutputDir(t, func(outputDir string) {
-		// Single namespace with non-empty namespace name and -dir should trigger multi-namespace mode
+		// Single namespace with non-empty namespace name and -dir should produce flat output
+		// (multi-namespace mode only activates with multiple namespaces)
 		idl := &parser.IDL{
 			Structs: []*parser.Struct{
 				{
@@ -316,10 +317,10 @@ func TestTsBackwardsCompatibleSingleNamespaceFlat(t *testing.T) {
 			t.Fatalf("Generate() failed: %v", err)
 		}
 
-		// Single namespace with -dir and non-empty namespace should produce per-namespace subdir
-		assertTsFileExists(t, outputDir, "user/types.ts")
-		assertTsFileExists(t, outputDir, "user/server.ts")
-		assertTsFileExists(t, outputDir, "user/client.ts")
+		// Single namespace should produce flat output (types.ts, server.ts, client.ts in root)
+		assertTsFileExists(t, outputDir, "types.ts")
+		assertTsFileExists(t, outputDir, "server.ts")
+		assertTsFileExists(t, outputDir, "client.ts")
 		assertTsFileExists(t, outputDir, "pulserpc/index.ts")
 	})
 }

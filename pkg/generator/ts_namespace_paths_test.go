@@ -190,12 +190,12 @@ func TestTsIsMultiNamespaceMode(t *testing.T) {
 		}
 	})
 
-	t.Run("single namespace with output dir triggers multi-namespace mode", func(t *testing.T) {
+	t.Run("single namespace with output dir does not trigger multi-namespace mode", func(t *testing.T) {
 		nsMap := map[string]*NamespaceTypes{
 			"book": {},
 		}
-		if !isMultiNamespaceMode("lib/rpc", nsMap) {
-			t.Error("expected multi-namespace mode with single namespace and output dir set")
+		if isMultiNamespaceMode("lib/rpc", nsMap) {
+			t.Error("expected flat mode with single namespace even with output dir set")
 		}
 	})
 

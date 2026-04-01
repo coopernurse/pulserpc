@@ -242,6 +242,25 @@ func collectCrossNamespaceImports(nsTypes *NamespaceTypes, currentNs string, all
 	}
 
 	for _, s := range nsTypes.Structs {
+		// Check extends clause
+		if s.Extends != "" {
+			typeName := GetBaseName(s.Extends)
+			if !localTypes[typeName] {
+				for ns, nsTypes := range allNamespaceMap {
+					if ns == currentNs {
+						continue
+					}
+					for _, otherStruct := range nsTypes.Structs {
+						if GetBaseName(otherStruct.Name) == typeName {
+							imports[ns] = ns + "Types"
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// Check struct fields
 		for _, field := range s.Fields {
 			if field.Type != nil && field.Type.IsUserDefined() {
 				typeName := GetBaseName(field.Type.UserDefined)
@@ -271,6 +290,33 @@ func collectCrossNamespaceImports(nsTypes *NamespaceTypes, currentNs string, all
 	}
 
 	return imports
+}
+
+// getExtendsTypeForNamespace returns the proper TypeScript type reference for an extends clause.
+// When the parent type is from another namespace, it returns "namespace.TypeName" format.
+func getExtendsTypeForNamespace(extendsType string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, currentNs string, allNamespaceMap map[string]*NamespaceTypes) string {
+	baseName := GetBaseName(extendsType)
+
+	// Check if it's a local type (no namespace or same namespace)
+	if !strings.Contains(extendsType, ".") {
+		return baseName
+	}
+
+	// Check if the extends type belongs to this namespace
+	nsPrefix := GetNamespaceFromType(extendsType, "")
+	if nsPrefix == currentNs {
+		return baseName
+	}
+
+	// It's from another namespace - use namespace.TypeName format
+	if strings.Contains(extendsType, ".") {
+		parts := strings.Split(extendsType, ".")
+		if len(parts) >= 2 {
+			return parts[len(parts)-2] + "." + baseName
+		}
+	}
+
+	return baseName
 }
 
 // getTypeScriptTypeForNamespace converts a parser.Type to a TypeScript type string,
@@ -353,7 +399,7 @@ func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.
 		if useTypesPrefix {
 			return "types." + GetBaseName(typeName)
 		}
-		return typeName
+		return GetBaseName(typeName)
 	}
 	return "any"
 }
@@ -640,15 +686,11 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, stru
 				fmt.Fprintf(&sb, "// %s\n", line)
 			}
 		}
-		fmt.Fprintf(&sb, "export interface %s", structDef.Name)
+		baseName := GetBaseName(structDef.Name)
+		fmt.Fprintf(&sb, "export interface %s", baseName)
 		if structDef.Extends != "" {
-			// Handle extends - use just the base name if it's namespaced
-			baseName := structDef.Extends
-			if strings.Contains(baseName, ".") {
-				parts := strings.Split(baseName, ".")
-				baseName = parts[len(parts)-1]
-			}
-			sb.WriteString(" extends " + baseName)
+			extendsRef := getExtendsTypeForNamespace(structDef.Extends, structMap, enumMap, currentNs, allNamespaceMap)
+			sb.WriteString(" extends " + extendsRef)
 		}
 		sb.WriteString(" {\n")
 		for _, field := range structDef.Fields {
