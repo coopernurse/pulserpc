@@ -559,3 +559,133 @@ func buildMultiNamespaceWithCrossRefIDL() *parser.IDL {
 		},
 	}
 }
+
+// buildThreeNamespaceIDL creates an IDL with three namespaces: common, book, and user.
+// Both book and user include common types (cross-namespace references).
+func buildThreeNamespaceIDL() *parser.IDL {
+	return &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "Category",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "id", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "Book",
+				Namespace: "book",
+				Fields: []*parser.Field{
+					{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+					{
+						Name: "category",
+						Type: &parser.Type{UserDefined: "Category"},
+					},
+				},
+			},
+			{
+				Name:      "User",
+				Namespace: "user",
+				Fields: []*parser.Field{
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+					{
+						Name: "favoriteCategory",
+						Type: &parser.Type{UserDefined: "Category"},
+					},
+				},
+			},
+		},
+		Enums: []*parser.Enum{
+			{
+				Name:      "Status",
+				Namespace: "common",
+				Values:    []*parser.EnumValue{{Name: "ACTIVE"}, {Name: "INACTIVE"}},
+			},
+		},
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "CommonService",
+				Namespace: "common",
+				Methods: []*parser.Method{
+					{
+						Name:       "getCategory",
+						Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "Category"},
+					},
+				},
+			},
+			{
+				Name:      "BookService",
+				Namespace: "book",
+				Methods: []*parser.Method{
+					{
+						Name:       "getBook",
+						Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "Book"},
+					},
+				},
+			},
+			{
+				Name:      "UserService",
+				Namespace: "user",
+				Methods: []*parser.Method{
+					{
+						Name:       "getUser",
+						Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "User"},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestTsMultiFileEndToEnd(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := buildThreeNamespaceIDL()
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		// Assert runtime exists
+		assertTsFileExists(t, outputDir, "pulserpc/index.ts")
+
+		// Assert common namespace files exist
+		assertTsFileExists(t, outputDir, "common/types.ts")
+		assertTsFileExists(t, outputDir, "common/server.ts")
+		assertTsFileExists(t, outputDir, "common/client.ts")
+		assertTsFileExists(t, outputDir, "common/index.ts")
+
+		// Assert book namespace files exist
+		assertTsFileExists(t, outputDir, "book/types.ts")
+		assertTsFileExists(t, outputDir, "book/server.ts")
+		assertTsFileExists(t, outputDir, "book/client.ts")
+		assertTsFileExists(t, outputDir, "book/index.ts")
+
+		// Assert user namespace files exist
+		assertTsFileExists(t, outputDir, "user/types.ts")
+		assertTsFileExists(t, outputDir, "user/server.ts")
+		assertTsFileExists(t, outputDir, "user/client.ts")
+		assertTsFileExists(t, outputDir, "user/index.ts")
+
+		// Assert cross-namespace import: book/types.ts references common
+		assertTsFileContains(t, outputDir, "book/types.ts", "from '../common'")
+
+		// Assert cross-namespace import: user/types.ts references common
+		assertTsFileContains(t, outputDir, "user/types.ts", "from '../common'")
+
+		// Assert runtime import: book/types.ts uses ../pulserpc
+		assertTsFileContains(t, outputDir, "book/types.ts", "from '../pulserpc'")
+	})
+}
