@@ -508,3 +508,212 @@ func TestJavaRuntimeLocationWithNestedDirAndPackage(t *testing.T) {
 		t.Fatalf("runtime should NOT be at %s", wrongRuntimeDir)
 	}
 }
+
+func TestJavaCrossNamespaceImport(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-java-gen-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "common.CommonTypes",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "id", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "book.Book",
+				Namespace: "book",
+				Fields: []*parser.Field{
+					{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "category", Type: &parser.Type{UserDefined: "CommonTypes"}},
+				},
+			},
+		},
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "book.BookService",
+				Namespace: "book",
+				Methods: []*parser.Method{
+					{
+						Name:       "getBook",
+						Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "book.Book"},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewJavaClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "src/main/java", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "com.myapp.rpc"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	bookPath := filepath.Join(tmpDir, "src", "main", "java", "com", "myapp", "rpc", "book", "Book.java")
+	content, err := os.ReadFile(bookPath)
+	if err != nil {
+		t.Fatalf("failed to read Book.java: %v", err)
+	}
+
+	if !containsString(string(content), "package com.myapp.rpc.book;") {
+		t.Fatalf("Book.java should contain 'package com.myapp.rpc.book;' but got:\n%s", string(content))
+	}
+
+	if !containsString(string(content), "import com.myapp.rpc.common.CommonTypes;") {
+		t.Fatalf("Book.java should contain 'import com.myapp.rpc.common.CommonTypes;' but got:\n%s", string(content))
+	}
+}
+
+func TestJavaMultipleNamespaceImportsWithSameRoot(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-java-gen-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "common.CommonTypes",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "id", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "book.Book",
+				Namespace: "book",
+				Fields: []*parser.Field{
+					{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "user.User",
+				Namespace: "user",
+				Fields: []*parser.Field{
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "favoriteBook", Type: &parser.Type{UserDefined: "book.Book"}},
+					{Name: "commonInfo", Type: &parser.Type{UserDefined: "common.CommonTypes"}},
+				},
+			},
+		},
+	}
+
+	p := NewJavaClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "src/main/java", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "org.company.services"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	userPath := filepath.Join(tmpDir, "src", "main", "java", "org", "company", "services", "user", "User.java")
+	content, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("failed to read User.java: %v", err)
+	}
+
+	if !containsString(string(content), "package org.company.services.user;") {
+		t.Fatalf("User.java should contain 'package org.company.services.user;' but got:\n%s", string(content))
+	}
+
+	if !containsString(string(content), "import org.company.services.common.CommonTypes;") {
+		t.Fatalf("User.java should contain 'import org.company.services.common.CommonTypes;' but got:\n%s", string(content))
+	}
+
+	if !containsString(string(content), "import org.company.services.book.Book;") {
+		t.Fatalf("User.java should contain 'import org.company.services.book.Book;' but got:\n%s", string(content))
+	}
+}
+
+func TestJavaQualifiedImportWithoutAsterisk(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-java-gen-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "common.Address",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "street", Type: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "common.User",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "address", Type: &parser.Type{UserDefined: "common.Address"}},
+				},
+			},
+			{
+				Name:      "book.Book",
+				Namespace: "book",
+				Fields: []*parser.Field{
+					{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "author", Type: &parser.Type{UserDefined: "common.User"}},
+					{Name: "shippingAddress", Type: &parser.Type{UserDefined: "common.Address"}},
+				},
+			},
+		},
+	}
+
+	p := NewJavaClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "src/main/java", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "com.myapp.rpc"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	bookPath := filepath.Join(tmpDir, "src", "main", "java", "com", "myapp", "rpc", "book", "Book.java")
+	content, err := os.ReadFile(bookPath)
+	if err != nil {
+		t.Fatalf("failed to read Book.java: %v", err)
+	}
+
+	if !containsString(string(content), "package com.myapp.rpc.book;") {
+		t.Fatalf("Book.java should contain 'package com.myapp.rpc.book;' but got:\n%s", string(content))
+	}
+
+	if !containsString(string(content), "import com.myapp.rpc.common.Address;") {
+		t.Fatalf("Book.java should contain 'import com.myapp.rpc.common.Address;' but got:\n%s", string(content))
+	}
+
+	if !containsString(string(content), "import com.myapp.rpc.common.User;") {
+		t.Fatalf("Book.java should contain 'import com.myapp.rpc.common.User;' but got:\n%s", string(content))
+	}
+}
