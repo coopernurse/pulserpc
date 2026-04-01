@@ -72,8 +72,14 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		interfaceMap[i.Name] = i
 	}
 
-	// Copy runtime library files
-	if err := p.copyRuntimeFiles(outputDir, isSilent()); err != nil {
+	// Group types by namespace
+	namespaceMap := GroupTypesByNamespace(idl)
+
+	// Initialize path helpers
+	paths := NewPythonNamespacePaths(outputDir, p.packageBase)
+
+	// Copy runtime library files (uses package-base-aware path from paths)
+	if err := p.copyRuntimeFiles(paths, isSilent()); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
@@ -81,12 +87,6 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if err := writeIDLJSON(idl, outputDir, fs); err != nil {
 		return fmt.Errorf("failed to write idl.json: %w", err)
 	}
-
-	// Group types by namespace
-	namespaceMap := GroupTypesByNamespace(idl)
-
-	// Initialize path helpers
-	paths := NewPythonNamespacePaths(outputDir, p.packageBase)
 
 	// Generate __init__.py files for all namespace directories
 	if err := paths.GenerateAllInitPyFiles(namespaceMap); err != nil {
@@ -193,9 +193,30 @@ func (p *PythonClientServer) generateTestFiles(namespaceMap map[string]*Namespac
 }
 
 // copyRuntimeFiles copies the Python runtime library files to the output directory
-// Uses embedded runtime files from the binary
-func (p *PythonClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
-	return runtime.CopyRuntimeFiles("python", outputDir, silent)
+// Uses embedded runtime files from the binary.
+// When paths has a PackageBase set, runtime files are placed at the package-base-aware path.
+func (p *PythonClientServer) copyRuntimeFiles(paths PythonNamespacePaths, silent bool) error {
+	runtimeDir := paths.ResolveRuntimeDir()
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		return fmt.Errorf("failed to create runtime directory: %w", err)
+	}
+
+	files, err := runtime.GetRuntimeFiles("python")
+	if err != nil {
+		return err
+	}
+
+	for filename, data := range files {
+		dstPath := filepath.Join(runtimeDir, filename)
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)
+		}
+		if !silent {
+			fmt.Println(dstPath)
+		}
+	}
+
+	return nil
 }
 
 // writeIDLJSON writes the IDL metadata as JSON to idl.json
