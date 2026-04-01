@@ -792,3 +792,367 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 		}
 	}
 }
+
+func TestPythonGeneratorCrossNamespaceImports(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-cross-ns-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	// Multi-namespace IDL: book and user both reference common.Address
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{Name: "common.Address", Namespace: "common", Fields: []*parser.Field{
+				{Name: "street", Type: &parser.Type{BuiltIn: "string"}},
+				{Name: "city", Type: &parser.Type{BuiltIn: "string"}},
+			}},
+			{Name: "book.Book", Namespace: "book", Fields: []*parser.Field{
+				{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+				{Name: "address", Type: &parser.Type{UserDefined: "common.Address"}},
+			}},
+			{Name: "user.User", Namespace: "user", Fields: []*parser.Field{
+				{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+				{Name: "address", Type: &parser.Type{UserDefined: "common.Address"}},
+			}},
+		},
+		Interfaces: []*parser.Interface{
+			{Name: "book.BookService", Namespace: "book"},
+			{Name: "user.UserService", Namespace: "user"},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	fs.String("package", "", "base package")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "myapp.lib.rpc"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify book/types.py imports from myapp.lib.rpc.common
+	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	content, err := os.ReadFile(bookTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read book/types.py: %v", err)
+	}
+	bookTypesContent := string(content)
+	if !strings.Contains(bookTypesContent, "from myapp.lib.rpc.common import Address") {
+		t.Errorf("book/types.py should contain 'from myapp.lib.rpc.common import Address', got:\n%s", bookTypesContent)
+	}
+
+	// Verify user/types.py imports from myapp.lib.rpc.common
+	userTypesPath := filepath.Join(tmpDir, "user", "types.py")
+	content, err = os.ReadFile(userTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read user/types.py: %v", err)
+	}
+	userTypesContent := string(content)
+	if !strings.Contains(userTypesContent, "from myapp.lib.rpc.common import Address") {
+		t.Errorf("user/types.py should contain 'from myapp.lib.rpc.common import Address', got:\n%s", userTypesContent)
+	}
+
+	// Verify common/types.py does NOT have cross-namespace imports (it has none)
+	commonTypesPath := filepath.Join(tmpDir, "common", "types.py")
+	content, err = os.ReadFile(commonTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read common/types.py: %v", err)
+	}
+	commonTypesContent := string(content)
+	if strings.Contains(commonTypesContent, "Cross-namespace imports") {
+		t.Errorf("common/types.py should NOT have cross-namespace imports section, got:\n%s", commonTypesContent)
+	}
+}
+
+func TestPythonGeneratorCrossNamespaceImportsNoPackage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-cross-ns-nopkg-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	// Multi-namespace IDL: book references common.Address
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{Name: "common.Address", Namespace: "common", Fields: []*parser.Field{
+				{Name: "street", Type: &parser.Type{BuiltIn: "string"}},
+			}},
+			{Name: "book.Book", Namespace: "book", Fields: []*parser.Field{
+				{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+				{Name: "address", Type: &parser.Type{UserDefined: "common.Address"}},
+			}},
+		},
+		Interfaces: []*parser.Interface{
+			{Name: "book.BookService", Namespace: "book"},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Without -package, cross-namespace imports should use bare namespace (e.g., "from common import Address")
+	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	content, err := os.ReadFile(bookTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read book/types.py: %v", err)
+	}
+	bookTypesContent := string(content)
+	if !strings.Contains(bookTypesContent, "from common import Address") {
+		t.Errorf("book/types.py should contain 'from common import Address' (no package), got:\n%s", bookTypesContent)
+	}
+}
+
+func TestPythonGeneratorCrossNamespaceImportsNestedTypes(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-cross-ns-nested-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	// Test with nested types: arrays and maps of cross-namespace types
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{Name: "common.Item", Namespace: "common", Fields: []*parser.Field{
+				{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+			}},
+			{Name: "book.Book", Namespace: "book", Fields: []*parser.Field{
+				{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+				{Name: "items", Type: &parser.Type{Array: &parser.Type{UserDefined: "common.Item"}}},
+			}},
+		},
+		Interfaces: []*parser.Interface{
+			{Name: "book.BookService", Namespace: "book"},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	fs.String("package", "", "base package")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "myapp.lib.rpc"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify book/types.py imports Item from common even though it's inside an array
+	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	content, err := os.ReadFile(bookTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read book/types.py: %v", err)
+	}
+	bookTypesContent := string(content)
+	if !strings.Contains(bookTypesContent, "from myapp.lib.rpc.common import Item") {
+		t.Errorf("book/types.py should contain 'from myapp.lib.rpc.common import Item' for array element type, got:\n%s", bookTypesContent)
+	}
+}
+
+func TestPythonGeneratorCrossNamespaceImportsPydantic(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-cross-ns-pydantic-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{Name: "common.Address", Namespace: "common", Fields: []*parser.Field{
+				{Name: "street", Type: &parser.Type{BuiltIn: "string"}},
+			}},
+			{Name: "book.Book", Namespace: "book", Fields: []*parser.Field{
+				{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+				{Name: "address", Type: &parser.Type{UserDefined: "common.Address"}},
+			}},
+		},
+		Interfaces: []*parser.Interface{
+			{Name: "book.BookService", Namespace: "book"},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "myapp.lib.rpc"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+	if err := fs.Set("use-pydantic", "true"); err != nil {
+		t.Fatalf("failed to set use-pydantic flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify models.py has cross-namespace imports
+	modelsPath := filepath.Join(tmpDir, "models.py")
+	content, err := os.ReadFile(modelsPath)
+	if err != nil {
+		t.Fatalf("failed to read models.py: %v", err)
+	}
+	modelsContent := string(content)
+	if !strings.Contains(modelsContent, "from myapp.lib.rpc.common import Address") {
+		t.Errorf("models.py should contain 'from myapp.lib.rpc.common import Address', got:\n%s", modelsContent)
+	}
+}
+
+func TestCollectCrossNamespaceRefs(t *testing.T) {
+	tests := []struct {
+		name          string
+		nsTypes       *NamespaceTypes
+		currentNS     string
+		expectRefs    int
+		expectTargets []string
+	}{
+		{
+			name: "no cross-namespace refs",
+			nsTypes: &NamespaceTypes{
+				Structs: []*parser.Struct{
+					{Name: "Foo", Namespace: "book", Fields: []*parser.Field{
+						{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+					}},
+				},
+			},
+			currentNS:     "book",
+			expectRefs:    0,
+			expectTargets: nil,
+		},
+		{
+			name: "single cross-namespace ref",
+			nsTypes: &NamespaceTypes{
+				Structs: []*parser.Struct{
+					{Name: "Book", Namespace: "book", Fields: []*parser.Field{
+						{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+						{Name: "addr", Type: &parser.Type{UserDefined: "common.Address"}},
+					}},
+				},
+			},
+			currentNS:     "book",
+			expectRefs:    1,
+			expectTargets: []string{"common"},
+		},
+		{
+			name: "duplicate refs deduplicated",
+			nsTypes: &NamespaceTypes{
+				Structs: []*parser.Struct{
+					{Name: "Book", Namespace: "book", Fields: []*parser.Field{
+						{Name: "addr1", Type: &parser.Type{UserDefined: "common.Address"}},
+						{Name: "addr2", Type: &parser.Type{UserDefined: "common.Address"}},
+					}},
+				},
+			},
+			currentNS:     "book",
+			expectRefs:    1,
+			expectTargets: []string{"common"},
+		},
+		{
+			name: "array of cross-namespace type",
+			nsTypes: &NamespaceTypes{
+				Structs: []*parser.Struct{
+					{Name: "Book", Namespace: "book", Fields: []*parser.Field{
+						{Name: "addrs", Type: &parser.Type{Array: &parser.Type{UserDefined: "common.Address"}}},
+					}},
+				},
+			},
+			currentNS:     "book",
+			expectRefs:    1,
+			expectTargets: []string{"common"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			refs := collectCrossNamespaceRefs(tt.nsTypes, tt.currentNS)
+			if len(refs) != tt.expectRefs {
+				t.Errorf("expected %d refs, got %d", tt.expectRefs, len(refs))
+			}
+			if tt.expectTargets != nil {
+				found := make(map[string]bool)
+				for _, ref := range refs {
+					found[ref.TargetNS] = true
+				}
+				for _, target := range tt.expectTargets {
+					if !found[target] {
+						t.Errorf("expected target namespace %q not found", target)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestBuildCrossNamespaceImports(t *testing.T) {
+	tests := []struct {
+		name        string
+		refs        []crossNamespaceRef
+		packageBase string
+		expect      string
+	}{
+		{
+			name:        "empty refs",
+			refs:        nil,
+			packageBase: "",
+			expect:      "",
+		},
+		{
+			name: "with package base",
+			refs: []crossNamespaceRef{
+				{TargetNS: "common", BaseName: "Address"},
+			},
+			packageBase: "myapp.lib.rpc",
+			expect:      "from myapp.lib.rpc.common import Address\n\n",
+		},
+		{
+			name: "without package base",
+			refs: []crossNamespaceRef{
+				{TargetNS: "common", BaseName: "Address"},
+			},
+			packageBase: "",
+			expect:      "from common import Address\n\n",
+		},
+		{
+			name: "multiple types from same namespace",
+			refs: []crossNamespaceRef{
+				{TargetNS: "common", BaseName: "Address"},
+				{TargetNS: "common", BaseName: "Status"},
+			},
+			packageBase: "myapp.lib.rpc",
+			expect:      "from myapp.lib.rpc.common import Address, Status\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildCrossNamespaceImports(tt.refs, tt.packageBase)
+			if result != tt.expect {
+				t.Errorf("expected %q, got %q", tt.expect, result)
+			}
+		})
+	}
+}
