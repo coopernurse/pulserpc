@@ -1253,5 +1253,65 @@ pkg/runtime/runtimes/java/
 - `HTTPTransport` using `java.net.http.HttpClient` (Java 11+)
 - Support for custom headers via `HttpRequest.Builder`
 
+
+### Java Runtime Package Conventions
+
+**Java runtime** follows idiomatic Java package naming with full package qualification:
+
+#### Generated Code Structure
+When generating with `-dir src/main/java -package com.myapp.rpc`:
+- **Runtime package**: `pulserpc` → `{dir}/pulserpc/`
+  - Files: `src/main/java/pulserpc/RPCError.java`, etc.
+  - Package declaration: `package pulserpc;`
+  
+- **Namespace packages**: `{package}.{namespace}` → `{dir}/{package-dirs}/{namespace}/`
+  - Example: namespace `user` → `src/main/java/com/myapp/rpc/user/`
+  - Package declaration: `package com.myapp.rpc.user;`
+  - Cross-namespace imports: `import com.myapp.rpc.common.MyType;`
+
+#### Key Java-Specific Rules:
+1. **Package declarations are fully-qualified** using the `-package` prefix
+2. **Directory structure mirrors packages** (Maven/Gradle convention)
+3. **Cross-namespace imports are fully-qualified** with `{package}.{namespace}`
+4. **Runtime stays in simple `pulserpc` package** (not under `-package` hierarchy)
+5. **Build tools work seamlessly** - just add `{dir}` as a source directory
+
+#### Java Runtime Structure:
+```
+pkg/runtime/runtimes/java/
+├── pulserpc/                          # Runtime library
+│   ├── RPCError.java                  # package pulserpc;
+│   ├── Validation.java
+│   └── Types.java
+├── tests/
+│   ├── ValidationTest.java
+│   └── TypesTest.java
+└── Makefile
+```
+
+#### Generated Files:
+- `{package}/{namespace}/Idl.java` - Contains `ALL_STRUCTS` and `ALL_ENUMS` as static maps, package `{package}.{namespace}`
+- `{package}/{namespace}/Server.java` - HTTP server with **embedded IDL JSON**, package `{package}.{namespace}`
+- `{package}/{namespace}/Client.java` - Client classes, package `{package}.{namespace}`
+- `{package}/{namespace}/{Type}.java` - Generated struct/enum classes, package `{package}.{namespace}`
+
+#### Java Build Integration:
+```xml
+<!-- Maven: add generated source directory -->
+<build>
+  <sourceDirectory>src/main/java</sourceDirectory>
+  <!-- Generated code is already in proper package structure -->
+</build>
+
+<!-- Gradle: add generated source directory -->
+sourceSets {
+  main {
+    java {
+      srcDir 'src/main/java'  # Packages auto-resolve
+    }
+  }
+}
+```
+
 This guide should provide a comprehensive foundation for implementing new language runtimes. Refer to the Python implementation as a reference, and adapt the patterns to your target language's conventions and capabilities.
 
