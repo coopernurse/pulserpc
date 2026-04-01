@@ -40,3 +40,24 @@ func ensureTsNamespaceDirs(outputDir string, namespaces []string) error {
 	}
 	return nil
 }
+
+// isMultiNamespaceMode determines whether multi-namespace output mode should be activated.
+// Multi-namespace mode is active when:
+//   - There are multiple namespaces (len(namespaceMap) > 1), OR
+//   - outputDir is set AND there is at least one namespace with a non-empty name
+//
+// When multi-namespace mode is active, generated files go into per-namespace subdirectories.
+// When inactive, all files go into the root output directory (backwards compatible).
+func isMultiNamespaceMode(outputDir string, namespaceMap map[string]*NamespaceTypes) bool {
+	if len(namespaceMap) > 1 {
+		return true
+	}
+	if outputDir != "" && len(namespaceMap) == 1 {
+		for ns := range namespaceMap {
+			if ns != "" {
+				return true
+			}
+		}
+	}
+	return false
+}

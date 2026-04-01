@@ -178,3 +178,86 @@ func TestTsEnsureNamespaceDirs(t *testing.T) {
 		}
 	})
 }
+
+func TestTsIsMultiNamespaceMode(t *testing.T) {
+	t.Run("multiple namespaces triggers multi-namespace mode", func(t *testing.T) {
+		nsMap := map[string]*NamespaceTypes{
+			"book":   {},
+			"common": {},
+		}
+		if !isMultiNamespaceMode("", nsMap) {
+			t.Error("expected multi-namespace mode with multiple namespaces")
+		}
+	})
+
+	t.Run("single namespace with output dir triggers multi-namespace mode", func(t *testing.T) {
+		nsMap := map[string]*NamespaceTypes{
+			"book": {},
+		}
+		if !isMultiNamespaceMode("lib/rpc", nsMap) {
+			t.Error("expected multi-namespace mode with single namespace and output dir set")
+		}
+	})
+
+	t.Run("single namespace without output dir does not trigger multi-namespace mode", func(t *testing.T) {
+		nsMap := map[string]*NamespaceTypes{
+			"book": {},
+		}
+		if isMultiNamespaceMode("", nsMap) {
+			t.Error("expected flat mode with single namespace and no output dir")
+		}
+	})
+
+	t.Run("empty namespace map does not trigger multi-namespace mode", func(t *testing.T) {
+		nsMap := map[string]*NamespaceTypes{}
+		if isMultiNamespaceMode("lib/rpc", nsMap) {
+			t.Error("expected flat mode with empty namespace map")
+		}
+	})
+
+	t.Run("single empty namespace with output dir does not trigger multi-namespace mode", func(t *testing.T) {
+		nsMap := map[string]*NamespaceTypes{
+			"": {},
+		}
+		if isMultiNamespaceMode("lib/rpc", nsMap) {
+			t.Error("expected flat mode with empty namespace name")
+		}
+	})
+
+	t.Run("multiple namespaces including empty one triggers multi-namespace mode", func(t *testing.T) {
+		nsMap := map[string]*NamespaceTypes{
+			"":     {},
+			"book": {},
+		}
+		if !isMultiNamespaceMode("", nsMap) {
+			t.Error("expected multi-namespace mode with multiple namespaces even if one is empty")
+		}
+	})
+}
+
+func TestTsEnsureDirsSingleNamespaceNoSubdir(t *testing.T) {
+	t.Run("single-namespace project with empty outputDir does not create subdirectory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		nsMap := map[string]*NamespaceTypes{
+			"": {
+				Structs:    nil,
+				Enums:      nil,
+				Interfaces: nil,
+			},
+		}
+
+		// Single namespace with empty outputDir should NOT trigger multi-namespace mode
+		if isMultiNamespaceMode("", nsMap) {
+			t.Fatal("expected flat mode for single empty namespace with no output dir")
+		}
+
+		// Verify no subdirectories are created when ensureTsNamespaceDirs is not called
+		entries, err := os.ReadDir(tmpDir)
+		if err != nil {
+			t.Fatalf("failed to read temp dir: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("expected no subdirectories, got %d entries", len(entries))
+		}
+	})
+}

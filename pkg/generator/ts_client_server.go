@@ -78,6 +78,20 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// Group types by namespace
 	namespaceMap := GroupTypesByNamespace(idl)
 
+	// Determine if multi-namespace mode is active
+	multiNsMode := isMultiNamespaceMode(outputDir, namespaceMap)
+
+	// Create per-namespace subdirectories when in multi-namespace mode
+	if multiNsMode {
+		namespaces := make([]string, 0, len(namespaceMap))
+		for ns := range namespaceMap {
+			namespaces = append(namespaces, ns)
+		}
+		if err := ensureTsNamespaceDirs(outputDir, namespaces); err != nil {
+			return fmt.Errorf("failed to create namespace directories: %w", err)
+		}
+	}
+
 	// Write IDL JSON file
 	if err := writeIDLJSONTs(idl, outputDir, fs); err != nil {
 		return fmt.Errorf("failed to write idl.json: %w", err)
