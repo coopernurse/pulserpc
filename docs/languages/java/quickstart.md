@@ -24,7 +24,7 @@ Create `checkout.pulse` with your service definition:
 Generate the Java code from your IDL:
 
 ```bash
-pulserpc -plugin java-client-server -base-package com.example.myapp checkout.pulse
+pulserpc -plugin java-client-server -package com.example.myapp checkout.pulse
 ```
 
 This creates:

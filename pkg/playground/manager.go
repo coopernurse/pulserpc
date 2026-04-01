@@ -124,7 +124,7 @@ func (m *Manager) Generate(idl string, runtime string) (*Session, error) {
 	}
 
 	// Set default values for Java-specific flags if they exist and are empty
-	if pkgFlag := fs.Lookup("base-package"); pkgFlag != nil {
+	if pkgFlag := fs.Lookup("package"); pkgFlag != nil {
 		if pkgFlag.Value.String() == "" {
 			pkgFlag.Value.Set("com.example.generated")
 		}

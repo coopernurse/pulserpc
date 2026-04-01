@@ -28,8 +28,11 @@ func (p *JavaClientServer) Name() string {
 
 // RegisterFlags registers CLI flags for this plugin
 func (p *JavaClientServer) RegisterFlags(fs *flag.FlagSet) {
-	// Register base-package flag (required)
-	fs.String("base-package", "", "Base package name for generated Java classes (required, e.g., com.example.server)")
+	// Register -package flag for base Java package (e.g., com.example.server)
+	// Only register if not already registered by another plugin (e.g., Go, Python, TS)
+	if fs.Lookup("package") == nil {
+		fs.String("package", "", "Base package name for generated Java classes (required, e.g., com.example.server)")
+	}
 	// Register json-lib flag for choosing between Jackson and GSON
 	fs.String("json-lib", "jackson", "JSON library to use: 'jackson' or 'gson'")
 }
@@ -49,14 +52,14 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		outputDir = dirFlag.Value.String()
 	}
 
-	// Get base-package flag (required)
-	basePackageFlag := fs.Lookup("base-package")
+	// Get package flag (required)
+	packageFlag := fs.Lookup("package")
 	basePackage := ""
-	if basePackageFlag != nil {
-		basePackage = basePackageFlag.Value.String()
+	if packageFlag != nil {
+		basePackage = packageFlag.Value.String()
 	}
 	if basePackage == "" {
-		return fmt.Errorf("base-package flag is required for Java code generation")
+		return fmt.Errorf("package flag is required for Java code generation")
 	}
 
 	// Get json-lib flag

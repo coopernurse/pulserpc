@@ -66,7 +66,7 @@ pulserpc [flags] <idl-file>
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `-base-package` | string | Base package name for generated Java classes. Required (e.g., `com.example.server`). |
+| `-package` | string | Base package name for generated Java classes. Required (e.g., `com.example.server`). |
 | `-json-lib` | string | JSON library to use: `jackson` (default) or `gson`. |
 
 #### TypeScript Plugin (`ts-client-server`)
@@ -125,7 +125,7 @@ Generate Java code with a specific base package:
 
 ```bash
 pulserpc -plugin java-client-server -dir ./src/main/java \
-  -base-package com.example.api api/service.pulse
+  -package com.example.api api/service.pulse
 ```
 
 ### Generate Go Code with Inline Runtime

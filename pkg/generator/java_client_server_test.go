@@ -48,7 +48,7 @@ func TestJavaGeneratorBasicFiles(t *testing.T) {
 	if err := fs.Set("dir", tmpDir); err != nil {
 		t.Fatalf("failed to set dir flag: %v", err)
 	}
-	if err := fs.Set("base-package", "com.example"); err != nil {
+	if err := fs.Set("package", "com.example"); err != nil {
 		t.Fatalf("failed to set base-package flag: %v", err)
 	}
 
@@ -105,7 +105,7 @@ func TestJavaGeneratorTestFilesWithFlag(t *testing.T) {
 	if err := fs.Set("dir", tmpDir); err != nil {
 		t.Fatalf("failed to set dir flag: %v", err)
 	}
-	if err := fs.Set("base-package", "com.example"); err != nil {
+	if err := fs.Set("package", "com.example"); err != nil {
 		t.Fatalf("failed to set base-package flag: %v", err)
 	}
 	if err := fs.Set("generate-test-files", "true"); err != nil {
@@ -159,7 +159,7 @@ func TestJavaGeneratorTestFilesDisabled(t *testing.T) {
 	if err := fs.Set("dir", tmpDir); err != nil {
 		t.Fatalf("failed to set dir flag: %v", err)
 	}
-	if err := fs.Set("base-package", "com.example"); err != nil {
+	if err := fs.Set("package", "com.example"); err != nil {
 		t.Fatalf("failed to set base-package flag: %v", err)
 	}
 	// Explicitly disable test file generation
