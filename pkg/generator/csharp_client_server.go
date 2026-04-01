@@ -2205,9 +2205,9 @@ func generateTypesCs(namespace string, types *NamespaceTypes, structMap map[stri
 	}
 	sb.WriteString("\n")
 
-	namespacePascal := namespace
+	namespacePascal := NamespaceToPascalCase(namespace)
 	if prefix != "" {
-		namespacePascal = prefix + namespace
+		namespacePascal = prefix + namespacePascal
 	}
 	sb.WriteString(fmt.Sprintf("namespace %s\n", namespacePascal))
 	sb.WriteString("{\n")
@@ -2232,9 +2232,9 @@ func generateNamespaceServerCs(namespace string, _ *NamespaceTypes, _ map[string
 	sb.WriteString("using System.Threading.Tasks;\n")
 	sb.WriteString(fmt.Sprintf("using %s;\n\n", paths.GetRuntimeImport()))
 
-	namespacePascal := namespace
+	namespacePascal := NamespaceToPascalCase(namespace)
 	if prefix := paths.GetNamespaceImportPrefix(); prefix != "" {
-		namespacePascal = prefix + namespace
+		namespacePascal = prefix + namespacePascal
 	}
 	sb.WriteString(fmt.Sprintf("namespace %s\n", namespacePascal))
 	sb.WriteString("{\n")
@@ -2258,9 +2258,9 @@ func generateNamespaceClientCs(namespace string, _ *NamespaceTypes, _ map[string
 	sb.WriteString("using System.Threading.Tasks;\n")
 	sb.WriteString(fmt.Sprintf("using %s;\n\n", paths.GetRuntimeImport()))
 
-	namespacePascal := namespace
+	namespacePascal := NamespaceToPascalCase(namespace)
 	if prefix := paths.GetNamespaceImportPrefix(); prefix != "" {
-		namespacePascal = prefix + namespace
+		namespacePascal = prefix + namespacePascal
 	}
 	sb.WriteString(fmt.Sprintf("namespace %s\n", namespacePascal))
 	sb.WriteString("{\n")
