@@ -17,19 +17,19 @@ func TestPythonGeneratorBasicFiles(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	// Build a minimal IDL with one namespace, a struct and an enum
+	// Build a minimal IDL with single namespace (empty) - all types in same namespace
 	idl := &parser.IDL{
 		Structs: []*parser.Struct{
 			{
-				Name:      "inc.Req",
-				Namespace: "inc",
+				Name:      "Req",
+				Namespace: "",
 				Fields:    []*parser.Field{{Name: "msg", Type: &parser.Type{BuiltIn: "string"}}},
 			},
 		},
 		Enums: []*parser.Enum{
 			{
-				Name:      "inc.Status",
-				Namespace: "inc",
+				Name:      "Status",
+				Namespace: "",
 				Values:    []*parser.EnumValue{{Name: "ok"}},
 			},
 		},
@@ -53,13 +53,13 @@ func TestPythonGeneratorBasicFiles(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Check server.py
+	// Check server.py in default namespace (root dir for single-namespace)
 	serverPath := filepath.Join(tmpDir, "server.py")
 	if _, err := os.Stat(serverPath); err != nil {
 		t.Fatalf("expected server.py at %s, missing: %v", serverPath, err)
 	}
 
-	// Check client.py
+	// Check client.py in default namespace (root dir for single-namespace)
 	clientPath := filepath.Join(tmpDir, "client.py")
 	if _, err := os.Stat(clientPath); err != nil {
 		t.Fatalf("expected client.py at %s, missing: %v", clientPath, err)
@@ -118,7 +118,7 @@ func TestPythonGeneratorTestFilesWithFlag(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Check that test files are generated when flag is true
+	// Check that test files are generated in the default namespace (root dir)
 	testServerPath := filepath.Join(tmpDir, "test_server.py")
 	if _, err := os.Stat(testServerPath); err != nil {
 		t.Fatalf("expected test_server.py at %s, missing: %v", testServerPath, err)
@@ -474,5 +474,154 @@ func TestPythonGeneratorInitPyWithPackageBase(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "myapp.lib.rpc.pulserpc") {
 		t.Errorf("__init__.py should import from myapp.lib.rpc.pulserpc, got: %s", string(content))
+	}
+}
+
+func TestPythonGeneratorNamespaceSplitFiles(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-ns-split-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	// Multi-namespace IDL: common has types, book has interface
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{Name: "common.Response", Namespace: "common", Fields: []*parser.Field{{Name: "status", Type: &parser.Type{BuiltIn: "string"}}}},
+			{Name: "book.Book", Namespace: "book", Fields: []*parser.Field{{Name: "title", Type: &parser.Type{BuiltIn: "string"}}}},
+		},
+		Interfaces: []*parser.Interface{
+			{Name: "book.BookService", Namespace: "book", Methods: []*parser.Method{
+				{Name: "getBook", Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}}, ReturnType: &parser.Type{UserDefined: "book.Book"}},
+			}},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	fs.Bool("generate-test-files", false, "generate test files")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("generate-test-files", "true"); err != nil {
+		t.Fatalf("failed to set generate-test-files flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify namespace-local file placement for "common" namespace
+	for _, filename := range []string{"server.py", "client.py", "test_server.py", "test_client.py"} {
+		path := filepath.Join(tmpDir, "common", filename)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected %s in common namespace at %s, missing: %v", filename, path, err)
+		}
+	}
+
+	// Verify namespace-local file placement for "book" namespace
+	for _, filename := range []string{"server.py", "client.py", "test_server.py", "test_client.py"} {
+		path := filepath.Join(tmpDir, "book", filename)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected %s in book namespace at %s, missing: %v", filename, path, err)
+		}
+	}
+
+	// Verify __init__.py in each namespace
+	for _, ns := range []string{"common", "book"} {
+		path := filepath.Join(tmpDir, ns, "__init__.py")
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected __init__.py in %s namespace at %s, missing: %v", ns, path, err)
+		}
+	}
+
+	// Verify book/server.py contains the BookService interface
+	bookServerPath := filepath.Join(tmpDir, "book", "server.py")
+	content, err := os.ReadFile(bookServerPath)
+	if err != nil {
+		t.Fatalf("failed to read book/server.py: %v", err)
+	}
+	if !strings.Contains(string(content), "BookService") {
+		t.Errorf("book/server.py should contain BookService class, got:\n%s", string(content))
+	}
+
+	// Verify common/server.py does NOT contain BookService (only types, no interfaces)
+	commonServerPath := filepath.Join(tmpDir, "common", "server.py")
+	content, err = os.ReadFile(commonServerPath)
+	if err != nil {
+		t.Fatalf("failed to read common/server.py: %v", err)
+	}
+	if strings.Contains(string(content), "BookService") {
+		t.Errorf("common/server.py should NOT contain BookService class")
+	}
+}
+
+func TestPythonGeneratorSingleNamespaceEquivalence(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-single-ns-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	// Single namespace IDL - all types in empty namespace
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{Name: "User", Namespace: "", Fields: []*parser.Field{
+				{Name: "id", Type: &parser.Type{BuiltIn: "string"}},
+				{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+			}},
+		},
+		Interfaces: []*parser.Interface{
+			{Name: "UserService", Namespace: "", Methods: []*parser.Method{
+				{Name: "getUser", Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}}, ReturnType: &parser.Type{UserDefined: "User"}},
+			}},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	fs.Bool("generate-test-files", false, "generate test files")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("generate-test-files", "true"); err != nil {
+		t.Fatalf("failed to set generate-test-files flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// For single-namespace, files should be at root level (backwards compatible)
+	for _, filename := range []string{"server.py", "client.py", "test_server.py", "test_client.py"} {
+		path := filepath.Join(tmpDir, filename)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected %s at root %s, missing: %v", filename, path, err)
+		}
+	}
+
+	// Verify server.py contains the UserService interface
+	serverPath := filepath.Join(tmpDir, "server.py")
+	content, err := os.ReadFile(serverPath)
+	if err != nil {
+		t.Fatalf("failed to read server.py: %v", err)
+	}
+	if !strings.Contains(string(content), "class UserService") {
+		t.Errorf("server.py should contain UserService class")
+	}
+
+	// Verify no extra namespace directories were created
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to read output dir: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() != "pulserpc" {
+			t.Errorf("unexpected directory %s in single-namespace output", entry.Name())
+		}
 	}
 }

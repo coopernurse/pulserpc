@@ -82,36 +82,21 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		return fmt.Errorf("failed to write idl.json: %w", err)
 	}
 
-	// Group types by namespace (used by Pydantic models generation)
+	// Group types by namespace
 	namespaceMap := GroupTypesByNamespace(idl)
 
-	// Generate __init__.py files for all namespace directories
+	// Initialize path helpers
 	paths := NewPythonNamespacePaths(outputDir, p.packageBase)
+
+	// Generate __init__.py files for all namespace directories
 	if err := paths.GenerateAllInitPyFiles(namespaceMap); err != nil {
 		return fmt.Errorf("failed to generate __init__.py files: %w", err)
 	}
 
-	// Marshal IDL to JSON for embedding in server code
-	idlJSON, err := json.MarshalIndent(idl, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)
+	// Generate namespace-local output files (types.py, server.py, client.py)
+	if err := p.generateNamespaceFiles(namespaceMap, paths, fs); err != nil {
+		return err
 	}
-
-	// Generate server.py with embedded IDL
-	serverCode := generateServerPy(idl, structMap, enumMap, interfaceMap, namespaceMap, outputDir, string(idlJSON))
-	serverPath := filepath.Join(outputDir, "server.py")
-	if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
-		return fmt.Errorf("failed to write server.py: %w", err)
-	}
-	PrintFileCreated(serverPath, fs)
-
-	// Generate client.py
-	clientCode := generateClientPy(idl, structMap, enumMap, interfaceMap, namespaceMap, outputDir)
-	clientPath := filepath.Join(outputDir, "client.py")
-	if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
-		return fmt.Errorf("failed to write client.py: %w", err)
-	}
-	PrintFileCreated(clientPath, fs)
 
 	// Generate Pydantic models if --use-pydantic flag is set
 	if p.usePydantic {
@@ -129,19 +114,77 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 	// Generate test server and client if flag is set
 	if generateTestServer {
-		// Generate test_server.py
-		testServerCode := generateTestServerPy(idl, structMap, enumMap, interfaceMap, namespaceMap, outputDir)
-		testServerPath := filepath.Join(outputDir, "test_server.py")
+		if err := p.generateTestFiles(namespaceMap, structMap, enumMap, paths, fs); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// generateNamespaceFiles emits types.py, server.py, and client.py per namespace
+func (p *PythonClientServer) generateNamespaceFiles(namespaceMap map[string]*NamespaceTypes, paths PythonNamespacePaths, fs *flag.FlagSet) error {
+	namespaces := CollectNamespaces(namespaceMap)
+
+	for _, ns := range namespaces {
+		nsTypes := namespaceMap[ns]
+		if nsTypes == nil {
+			continue
+		}
+
+		// Ensure namespace directory exists
+		if _, err := paths.EnsureNamespaceDir(ns); err != nil {
+			return fmt.Errorf("failed to ensure namespace dir for %q: %w", ns, err)
+		}
+
+		// Generate server.py for this namespace
+		serverCode := generateServerPyForNamespace(nsTypes)
+		serverPath := paths.ResolveOutputPath(ns, "server.py")
+		if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
+			return fmt.Errorf("failed to write server.py in namespace %q: %w", ns, err)
+		}
+		PrintFileCreated(serverPath, fs)
+
+		// Generate client.py for this namespace
+		clientCode := generateClientPyForNamespace(nsTypes)
+		clientPath := paths.ResolveOutputPath(ns, "client.py")
+		if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
+			return fmt.Errorf("failed to write client.py in namespace %q: %w", ns, err)
+		}
+		PrintFileCreated(clientPath, fs)
+	}
+
+	return nil
+}
+
+// generateTestFiles emits test_server.py and test_client.py per namespace
+func (p *PythonClientServer) generateTestFiles(namespaceMap map[string]*NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, paths PythonNamespacePaths, fs *flag.FlagSet) error {
+	namespaces := CollectNamespaces(namespaceMap)
+
+	for _, ns := range namespaces {
+		nsTypes := namespaceMap[ns]
+		if nsTypes == nil {
+			continue
+		}
+
+		// Ensure namespace directory exists
+		if _, err := paths.EnsureNamespaceDir(ns); err != nil {
+			return fmt.Errorf("failed to ensure namespace dir for %q: %w", ns, err)
+		}
+
+		// Generate test_server.py for this namespace
+		testServerCode := generateTestServerPyForNamespace(nsTypes, structMap, enumMap)
+		testServerPath := paths.ResolveOutputPath(ns, "test_server.py")
 		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
-			return fmt.Errorf("failed to write test_server.py: %w", err)
+			return fmt.Errorf("failed to write test_server.py in namespace %q: %w", ns, err)
 		}
 		PrintFileCreated(testServerPath, fs)
 
-		// Generate test_client.py
-		testClientCode := generateTestClientPy(idl, structMap, enumMap, interfaceMap, namespaceMap, outputDir)
-		testClientPath := filepath.Join(outputDir, "test_client.py")
+		// Generate test_client.py for this namespace
+		testClientCode := generateTestClientPyForNamespace(nsTypes, structMap, enumMap)
+		testClientPath := paths.ResolveOutputPath(ns, "test_client.py")
 		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
-			return fmt.Errorf("failed to write test_client.py: %w", err)
+			return fmt.Errorf("failed to write test_client.py in namespace %q: %w", ns, err)
 		}
 		PrintFileCreated(testClientPath, fs)
 	}
@@ -170,8 +213,8 @@ func writeIDLJSON(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 	return nil
 }
 
-// generateServerPy generates the server.py file with abstract service classes only
-func generateServerPy(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string]*parser.Enum, _ map[string]*parser.Interface, _ map[string]*NamespaceTypes, _outputDir string, _ string) string {
+// generateServerPyForNamespace generates server.py for a specific namespace
+func generateServerPyForNamespace(nsTypes *NamespaceTypes) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Generated by pulserpc - do not edit\n\n")
@@ -181,15 +224,16 @@ func generateServerPy(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string
 	sb.WriteString("from pulserpc import RPCError\n")
 	sb.WriteString("\n")
 
-	// Generate interface stub classes
-	for _, iface := range idl.Interfaces {
+	// Generate interface stub classes for this namespace only
+	for _, iface := range nsTypes.Interfaces {
 		writeInterfaceStub(&sb, iface)
 	}
 
 	return sb.String()
 }
 
-func generateClientPy(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string]*parser.Enum, _ map[string]*parser.Interface, _ map[string]*NamespaceTypes, _outputDir string) string {
+// generateClientPyForNamespace generates client.py for a specific namespace
+func generateClientPyForNamespace(nsTypes *NamespaceTypes) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Generated by pulserpc - do not edit\n\n")
@@ -201,8 +245,8 @@ func generateClientPy(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string
 	sb.WriteString("# transport = HttpTransport(\"http://localhost:8080\")\n")
 	sb.WriteString("# client = Client(transport)\n")
 
-	// Generate example calls for each interface
-	for _, iface := range idl.Interfaces {
+	// Generate example calls for each interface in this namespace
+	for _, iface := range nsTypes.Interfaces {
 		if len(iface.Methods) > 0 {
 			method := iface.Methods[0]
 			sb.WriteString("#\n")
@@ -477,8 +521,8 @@ func writeInterfaceStub(sb *strings.Builder, iface *parser.Interface) {
 	sb.WriteString("\n")
 }
 
-// generateTestServerPy generates test_server.py with concrete implementations of all interfaces
-func generateTestServerPy(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ map[string]*NamespaceTypes, _ string) string {
+// generateTestServerPyForNamespace generates test_server.py for a specific namespace
+func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Generated by pulserpc - do not edit\n")
@@ -490,8 +534,8 @@ func generateTestServerPy(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("from pulserpc import Server, Contract, RPCError\n\n")
 	sb.WriteString("from server import *\n")
 
-	// Generate implementation classes for each interface
-	for _, iface := range idl.Interfaces {
+	// Generate implementation classes for each interface in this namespace
+	for _, iface := range nsTypes.Interfaces {
 		writeTestInterfaceImpl(&sb, iface, structMap, enumMap)
 	}
 
@@ -552,7 +596,7 @@ func generateTestServerPy(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("    contract = Contract(idl_data)\n\n")
 	sb.WriteString("    # Create Server instance\n")
 	sb.WriteString("    rpc_server = Server(contract)\n")
-	for _, iface := range idl.Interfaces {
+	for _, iface := range nsTypes.Interfaces {
 		implName := iface.Name + "Impl"
 		fmt.Fprintf(&sb, "    rpc_server.add_handler(\"%s\", %s())\n", iface.Name, implName)
 	}
@@ -777,8 +821,8 @@ func writeDefaultTestValue(sb *strings.Builder, t *parser.Type, structMap map[st
 	}
 }
 
-// generateTestClientPy generates test_client.py that exercises all client methods
-func generateTestClientPy(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ map[string]*NamespaceTypes, _ string) string {
+// generateTestClientPyForNamespace generates test_client.py for a specific namespace
+func generateTestClientPyForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Generated by pulserpc - do not edit\n")
@@ -823,8 +867,8 @@ func generateTestClientPy(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("    errors = []\n")
 	sb.WriteString("    \n")
 
-	// Generate test cases for each method
-	for _, iface := range idl.Interfaces {
+	// Generate test cases for each method in this namespace
+	for _, iface := range nsTypes.Interfaces {
 		for _, method := range iface.Methods {
 			writeTestClientCall(&sb, iface, method, "client", structMap, enumMap)
 		}
