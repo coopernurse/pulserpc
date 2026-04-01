@@ -83,7 +83,26 @@ pulserpc [flags] <idl-file>
 
 #### C# Plugin (`csharp-client-server`)
 
-The C# plugin has no plugin-specific flags.
+| Flag | Type | Description |
+|------|------|-------------|
+| `-package` | string | Base namespace for generated C# code (e.g., `MyApp.Lib.Rpc`). When set, generated code uses this as a prefix for cross-namespace imports and runtime references. If not set, uses `PulseRPC` namespace directly (backwards compatible). |
+
+#### Migration and Compatibility Notes
+
+When using the `-package` flag with C# code generation:
+
+- **Output Layout Change**: With `-package` set, generated files are placed in namespace-specific subdirectories (e.g., `Common/`, `Book/`, `User/`) plus a `PulseRPC/` subdirectory for runtime files.
+- **Cross-Namespace Imports**: Generated code uses the base namespace prefix (e.g., `using MyApp.Lib.Rpc.Common;`) for types from other namespaces.
+- **Runtime Imports**: When `-package` is set, runtime imports use the full path (e.g., `using MyApp.Lib.Rpc.PulseRPC;`). When not set, uses `using PulseRPC;` (backwards compatible).
+- **Backwards Compatibility**: Omitting `-package` preserves the original flat-file output behavior and `using PulseRPC;` imports.
+
+#### Troubleshooting
+
+Common issues when using `-package`:
+
+1. **Missing namespace directories**: Ensure the output directory exists and is writable.
+2. **Using statement errors**: Verify the base namespace matches the generated directory structure. For example, `-package MyApp.Lib.Rpc` expects `MyApp/Lib/Rpc/` directories.
+3. **Cross-namespace type resolution**: When referencing types from other namespaces, ensure the namespace is correctly set in your IDL files.
 
 ## Common Usage Examples
 

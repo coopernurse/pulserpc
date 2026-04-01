@@ -40,6 +40,43 @@ mkdir Shared TestServer TestClient
 mv Checkout.cs Client.cs Contract.cs Server.cs PulseRPC/ Shared/
 ```
 
+## Multi-Namespace Support
+
+When generating code with multiple namespaces (e.g., `common`, `book`, `user`), use the `-package` flag to set a base namespace prefix:
+
+```bash
+pulserpc -plugin csharp-client-server -dir ./output -package MyApp.Lib.Rpc common.pulse book.pulse user.pulse
+```
+
+This creates the following output structure:
+
+```
+output/
+├── Common/
+│   ├── Types.cs
+│   ├── Server.cs
+│   └── Client.cs
+├── Book/
+│   ├── Types.cs
+│   ├── Server.cs
+│   └── Client.cs
+├── User/
+│   ├── Types.cs
+│   ├── Server.cs
+│   └── Client.cs
+├── PulseRPC/
+│   └── (runtime files)
+├── Contract.cs
+├── Server.cs
+└── Client.cs
+```
+
+Generated code will use:
+- Cross-namespace imports: `using MyApp.Lib.Rpc.Common;`
+- Runtime imports: `using MyApp.Lib.Rpc.PulseRPC;`
+
+Without `-package`, the plugin uses the default `PulseRPC` namespace (backwards compatible).
+
 ## 3. Implement the Server (10-15 min)
 
 Create a server project file `TestServer/TestServer.csproj`:
