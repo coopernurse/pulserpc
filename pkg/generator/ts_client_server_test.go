@@ -191,6 +191,39 @@ func TestTsMultiNamespaceFileContent(t *testing.T) {
 	})
 }
 
+func TestTsNamespaceIndex(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := buildMultiNamespaceIDL()
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		// Assert book/index.ts exists
+		assertTsFileExists(t, outputDir, "book/index.ts")
+
+		// Assert it contains the expected re-exports
+		assertTsFileContains(t, outputDir, "book/index.ts", "export * from './types'")
+		assertTsFileContains(t, outputDir, "book/index.ts", "export * from './server'")
+		assertTsFileContains(t, outputDir, "book/index.ts", "export * from './client'")
+
+		// Assert common/index.ts exists and has re-exports too
+		assertTsFileExists(t, outputDir, "common/index.ts")
+		assertTsFileContains(t, outputDir, "common/index.ts", "export * from './types'")
+		assertTsFileContains(t, outputDir, "common/index.ts", "export * from './server'")
+		assertTsFileContains(t, outputDir, "common/index.ts", "export * from './client'")
+	})
+}
+
 func TestTsBackwardsCompatibleSingleNamespace(t *testing.T) {
 	withTempOutputDir(t, func(outputDir string) {
 		// Single namespace IDL with no -dir flag should produce flat output

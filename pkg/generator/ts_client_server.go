@@ -141,6 +141,13 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 				return fmt.Errorf("failed to write %s/client.ts: %w", ns, err)
 			}
 			PrintFileCreated(clientPath, fs)
+
+			// Generate index.ts for this namespace (re-exports from types, server, client)
+			if err := generateNamespaceIndexTs(outputDir, ns); err != nil {
+				return fmt.Errorf("failed to write %s/index.ts: %w", ns, err)
+			}
+			indexPath := filepath.Join(nsDir, "index.ts")
+			PrintFileCreated(indexPath, fs)
 		}
 	} else {
 		// Backwards-compatible flat output: generate single types.ts, server.ts, client.ts
@@ -579,6 +586,18 @@ func generateClientTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string
 	sb.WriteString("// makes interfaces available as attributes (e.g., client.CatalogService)\n")
 
 	return sb.String()
+}
+
+// generateNamespaceIndexTs writes an index.ts file to the namespace subdirectory
+// that re-exports from types.ts, server.ts, and client.ts.
+func generateNamespaceIndexTs(outputDir, namespace string) error {
+	nsDir := tsNamespaceOutputDir(outputDir, namespace)
+	indexContent := "export * from './types';\nexport * from './server';\nexport * from './client';\n"
+	indexPath := filepath.Join(nsDir, "index.ts")
+	if err := os.WriteFile(indexPath, []byte(indexContent), 0644); err != nil {
+		return fmt.Errorf("failed to write %s/index.ts: %w", namespace, err)
+	}
+	return nil
 }
 
 // generateTestServerTs generates test_server.ts with concrete implementations of all interfaces
