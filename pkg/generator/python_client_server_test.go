@@ -738,9 +738,11 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 			}},
 			{Name: "book.Book", Namespace: "book", Fields: []*parser.Field{
 				{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+				{Name: "address", Type: &parser.Type{UserDefined: "common.Response"}},
 			}},
 			{Name: "user.User", Namespace: "user", Fields: []*parser.Field{
 				{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+				{Name: "address", Type: &parser.Type{UserDefined: "common.Response"}},
 			}},
 		},
 		Interfaces: []*parser.Interface{
@@ -752,9 +754,13 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 	p := NewPythonClientServer()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.String("dir", "", "output dir")
+	fs.String("package", "", "base package")
 	p.RegisterFlags(fs)
 	if err := fs.Set("dir", tmpDir); err != nil {
 		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "myapp.lib.rpc"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
 	}
 
 	if err := p.Generate(idl, fs); err != nil {
@@ -762,7 +768,12 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 	}
 
 	// Assert output tree includes pulserpc/, common/, book/, user/
-	expectedDirs := []string{"pulserpc", "common", "book", "user"}
+	expectedDirs := []string{
+		filepath.Join("myapp", "lib", "rpc", "pulserpc"),
+		"common",
+		"book",
+		"user",
+	}
 	for _, dir := range expectedDirs {
 		dirPath := filepath.Join(tmpDir, dir)
 		info, err := os.Stat(dirPath)
@@ -783,10 +794,28 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 		}
 	}
 
+	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	bookTypesContent, err := os.ReadFile(bookTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read book/types.py: %v", err)
+	}
+	if !strings.Contains(string(bookTypesContent), "from myapp.lib.rpc.common import Response") {
+		t.Errorf("book/types.py should import Response from myapp.lib.rpc.common, got:\n%s", string(bookTypesContent))
+	}
+
+	userTypesPath := filepath.Join(tmpDir, "user", "types.py")
+	userTypesContent, err := os.ReadFile(userTypesPath)
+	if err != nil {
+		t.Fatalf("failed to read user/types.py: %v", err)
+	}
+	if !strings.Contains(string(userTypesContent), "from myapp.lib.rpc.common import Response") {
+		t.Errorf("user/types.py should import Response from myapp.lib.rpc.common, got:\n%s", string(userTypesContent))
+	}
+
 	// pulserpc runtime dir should have its files
 	runtimeFiles := []string{"__init__.py", "rpc.py", "server.py", "client.py", "transport.py", "types.py"}
 	for _, filename := range runtimeFiles {
-		path := filepath.Join(tmpDir, "pulserpc", filename)
+		path := filepath.Join(tmpDir, "myapp", "lib", "rpc", "pulserpc", filename)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected runtime file %s at %s, missing: %v", filename, path, err)
 		}
