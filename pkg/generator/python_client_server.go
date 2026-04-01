@@ -85,6 +85,12 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// Group types by namespace (used by Pydantic models generation)
 	namespaceMap := GroupTypesByNamespace(idl)
 
+	// Generate __init__.py files for all namespace directories
+	paths := NewPythonNamespacePaths(outputDir, p.packageBase)
+	if err := paths.GenerateAllInitPyFiles(namespaceMap); err != nil {
+		return fmt.Errorf("failed to generate __init__.py files: %w", err)
+	}
+
 	// Marshal IDL to JSON for embedding in server code
 	idlJSON, err := json.MarshalIndent(idl, "", "  ")
 	if err != nil {

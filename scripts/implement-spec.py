@@ -61,7 +61,7 @@ def get_changed_files():
                     files.append(path)
     return files
 
-def stage_and_commit(step, spec_file):
+def stage_and_commit(step, spec_path_for_commit):
     files_to_add = get_changed_files()
 
     if not files_to_add:
@@ -70,7 +70,7 @@ def stage_and_commit(step, spec_file):
 
     subprocess.run(['git', 'add'] + files_to_add, check=True)
     
-    commit_msg = f"implemented step {step} in {spec_file}"
+    commit_msg = f"implemented step {step} in {spec_path_for_commit}"
     subprocess.run(['git', 'commit', '-m', commit_msg], check=True)
 
 def run_opencode(spec_file, step, model, repo_root):
@@ -99,6 +99,7 @@ def main():
         text=True,
         check=True,
     ).stdout.strip()
+    spec_file_rel = os.path.relpath(spec_file, repo_root)
 
     start_step = get_start_step(spec_file)
 
@@ -118,7 +119,7 @@ def main():
             sys.exit(ret)
         
         print(f"Committing step {step}...")
-        stage_and_commit(step, spec_file)
+        stage_and_commit(step, spec_file_rel)
         update_last_completed_step(spec_file, step)
         print(f"Step {step} complete")
 
