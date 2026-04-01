@@ -5,6 +5,103 @@ layout: default
 
 # Java Reference
 
+## Package Configuration
+
+The `-package` flag specifies the base Java package for generated code. With multi-namespace support, namespaces become sub-packages under this base.
+
+### Package Structure
+
+When using `-package com.example.myapp` with namespace `checkout`:
+
+| Generated File | Package Declaration |
+|----------------|---------------------|
+| `src/main/java/com/example/myapp/checkout/Checkout.java` | `package com.example.myapp.checkout;` |
+| `src/main/java/com/example/myapp/checkout/CheckoutService.java` | `package com.example.myapp.checkout;` |
+| `src/main/java/com/example/myapp/checkout/CheckoutClient.java` | `package com.example.myapp.checkout;` |
+| `src/main/java/pulserpc/RPCError.java` | `package pulserpc;` |
+
+**Key points:**
+- Namespace packages are fully-qualified: `{package}.{namespace}`
+- Runtime always lives in `pulserpc` package (not qualified by `-package`)
+- Directory structure mirrors package structure
+
+### Multi-Namespace Projects
+
+For projects with multiple namespaces (e.g., `common.pulse`, `book.pulse`, `user.pulse`):
+
+```
+src/main/java/
+├── pulserpc/                          # Runtime (package pulserpc)
+│   ├── RPCError.java
+│   ├── Client.java
+│   └── Server.java
+├── com/example/myapp/common/          # common namespace (package com.example.myapp.common)
+│   ├── CommonTypes.java
+│   └── CommonService.java
+├── com/example/myapp/book/            # book namespace (package com.example.myapp.book)
+│   ├── Book.java
+│   └── BookService.java
+└── com/example/myapp/user/            # user namespace (package com.example.myapp.user)
+    ├── User.java
+    └── UserService.java
+```
+
+Cross-namespace imports are fully-qualified:
+```java
+import com.example.myapp.common.CommonTypes;
+import com.example.myapp.book.BookService;
+```
+
+Runtime imports use simple package:
+```java
+import pulserpc.RPCError;
+import pulserpc.*;
+```
+
+### Maven Configuration
+
+Add generated sources to your `pom.xml`:
+
+```xml
+<build>
+    <sourceDirectory>${project.basedir}/src/main/java</sourceDirectory>
+    <plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.11.0</version>
+            <configuration>
+                <source>11</source>
+                <target>11</target>
+            </configuration>
+        </plugin>
+    </plugins>
+</build>
+```
+
+### Gradle Configuration
+
+```groovy
+sourceSets {
+    main {
+        java {
+            srcDirs += 'src/main/java'
+        }
+    }
+}
+```
+
+### IDE Configuration
+
+**IntelliJ IDEA:**
+1. Mark `src/main/java` as a source root
+2. The package structure will auto-resolve from directory structure
+3. Right-click project → Mark Directory as → Sources Root
+
+**Eclipse:**
+1. Project → Properties → Java Build Path → Source tab
+2. Add `src/main/java` to source folders
+
 ## Type Mappings
 
 | IDL Type | Java Type | Example |

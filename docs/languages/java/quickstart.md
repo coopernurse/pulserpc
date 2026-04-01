@@ -24,12 +24,12 @@ Create `checkout.pulse` with your service definition:
 Generate the Java code from your IDL:
 
 ```bash
-pulserpc -plugin java-client-server -package com.example.myapp checkout.pulse
+pulserpc -plugin java-client-server -dir src/main/java -package com.example.myapp checkout.pulse
 ```
 
 This creates:
-- `src/main/java/com/example/myapp/` - Type definitions and Server/Client frameworks
-- `src/main/java/com/bitmechanic/pulserpc/` - Runtime library
+- `src/main/java/com/example/myapp/checkout/` - Type definitions and Server/Client frameworks (package `com.example.myapp.checkout`)
+- `src/main/java/pulserpc/` - Runtime library (package `pulserpc`)
 
 The IDL is embedded directly in `Server.java` for the `pulserpc-idl` RPC method.
 
