@@ -379,7 +379,7 @@ func TestPythonGeneratorInitPyWithPackageBase(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	initPath := filepath.Join(tmpDir, "__init__.py")
+	initPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "__init__.py")
 	assertFileExists(t, initPath)
 	assertFileContains(t, initPath, "myapp.lib.rpc.pulserpc")
 }
@@ -648,12 +648,12 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Assert output tree includes pulserpc/, common/, book/, user/
+	// Assert output tree includes myapp/lib/rpc/pulserpc/, myapp/lib/rpc/common/, etc.
 	expectedDirs := []string{
 		filepath.Join("myapp", "lib", "rpc", "pulserpc"),
-		"common",
-		"book",
-		"user",
+		filepath.Join("myapp", "lib", "rpc", "common"),
+		filepath.Join("myapp", "lib", "rpc", "book"),
+		filepath.Join("myapp", "lib", "rpc", "user"),
 	}
 	for _, dir := range expectedDirs {
 		dirPath := filepath.Join(tmpDir, dir)
@@ -668,14 +668,14 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 	// Each namespace dir should have types.py, server.py, client.py, __init__.py
 	for _, ns := range []string{"common", "book", "user"} {
 		for _, filename := range []string{"types.py", "server.py", "client.py", "__init__.py"} {
-			path := filepath.Join(tmpDir, ns, filename)
+			path := filepath.Join(tmpDir, "myapp", "lib", "rpc", ns, filename)
 			if _, err := os.Stat(path); err != nil {
 				t.Errorf("expected %s in %s namespace at %s, missing: %v", filename, ns, path, err)
 			}
 		}
 	}
 
-	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	bookTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "book", "types.py")
 	bookTypesContent, err := os.ReadFile(bookTypesPath)
 	if err != nil {
 		t.Fatalf("failed to read book/types.py: %v", err)
@@ -684,7 +684,7 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 		t.Errorf("book/types.py should import Response from myapp.lib.rpc.common, got:\n%s", string(bookTypesContent))
 	}
 
-	userTypesPath := filepath.Join(tmpDir, "user", "types.py")
+	userTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "user", "types.py")
 	userTypesContent, err := os.ReadFile(userTypesPath)
 	if err != nil {
 		t.Fatalf("failed to read user/types.py: %v", err)
@@ -749,7 +749,7 @@ func TestPythonGeneratorCrossNamespaceImports(t *testing.T) {
 	}
 
 	// Verify book/types.py imports from myapp.lib.rpc.common
-	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	bookTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "book", "types.py")
 	content, err := os.ReadFile(bookTypesPath)
 	if err != nil {
 		t.Fatalf("failed to read book/types.py: %v", err)
@@ -760,7 +760,7 @@ func TestPythonGeneratorCrossNamespaceImports(t *testing.T) {
 	}
 
 	// Verify user/types.py imports from myapp.lib.rpc.common
-	userTypesPath := filepath.Join(tmpDir, "user", "types.py")
+	userTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "user", "types.py")
 	content, err = os.ReadFile(userTypesPath)
 	if err != nil {
 		t.Fatalf("failed to read user/types.py: %v", err)
@@ -771,7 +771,7 @@ func TestPythonGeneratorCrossNamespaceImports(t *testing.T) {
 	}
 
 	// Verify common/types.py does NOT have cross-namespace imports (it has none)
-	commonTypesPath := filepath.Join(tmpDir, "common", "types.py")
+	commonTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "common", "types.py")
 	content, err = os.ReadFile(commonTypesPath)
 	if err != nil {
 		t.Fatalf("failed to read common/types.py: %v", err)
@@ -869,7 +869,7 @@ func TestPythonGeneratorCrossNamespaceImportsNestedTypes(t *testing.T) {
 	}
 
 	// Verify book/types.py imports Item from common even though it's inside an array
-	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	bookTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "book", "types.py")
 	content, err := os.ReadFile(bookTypesPath)
 	if err != nil {
 		t.Fatalf("failed to read book/types.py: %v", err)

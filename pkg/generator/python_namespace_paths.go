@@ -15,13 +15,19 @@ type PythonNamespacePaths struct {
 }
 
 // ResolveNamespaceDir returns the output directory path for a given namespace.
-// For the empty/default namespace, returns BaseDir directly.
-// For named namespaces, returns {BaseDir}/{namespace}/
+// When PackageBase is set, namespaces are placed under {BaseDir}/{PackageBase}/{namespace}/
+// For the empty/default namespace with PackageBase, returns {BaseDir}/{PackageBase}/
+// For named namespaces without PackageBase, returns {BaseDir}/{namespace}/
 func (p PythonNamespacePaths) ResolveNamespaceDir(namespace string) string {
-	if namespace == "" {
-		return p.BaseDir
+	base := p.BaseDir
+	if p.PackageBase != "" {
+		pkgParts := splitByDot(p.PackageBase)
+		base = filepath.Join(append([]string{p.BaseDir}, pkgParts...)...)
 	}
-	return filepath.Join(p.BaseDir, namespace)
+	if namespace == "" {
+		return base
+	}
+	return filepath.Join(base, namespace)
 }
 
 // ResolveRuntimeDir returns the output directory path for the pulserpc runtime.

@@ -51,7 +51,7 @@ func TestCSharpNamespacePaths_ResolveNamespaceDir(t *testing.T) {
 			baseDir:     "/output",
 			packageBase: "MyApp.Lib.Rpc",
 			namespace:   "book",
-			expected:    "/output/Book",
+			expected:    "/output/MyApp/Lib/Rpc/Book",
 		},
 	}
 
@@ -414,9 +414,9 @@ func TestCSharpNamespacePaths_EnsureAllNamespaceDirs(t *testing.T) {
 	}
 
 	expectedDirs := map[string]string{
-		"common": filepath.Join(tmpDir, "Common"),
-		"book":   filepath.Join(tmpDir, "Book"),
-		"user":   filepath.Join(tmpDir, "User"),
+		"common": filepath.Join(tmpDir, "MyApp/Lib/Rpc/Common"),
+		"book":   filepath.Join(tmpDir, "MyApp/Lib/Rpc/Book"),
+		"user":   filepath.Join(tmpDir, "MyApp/Lib/Rpc/User"),
 	}
 
 	for ns, expectedPath := range expectedDirs {
@@ -517,15 +517,15 @@ func TestCSharpMultiFileEndToEnd(t *testing.T) {
 		t.Fatalf("Generate() failed: %v", err)
 	}
 
-	assertCSharpFileExists(t, tmpDir, "Common/Types.cs")
-	assertCSharpFileExists(t, tmpDir, "Common/Server.cs")
-	assertCSharpFileExists(t, tmpDir, "Common/Client.cs")
-	assertCSharpFileExists(t, tmpDir, "Book/Types.cs")
-	assertCSharpFileExists(t, tmpDir, "Book/Server.cs")
-	assertCSharpFileExists(t, tmpDir, "Book/Client.cs")
-	assertCSharpFileExists(t, tmpDir, "User/Types.cs")
-	assertCSharpFileExists(t, tmpDir, "User/Server.cs")
-	assertCSharpFileExists(t, tmpDir, "User/Client.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/Common/Types.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/Common/Server.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/Common/Client.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/Book/Types.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/Book/Server.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/Book/Client.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/User/Types.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/User/Server.cs")
+	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/User/Client.cs")
 
 	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/PulseRPC/Client.cs")
 	assertCSharpFileExists(t, tmpDir, "MyApp/Lib/Rpc/PulseRPC/Server.cs")
@@ -533,10 +533,10 @@ func TestCSharpMultiFileEndToEnd(t *testing.T) {
 
 	assertCSharpDirExists(t, tmpDir, "MyApp/Lib/Rpc/PulseRPC")
 
-	assertCSharpFileContains(t, tmpDir, "Book/Types.cs", "using MyApp.Lib.Rpc.Common;")
-	assertCSharpFileContains(t, tmpDir, "User/Types.cs", "using MyApp.Lib.Rpc.Common;")
-	assertCSharpFileContains(t, tmpDir, "Book/Server.cs", "using MyApp.Lib.Rpc.PulseRPC;")
-	assertCSharpFileContains(t, tmpDir, "User/Server.cs", "using MyApp.Lib.Rpc.PulseRPC;")
+	assertCSharpFileContains(t, tmpDir, "MyApp/Lib/Rpc/Book/Types.cs", "using MyApp.Lib.Rpc.Common;")
+	assertCSharpFileContains(t, tmpDir, "MyApp/Lib/Rpc/User/Types.cs", "using MyApp.Lib.Rpc.Common;")
+	assertCSharpFileContains(t, tmpDir, "MyApp/Lib/Rpc/Book/Server.cs", "using MyApp.Lib.Rpc.PulseRPC;")
+	assertCSharpFileContains(t, tmpDir, "MyApp/Lib/Rpc/User/Server.cs", "using MyApp.Lib.Rpc.PulseRPC;")
 }
 
 func assertCSharpFileExists(t *testing.T, dir, relPath string) {

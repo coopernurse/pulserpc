@@ -20,10 +20,15 @@ func NewCSharpNamespacePaths(baseDir, packageBase string) CSharpNamespacePaths {
 }
 
 func (p CSharpNamespacePaths) ResolveNamespaceDir(namespace string) string {
-	if namespace == "" {
-		return p.BaseDir
+	base := p.BaseDir
+	if p.PackageBase != "" {
+		parts := splitByDot(p.PackageBase)
+		base = filepath.Join(append([]string{p.BaseDir}, parts...)...)
 	}
-	return filepath.Join(p.BaseDir, NamespaceToPascalCase(namespace))
+	if namespace == "" {
+		return base
+	}
+	return filepath.Join(base, NamespaceToPascalCase(namespace))
 }
 
 func (p CSharpNamespacePaths) ResolveRuntimeDir() string {

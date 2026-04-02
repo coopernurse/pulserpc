@@ -37,6 +37,27 @@ func TestPythonNamespacePathsResolveNamespaceDir(t *testing.T) {
 			packageBase: "",
 			expected:    "/output/inc",
 		},
+		{
+			name:        "named namespace with simple package base",
+			baseDir:     "/output",
+			namespace:   "common",
+			packageBase: "myapp",
+			expected:    "/output/myapp/common",
+		},
+		{
+			name:        "named namespace with nested package base",
+			baseDir:     "/output",
+			namespace:   "common",
+			packageBase: "myapp.lib.rpc",
+			expected:    "/output/myapp/lib/rpc/common",
+		},
+		{
+			name:        "empty namespace with package base",
+			baseDir:     "/output",
+			namespace:   "",
+			packageBase: "myapp.lib.rpc",
+			expected:    "/output/myapp/lib/rpc",
+		},
 	}
 
 	for _, tt := range tests {
@@ -121,6 +142,22 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 			filename:    "server.py",
 			expected:    "/output/book/server.py",
 		},
+		{
+			name:        "types.py in common namespace with simple package",
+			baseDir:     "/output",
+			packageBase: "myapp",
+			namespace:   "common",
+			filename:    "types.py",
+			expected:    "/output/myapp/common/types.py",
+		},
+		{
+			name:        "types.py in book namespace with nested package",
+			baseDir:     "/output",
+			packageBase: "myapp.lib.rpc",
+			namespace:   "book",
+			filename:    "types.py",
+			expected:    "/output/myapp/lib/rpc/book/types.py",
+		},
 	}
 
 	for _, tt := range tests {
@@ -138,38 +175,59 @@ func TestPythonNamespacePathsEnsureNamespaceDir(t *testing.T) {
 	tmpDir := newPythonTestTempDir(t, "pulserpc-ns-paths-")
 
 	tests := []struct {
-		name      string
-		namespace string
+		name        string
+		namespace   string
+		packageBase string
+		expected    string
 	}{
 		{
-			name:      "empty namespace",
-			namespace: "",
+			name:        "empty namespace without package",
+			namespace:   "",
+			packageBase: "",
+			expected:    tmpDir,
 		},
 		{
-			name:      "named namespace",
-			namespace: "common",
+			name:        "named namespace without package",
+			namespace:   "common",
+			packageBase: "",
+			expected:    filepath.Join(tmpDir, "common"),
 		},
 		{
-			name:      "nested namespace",
-			namespace: "inc",
+			name:        "nested namespace without package",
+			namespace:   "inc",
+			packageBase: "",
+			expected:    filepath.Join(tmpDir, "inc"),
+		},
+		{
+			name:        "named namespace with simple package",
+			namespace:   "common",
+			packageBase: "myapp",
+			expected:    filepath.Join(tmpDir, "myapp", "common"),
+		},
+		{
+			name:        "named namespace with nested package",
+			namespace:   "book",
+			packageBase: "myapp.lib.rpc",
+			expected:    filepath.Join(tmpDir, "myapp", "lib", "rpc", "book"),
+		},
+		{
+			name:        "empty namespace with package",
+			namespace:   "",
+			packageBase: "myapp.lib.rpc",
+			expected:    filepath.Join(tmpDir, "myapp", "lib", "rpc"),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			paths := NewPythonNamespacePaths(tmpDir, "")
+			paths := NewPythonNamespacePaths(tmpDir, tt.packageBase)
 			dir, err := paths.EnsureNamespaceDir(tt.namespace)
 			if err != nil {
 				t.Fatalf("EnsureNamespaceDir(%q) failed: %v", tt.namespace, err)
 			}
 
 			assertDirExists(t, dir)
-
-			expected := filepath.Join(tmpDir, tt.namespace)
-			if tt.namespace == "" {
-				expected = tmpDir
-			}
-			assertPathEqual(t, dir, expected)
+			assertPathEqual(t, dir, tt.expected)
 		})
 	}
 }
@@ -335,7 +393,7 @@ func TestPythonNamespacePathsWithNestedOutputDirs(t *testing.T) {
 
 	// Verify namespace dir resolution
 	got := paths.ResolveNamespaceDir("common")
-	expected := filepath.Join(nestedDir, "common")
+	expected := filepath.Join(nestedDir, "myapp", "lib", "rpc", "common")
 	assertPathEqual(t, got, expected)
 
 	// Verify runtime dir resolution
@@ -353,7 +411,7 @@ func TestPythonNamespacePathsWithNestedOutputDirs(t *testing.T) {
 	}
 
 	// Verify they exist
-	if _, err := os.Stat(filepath.Join(nestedDir, "common")); err != nil {
+	if _, err := os.Stat(filepath.Join(nestedDir, "myapp", "lib", "rpc", "common")); err != nil {
 		t.Fatalf("common directory not created: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(nestedDir, "myapp", "lib", "rpc", "pulserpc")); err != nil {
@@ -390,9 +448,9 @@ func TestPythonNamespacePathsMultipleNamespaces(t *testing.T) {
 
 	// Verify each namespace has expected paths
 	expectedPaths := map[string]string{
-		"common": filepath.Join(tmpDir, "common"),
-		"book":   filepath.Join(tmpDir, "book"),
-		"user":   filepath.Join(tmpDir, "user"),
+		"common": filepath.Join(tmpDir, "myapp", "rpc", "common"),
+		"book":   filepath.Join(tmpDir, "myapp", "rpc", "book"),
+		"user":   filepath.Join(tmpDir, "myapp", "rpc", "user"),
 	}
 
 	for ns, expectedPath := range expectedPaths {

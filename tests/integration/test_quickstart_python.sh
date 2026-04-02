@@ -55,6 +55,40 @@ mkdir -p "$OUTPUT_DIR"
 "$PULSERPC" -plugin python-client-server -dir "$OUTPUT_DIR" \
     "$QUICKSTART_DIR/checkout.pulse"
 
+# 1b. Test generation with -package flag
+echo -e "${YELLOW}Testing generation with -package flag...${NC}"
+PKG_OUTPUT_DIR="$OUTPUT_DIR/pkg_test"
+mkdir -p "$PKG_OUTPUT_DIR"
+"$PULSERPC" -plugin python-client-server -dir "$PKG_OUTPUT_DIR" -package "myapp.rpc" \
+    "$QUICKSTART_DIR/checkout.pulse"
+
+# Verify package structure
+if [ ! -d "$PKG_OUTPUT_DIR/myapp/rpc/checkout" ]; then
+    echo -e "${RED}ERROR: Expected namespace at myapp/rpc/checkout/, found:${NC}"
+    ls -la "$PKG_OUTPUT_DIR"
+    ls -la "$PKG_OUTPUT_DIR/myapp" 2>/dev/null || echo "myapp dir missing"
+    ls -la "$PKG_OUTPUT_DIR/myapp/rpc" 2>/dev/null || echo "myapp/rpc dir missing"
+    exit 1
+fi
+echo -e "${GREEN}✓ Package flag creates correct directory structure${NC}"
+
+# Verify runtime is in correct location
+if [ ! -d "$PKG_OUTPUT_DIR/myapp/rpc/pulserpc" ]; then
+    echo -e "${RED}ERROR: Expected runtime at myapp/rpc/pulserpc/${NC}"
+    ls -la "$PKG_OUTPUT_DIR/myapp/rpc" 2>/dev/null || echo "myapp/rpc dir missing"
+    exit 1
+fi
+echo -e "${GREEN}✓ Runtime in correct location with package flag${NC}"
+
+# Verify namespace files are in correct location
+for f in "types.py" "server.py" "client.py" "__init__.py"; do
+    if [ ! -f "$PKG_OUTPUT_DIR/myapp/rpc/checkout/$f" ]; then
+        echo -e "${RED}ERROR: Expected $f at myapp/rpc/checkout/$f${NC}"
+        exit 1
+    fi
+done
+echo -e "${GREEN}✓ Namespace files in correct location with package flag${NC}"
+
 # 2. Copy quickstart implementations
 echo -e "${YELLOW}Copying quickstart implementations...${NC}"
 cp "$QUICKSTART_DIR/python/my_server.py" "$OUTPUT_DIR/my_server.py"
