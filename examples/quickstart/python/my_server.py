@@ -3,7 +3,7 @@ import os
 import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
-from server import CatalogService, CartService, OrderService
+from checkout.server import CatalogService, CartService, OrderService
 from pulserpc import Server, Contract, RPCError
 import random
 import time

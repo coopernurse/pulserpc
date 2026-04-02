@@ -78,7 +78,16 @@ if ! "$BINARY_PATH" -plugin python-client-server -generate-test-files -dir "$OUT
 fi
 
 # Verify generated files exist
-if [ ! -f "$OUTPUT_DIR/test_server.py" ] || [ ! -f "$OUTPUT_DIR/test_client.py" ]; then
+# Check for test files in namespace subdirectories (since multiple namespaces may be generated)
+HAS_TEST_FILES=false
+for dir in "$OUTPUT_DIR"/*/; do
+    if [ -f "${dir}test_server.py" ] && [ -f "${dir}test_client.py" ]; then
+        HAS_TEST_FILES=true
+        break
+    fi
+done
+
+if [ "$HAS_TEST_FILES" = false ]; then
     echo -e "${RED}ERROR: Test files not generated${NC}"
     exit 1
 fi
@@ -88,8 +97,18 @@ echo ""
 
 # Step 4: Start test server in background
 echo -e "${YELLOW}Starting test server on port $SERVER_PORT...${NC}"
+# Find the namespace subdirectory containing test files
+TEST_DIR="$OUTPUT_DIR"
+for dir in "$OUTPUT_DIR"/*/; do
+    if [ -f "${dir}test_server.py" ] && [ -f "${dir}test_client.py" ]; then
+        TEST_DIR="${dir}"
+        break
+    fi
+done
+# Extract namespace name from path (e.g., "conform" from "/tmp/.../conform/")
+NAMESPACE_NAME=$(basename "$TEST_DIR")
 cd "$OUTPUT_DIR"
-python3 test_server.py > server.log 2>&1 &
+PYTHONPATH="$OUTPUT_DIR:$PYTHONPATH" python3 -m ${NAMESPACE_NAME}.test_server > server.log 2>&1 &
 SERVER_PID=$!
 
 # Step 5: Wait for server to be ready
@@ -115,7 +134,7 @@ echo ""
 
 # Step 6: Run test client
 echo -e "${YELLOW}Running test client...${NC}"
-if python3 test_client.py; then
+if PYTHONPATH="$OUTPUT_DIR:$PYTHONPATH" python3 -m ${NAMESPACE_NAME}.test_client; then
     echo ""
     echo -e "${GREEN}Test client passed${NC}"
 else

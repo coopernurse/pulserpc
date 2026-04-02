@@ -866,7 +866,7 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 	sb.WriteString("from http.server import HTTPServer, BaseHTTPRequestHandler\n")
 	sb.WriteString("from typing import Any\n")
 	fmt.Fprintf(&sb, "from %s import Server, Contract, RPCError\n\n", runtimeImport)
-	sb.WriteString("from server import *\n")
+	sb.WriteString("from .server import *\n")
 
 	// Emit cross-namespace imports for types.py
 	crossRefs := collectCrossNamespaceRefs(nsTypes, currentNS)
