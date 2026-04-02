@@ -64,9 +64,7 @@ cp "$QUICKSTART_DIR/java/MyServer.java" "$OUTPUT_DIR/src/main/java/com/example/m
 cp "$QUICKSTART_DIR/java/MyClient.java" "$OUTPUT_DIR/src/main/java/com/example/myapp/"
 cp "$QUICKSTART_DIR/java/pom.xml" "$OUTPUT_DIR/"
 
-# Add generated pulserpc runtime to build (it uses 'pulserpc' package)
-sed -i.bak 's|</plugins>|            <plugin>\n                <groupId>org.codehaus.mojo</groupId>\n                <artifactId>build-helper-maven-plugin</artifactId>\n                <version>3.4.0</version>\n                <executions>\n                    <execution>\n                        <id>add-source</id>\n                        <phase>generate-sources</phase>\n                        <goals>\n                            <goal>add-source</goal>\n                        </goals>\n                        <configuration>\n                            <sources>\n                                <source>pulserpc</source>\n                            </sources>\n                        </configuration>\n                    </execution>\n                </executions>\n            </plugin>\n        </plugins>|' "$OUTPUT_DIR/pom.xml"
-rm -f "$OUTPUT_DIR/pom.xml.bak"
+
 
 # Update server to use test port instead of default 8080
 sed -i.bak "s/8080/$SERVER_PORT/g" "$OUTPUT_DIR/src/main/java/com/example/myapp/MyServer.java"
@@ -76,11 +74,7 @@ rm -f "$OUTPUT_DIR/src/main/java/com/example/myapp/MyServer.java.bak"
 sed -i.bak "s|http://localhost:8080|$SERVER_URL|g" "$OUTPUT_DIR/src/main/java/com/example/myapp/MyClient.java"
 rm -f "$OUTPUT_DIR/src/main/java/com/example/myapp/MyClient.java.bak"
 
-# Fix imports: old package was com.bitmechanic.pulserpc, new is pulserpc
-sed -i.bak 's|import com.bitmechanic.pulserpc.\*;|import pulserpc.*;|' "$OUTPUT_DIR/src/main/java/com/example/myapp/MyClient.java"
-sed -i.bak 's|import com.bitmechanic.pulserpc.\*;|import pulserpc.*;|' "$OUTPUT_DIR/src/main/java/com/example/myapp/MyServer.java"
-rm -f "$OUTPUT_DIR/src/main/java/com/example/myapp/MyClient.java.bak"
-rm -f "$OUTPUT_DIR/src/main/java/com/example/myapp/MyServer.java.bak"
+
 
 # 3. Build and start server
 cd "$OUTPUT_DIR"

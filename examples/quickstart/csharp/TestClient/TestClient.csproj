@@ -12,7 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="../Shared/Checkout.cs" />
+    <Compile Include="../Shared/Checkout/Checkout.cs" />
     <Compile Include="../Shared/Contract.cs" />
     <Compile Include="../Shared/Client.cs" />
     <Compile Include="../Shared/PulseRPC/*.cs" />

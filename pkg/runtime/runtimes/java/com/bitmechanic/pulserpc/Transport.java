@@ -1,4 +1,4 @@
-package pulserpc;
+package com.bitmechanic.pulserpc;
 
 /**
  * Transport abstraction for making RPC calls

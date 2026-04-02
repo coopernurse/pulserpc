@@ -71,11 +71,6 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		interfaceMap[i.Name] = i
 	}
 
-	// Copy runtime library files
-	if err := p.copyRuntimeFiles(outputDir, isSilent()); err != nil {
-		return fmt.Errorf("failed to copy runtime files: %w", err)
-	}
-
 	// Group types by namespace
 	namespaceMap := GroupTypesByNamespace(idl)
 
@@ -209,12 +204,6 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 
 	return nil
-}
-
-// copyRuntimeFiles copies the C# runtime library files to the output directory
-// Uses embedded runtime files from the binary
-func (p *CSharpClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
-	return runtime.CopyRuntimeFiles("csharp", outputDir, silent)
 }
 
 // generateNamespaceCs generates a C# file for a single namespace

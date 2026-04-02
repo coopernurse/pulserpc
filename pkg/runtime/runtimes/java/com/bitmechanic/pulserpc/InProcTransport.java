@@ -1,4 +1,4 @@
-package pulserpc;
+package com.bitmechanic.pulserpc;
 
 /**
  * In-process transport for testing (directly calls Server)

@@ -1,4 +1,4 @@
-package pulserpc;
+package com.bitmechanic.pulserpc;
 
 import java.io.IOException;
 import java.net.URI;

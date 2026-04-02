@@ -136,7 +136,7 @@ func TestJavaRuntimeLocationValidation(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	runtimeDir := filepath.Join(tmpDir, "pulserpc")
+	runtimeDir := filepath.Join(tmpDir, "src/main/java/com/bitmechanic/pulserpc")
 	if _, err := os.Stat(runtimeDir); err != nil {
 		t.Fatalf("runtime should be at %s, missing: %v", runtimeDir, err)
 	}
@@ -282,7 +282,7 @@ func TestJavaTestsAreDeterministic(t *testing.T) {
 				t.Fatalf("User.java should contain 'import com.test.ns.book.Book;' but got:\n%s", string(userContent))
 			}
 
-			runtimeDir := filepath.Join(tmpDir, "pulserpc")
+			runtimeDir := filepath.Join(tmpDir, "src/main/java/com/bitmechanic/pulserpc")
 			if _, err := os.Stat(runtimeDir); err != nil {
 				t.Fatalf("runtime should be at %s, missing: %v", runtimeDir, err)
 			}

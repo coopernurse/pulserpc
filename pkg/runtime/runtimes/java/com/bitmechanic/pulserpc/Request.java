@@ -1,4 +1,4 @@
-package pulserpc;
+package com.bitmechanic.pulserpc;
 
 import java.util.List;
 import java.util.Map;

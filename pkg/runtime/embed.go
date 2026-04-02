@@ -29,7 +29,7 @@ var csharpRuntimeFiles embed.FS
 
 // Embed all Java runtime files
 //
-//go:embed all:runtimes/java/pulserpc
+//go:embed all:runtimes/java/com/bitmechanic/pulserpc
 var javaRuntimeFiles embed.FS
 
 // Embed all Go runtime files
@@ -154,8 +154,10 @@ func CopyRuntimeFilesToPackage(lang string, outputDir string, packageName string
 // This is the directory name where runtime files are placed in the output
 func getRuntimePackageName(lang string) string {
 	switch lang {
-	case "go", "python", "ts", "java":
+	case "go", "python", "ts":
 		return "pulserpc"
+	case "java":
+		return "com/bitmechanic/pulserpc"
 	case "csharp":
 		return "PulseRPC"
 	default:
@@ -167,8 +169,10 @@ func getRuntimePackageName(lang string) string {
 // This is the path used in //go:embed directives and must match the actual directory structure
 func getRuntimeEmbedPath(lang string) string {
 	switch lang {
-	case "go", "python", "ts", "java":
+	case "go", "python", "ts":
 		return fmt.Sprintf("runtimes/%s/pulserpc", lang)
+	case "java":
+		return "runtimes/java/com/bitmechanic/pulserpc"
 	case "csharp":
 		return "runtimes/csharp/PulseRPC"
 	default:

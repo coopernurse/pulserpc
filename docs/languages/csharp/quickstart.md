@@ -96,10 +96,10 @@ Create a server project file `TestServer/TestServer.csproj`:
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="../Shared/Checkout.cs" />
+    <Compile Include="../Shared/Checkout/Checkout.cs" />
     <Compile Include="../Shared/Contract.cs" />
     <Compile Include="../Shared/Server.cs" />
-    <Compile Include="../Shared/pulserpc/*.cs" />
+    <Compile Include="../Shared/PulseRPC/*.cs" />
   </ItemGroup>
 
 </Project>
@@ -135,10 +135,10 @@ Create a client project file `TestClient/TestClient.csproj`:
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="../Shared/Checkout.cs" />
+    <Compile Include="../Shared/Checkout/Checkout.cs" />
     <Compile Include="../Shared/Contract.cs" />
     <Compile Include="../Shared/Client.cs" />
-    <Compile Include="../Shared/pulserpc/*.cs" />
+    <Compile Include="../Shared/PulseRPC/*.cs" />
   </ItemGroup>
 
 </Project>

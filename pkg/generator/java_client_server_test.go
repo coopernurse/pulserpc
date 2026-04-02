@@ -433,8 +433,8 @@ func TestJavaRuntimeInPulserpcDir(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Runtime should be at {dir}/pulserpc/
-	runtimeDir := filepath.Join(tmpDir, "pulserpc")
+	// Runtime should be at {dir}/src/main/java/com/bitmechanic/pulserpc/
+	runtimeDir := filepath.Join(tmpDir, "src/main/java/com/bitmechanic/pulserpc")
 	if _, err := os.Stat(runtimeDir); err != nil {
 		t.Fatalf("expected runtime directory at %s, missing: %v", runtimeDir, err)
 	}
@@ -448,8 +448,8 @@ func TestJavaRuntimeInPulserpcDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read RPCError.java: %v", err)
 	}
-	if !containsString(string(rpcErrorContent), "package pulserpc;") {
-		t.Fatalf("RPCError.java should contain 'package pulserpc;' but got:\n%s", string(rpcErrorContent))
+	if !containsString(string(rpcErrorContent), "package com.bitmechanic.pulserpc;") {
+		t.Fatalf("RPCError.java should contain 'package com.bitmechanic.pulserpc;' but got:\n%s", string(rpcErrorContent))
 	}
 
 	// Runtime should NOT be in namespace directory
@@ -491,8 +491,8 @@ func TestJavaRuntimeLocationWithNestedDirAndPackage(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Runtime should be at {dir}/pulserpc/
-	runtimeDir := filepath.Join(tmpDir, "pulserpc")
+	// Runtime should be at {dir}/src/main/java/com/bitmechanic/pulserpc/
+	runtimeDir := filepath.Join(tmpDir, "src/main/java/com/bitmechanic/pulserpc")
 	if _, err := os.Stat(runtimeDir); err != nil {
 		t.Fatalf("expected runtime directory at %s, missing: %v", runtimeDir, err)
 	}
@@ -502,10 +502,10 @@ func TestJavaRuntimeLocationWithNestedDirAndPackage(t *testing.T) {
 		t.Fatalf("expected RPCError.java at %s, missing: %v", rpcErrorPath, err)
 	}
 
-	// Runtime should NOT be in package hierarchy
-	wrongRuntimeDir := filepath.Join(tmpDir, "src", "main", "java", "org", "company", "services", "pulserpc")
+	// Runtime should NOT be in package hierarchy at old location
+	wrongRuntimeDir := filepath.Join(tmpDir, "pulserpc")
 	if _, err := os.Stat(wrongRuntimeDir); err == nil {
-		t.Fatalf("runtime should NOT be at %s", wrongRuntimeDir)
+		t.Fatalf("runtime should NOT be at old location %s", wrongRuntimeDir)
 	}
 }
 
@@ -805,7 +805,7 @@ func TestJavaMultiFileProjectStructure(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	pulserpcDir := filepath.Join(tmpDir, "pulserpc")
+	pulserpcDir := filepath.Join(tmpDir, "src/main/java/com/bitmechanic/pulserpc")
 	if _, err := os.Stat(pulserpcDir); err != nil {
 		t.Fatalf("expected pulserpc runtime directory at %s, missing: %v", pulserpcDir, err)
 	}
@@ -817,8 +817,8 @@ func TestJavaMultiFileProjectStructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read RPCError.java: %v", err)
 	}
-	if !containsString(string(rpcErrorContent), "package pulserpc;") {
-		t.Fatalf("RPCError.java should contain 'package pulserpc;' but got:\n%s", string(rpcErrorContent))
+	if !containsString(string(rpcErrorContent), "package com.bitmechanic.pulserpc;") {
+		t.Fatalf("RPCError.java should contain 'package com.bitmechanic.pulserpc;' but got:\n%s", string(rpcErrorContent))
 	}
 
 	basePath := filepath.Join(tmpDir, "src", "main", "java")
@@ -847,8 +847,8 @@ func TestJavaMultiFileProjectStructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read BookServiceClient.java: %v", err)
 	}
-	if !containsString(string(bookClientContent), "import pulserpc.*;") {
-		t.Fatalf("BookServiceClient.java should contain 'import pulserpc.*;' but got:\n%s", string(bookClientContent))
+	if !containsString(string(bookClientContent), "import com.bitmechanic.pulserpc.*;") {
+		t.Fatalf("BookServiceClient.java should contain 'import com.bitmechanic.pulserpc.*;' but got:\n%s", string(bookClientContent))
 	}
 
 	userDir := filepath.Join(basePath, "com", "myapp", "rpc", "user")
@@ -875,8 +875,8 @@ func TestJavaMultiFileProjectStructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read UserServiceClient.java: %v", err)
 	}
-	if !containsString(string(userClientContent), "import pulserpc.*;") {
-		t.Fatalf("UserServiceClient.java should contain 'import pulserpc.*;' but got:\n%s", string(userClientContent))
+	if !containsString(string(userClientContent), "import com.bitmechanic.pulserpc.*;") {
+		t.Fatalf("UserServiceClient.java should contain 'import com.bitmechanic.pulserpc.*;' but got:\n%s", string(userClientContent))
 	}
 
 	commonDir := filepath.Join(basePath, "com", "myapp", "rpc", "common")
