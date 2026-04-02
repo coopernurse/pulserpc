@@ -765,14 +765,14 @@ func TestTsPackageFlag(t *testing.T) {
 				t.Fatalf("Generate() failed: %v", err)
 			}
 
-			// Class names should not be prefixed with the package value
-			assertTsFileContains(t, outputDir, "book/server.ts", "export abstract class BookService")
-			assertTsFileContains(t, outputDir, "common/server.ts", "export abstract class CommonService")
+			// Package flag should affect directory structure - files go under {outputDir}/{package}/
+			assertTsFileContains(t, outputDir, "@mycompany/api/book/server.ts", "export abstract class BookService")
+			assertTsFileContains(t, outputDir, "@mycompany/api/common/server.ts", "export abstract class CommonService")
 
 			// Verify package value is not prepended to class names
-			content, err := os.ReadFile(filepath.Join(outputDir, "book/server.ts"))
+			content, err := os.ReadFile(filepath.Join(outputDir, "@mycompany/api/book/server.ts"))
 			if err != nil {
-				t.Fatalf("failed to read book/server.ts: %v", err)
+				t.Fatalf("failed to read @mycompany/api/book/server.ts: %v", err)
 			}
 			if strings.Contains(string(content), "@mycompany/apiBookService") {
 				t.Error("class name should not contain package prefix")

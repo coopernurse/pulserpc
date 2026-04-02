@@ -5,8 +5,62 @@ import (
 	"path/filepath"
 )
 
+// TSNamespacePaths holds the resolved output paths for TypeScript multi-namespace generation
+type TSNamespacePaths struct {
+	BaseDir     string
+	PackageBase string
+}
+
+// NewTSNamespacePaths creates a new TSNamespacePaths instance
+func NewTSNamespacePaths(baseDir, packageBase string) TSNamespacePaths {
+	return TSNamespacePaths{
+		BaseDir:     baseDir,
+		PackageBase: packageBase,
+	}
+}
+
+// ResolveNamespaceDir returns the output directory path for a given namespace.
+// When PackageBase is set, namespaces are placed under {BaseDir}/{PackageBase}/{namespace}/
+// For the empty/default namespace with PackageBase, returns {BaseDir}/{PackageBase}/
+// For named namespaces without PackageBase, returns {BaseDir}/{namespace}/
+func (p TSNamespacePaths) ResolveNamespaceDir(namespace string) string {
+	base := p.BaseDir
+	if p.PackageBase != "" {
+		pkgParts := splitByDot(p.PackageBase)
+		base = filepath.Join(append([]string{p.BaseDir}, pkgParts...)...)
+	}
+	if namespace == "" {
+		return base
+	}
+	return filepath.Join(base, namespace)
+}
+
+// ResolveRuntimeDir returns the output directory path for the pulserpc runtime.
+// When PackageBase is set, returns {BaseDir}/{PackageBase}/pulserpc/
+// When PackageBase is empty, returns {BaseDir}/pulserpc/
+func (p TSNamespacePaths) ResolveRuntimeDir() string {
+	base := p.BaseDir
+	if p.PackageBase != "" {
+		pkgParts := splitByDot(p.PackageBase)
+		base = filepath.Join(append([]string{p.BaseDir}, pkgParts...)...)
+	}
+	return filepath.Join(base, "pulserpc")
+}
+
+// EnsureNamespaceDir creates the output directory for a namespace if it doesn't exist.
+func (p TSNamespacePaths) EnsureNamespaceDir(namespace string) error {
+	dir := p.ResolveNamespaceDir(namespace)
+	return os.MkdirAll(dir, 0755)
+}
+
+// EnsureRuntimeDir creates the runtime directory if it doesn't exist.
+func (p TSNamespacePaths) EnsureRuntimeDir() error {
+	dir := p.ResolveRuntimeDir()
+	return os.MkdirAll(dir, 0755)
+}
+
 // tsNamespaceOutputDir returns the directory path for a given namespace's generated files.
-// For example: tsNamespaceOutputDir("lib/rpc", "book") returns "lib/rpc/book".
+// Deprecated: Use TSNamespacePaths.ResolveNamespaceDir instead.
 func tsNamespaceOutputDir(outputDir, namespace string) string {
 	return filepath.Join(outputDir, namespace)
 }

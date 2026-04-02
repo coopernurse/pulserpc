@@ -14,6 +14,7 @@ import (
 
 // TSClientServer is a plugin that generates TypeScript HTTP server and client code from IDL
 type TSClientServer struct {
+	packageBase string
 }
 
 // NewTSClientServer creates a new TSClientServer plugin instance
@@ -54,6 +55,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if packageFlag != nil && packageFlag.Value.String() != "" {
 		packagePrefix = packageFlag.Value.String()
 	}
+	p.packageBase = packagePrefix
 
 	// Build type registries
 	structMap := make(map[string]*parser.Struct)
@@ -70,25 +72,31 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		interfaceMap[i.Name] = i
 	}
 
-	// Copy runtime library files
-	if err := p.copyRuntimeFiles(outputDir, isSilent()); err != nil {
-		return fmt.Errorf("failed to copy runtime files: %w", err)
-	}
-
 	// Group types by namespace
 	namespaceMap := GroupTypesByNamespace(idl)
+
+	// Initialize path helpers with package base
+	paths := NewTSNamespacePaths(outputDir, p.packageBase)
+
+	// Ensure runtime directory exists
+	if err := paths.EnsureRuntimeDir(); err != nil {
+		return fmt.Errorf("failed to create runtime directory: %w", err)
+	}
+
+	// Copy runtime library files to the resolved runtime directory
+	if err := p.copyRuntimeFiles(paths, isSilent()); err != nil {
+		return fmt.Errorf("failed to copy runtime files: %w", err)
+	}
 
 	// Determine if multi-namespace mode is active
 	multiNsMode := isMultiNamespaceMode(outputDir, namespaceMap)
 
 	// Create per-namespace subdirectories when in multi-namespace mode
 	if multiNsMode {
-		namespaces := make([]string, 0, len(namespaceMap))
 		for ns := range namespaceMap {
-			namespaces = append(namespaces, ns)
-		}
-		if err := ensureTsNamespaceDirs(outputDir, namespaces); err != nil {
-			return fmt.Errorf("failed to create namespace directories: %w", err)
+			if err := paths.EnsureNamespaceDir(ns); err != nil {
+				return fmt.Errorf("failed to create namespace directory: %w", err)
+			}
 		}
 	}
 
@@ -102,7 +110,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	if multiNsMode {
 		// Multi-namespace mode: generate types.ts, server.ts, client.ts per namespace
 		for ns, nsTypes := range namespaceMap {
-			nsDir := tsNamespaceOutputDir(outputDir, ns)
+			nsDir := paths.ResolveNamespaceDir(ns)
 
 			// Build namespace-scoped maps for type resolution
 			nsStructMap := make(map[string]*parser.Struct)
@@ -143,7 +151,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			PrintFileCreated(clientPath, fs)
 
 			// Generate index.ts for this namespace (re-exports from types, server, client)
-			if err := generateNamespaceIndexTs(outputDir, ns); err != nil {
+			if err := generateNamespaceIndexTs(paths, ns); err != nil {
 				return fmt.Errorf("failed to write %s/index.ts: %w", ns, err)
 			}
 			indexPath := filepath.Join(nsDir, "index.ts")
@@ -201,8 +209,28 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 // copyRuntimeFiles copies the TypeScript runtime library files to the output directory
 // Uses embedded runtime files from the binary
-func (p *TSClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
-	return runtime.CopyRuntimeFiles("ts", outputDir, silent)
+func (p *TSClientServer) copyRuntimeFiles(paths TSNamespacePaths, silent bool) error {
+	runtimeDir := paths.ResolveRuntimeDir()
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		return fmt.Errorf("failed to create runtime directory: %w", err)
+	}
+
+	files, err := runtime.GetRuntimeFiles("ts")
+	if err != nil {
+		return err
+	}
+
+	for filename, data := range files {
+		dstPath := filepath.Join(runtimeDir, filename)
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)
+		}
+		if !silent {
+			fmt.Println(dstPath)
+		}
+	}
+
+	return nil
 }
 
 // writeIDLJSONTs writes the IDL metadata as JSON to idl.json
@@ -822,8 +850,8 @@ func generateClientTs(idl *parser.IDL, _ map[string]*parser.Struct, _ map[string
 
 // generateNamespaceIndexTs writes an index.ts file to the namespace subdirectory
 // that re-exports from types.ts, server.ts, and client.ts.
-func generateNamespaceIndexTs(outputDir, namespace string) error {
-	nsDir := tsNamespaceOutputDir(outputDir, namespace)
+func generateNamespaceIndexTs(paths TSNamespacePaths, namespace string) error {
+	nsDir := paths.ResolveNamespaceDir(namespace)
 	indexContent := "export * from './types';\nexport * from './server';\nexport * from './client';\n"
 	indexPath := filepath.Join(nsDir, "index.ts")
 	if err := os.WriteFile(indexPath, []byte(indexContent), 0644); err != nil {
