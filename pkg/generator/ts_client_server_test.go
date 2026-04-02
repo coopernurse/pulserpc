@@ -181,10 +181,12 @@ func TestTsMultiNamespaceFileContent(t *testing.T) {
 		assertTsFileContains(t, outputDir, "common/server.ts", "export abstract class CommonService")
 
 		// Verify book/client.ts uses correct runtime import path for namespace subdir
-		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc'")
+		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport'")
+		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/rpc'")
 
 		// Verify common/client.ts uses correct runtime import path for namespace subdir
-		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc'")
+		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/transport'")
+		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/rpc'")
 
 		// Verify book/server.ts uses correct runtime import path for namespace subdir
 		assertTsFileContains(t, outputDir, "book/server.ts", "from '../pulserpc/rpc'")
@@ -423,8 +425,9 @@ func TestTsImportPaths(t *testing.T) {
 
 			// Flat output: server.ts should use ./pulserpc
 			assertTsFileContains(t, outputDir, "server.ts", "from './pulserpc/rpc'")
-			// Flat output: client.ts should use ./pulserpc
-			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc'")
+			// Flat output: client.ts should use ./pulserpc/transport and ./pulserpc/rpc
+			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/transport'")
+			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/rpc'")
 		})
 	})
 
@@ -450,7 +453,7 @@ func TestTsImportPaths(t *testing.T) {
 		})
 	})
 
-	t.Run("multi-namespace client.ts uses ../pulserpc import", func(t *testing.T) {
+	t.Run("multi-namespace client.ts uses ../pulserpc/transport and ../pulserpc/rpc import", func(t *testing.T) {
 		withTempOutputDir(t, func(outputDir string) {
 			idl := buildMultiNamespaceIDL()
 
@@ -467,8 +470,10 @@ func TestTsImportPaths(t *testing.T) {
 				t.Fatalf("Generate() failed: %v", err)
 			}
 
-			assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc'")
-			assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc'")
+			assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport'")
+			assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/rpc'")
+			assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/transport'")
+			assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/rpc'")
 		})
 	})
 }
@@ -781,5 +786,262 @@ func TestTsPackageFlag(t *testing.T) {
 				t.Error("class name should not contain package prefix")
 			}
 		})
+	})
+}
+
+func TestTsStaticClientGeneration(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Structs: []*parser.Struct{
+				{Name: "Product", Fields: []*parser.Field{
+					{Name: "productId", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+				}},
+			},
+			Interfaces: []*parser.Interface{
+				{Name: "CatalogService", Methods: []*parser.Method{
+					{Name: "listProducts", Parameters: []*parser.Parameter{}, ReturnType: &parser.Type{Array: &parser.Type{UserDefined: "Product"}}},
+				}},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		assertTsFileExists(t, outputDir, "client.ts")
+		assertTsFileContains(t, outputDir, "client.ts", "export class CatalogServiceClient")
+		assertTsFileContains(t, outputDir, "client.ts", "constructor(private transport: Transport)")
+		assertTsFileContains(t, outputDir, "client.ts", "async listProducts()")
+	})
+}
+
+func TestTsStaticClientMethodSignatures(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Structs: []*parser.Struct{
+				{Name: "Product", Fields: []*parser.Field{
+					{Name: "productId", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+				}},
+				{Name: "Cart", Fields: []*parser.Field{
+					{Name: "cartId", Type: &parser.Type{BuiltIn: "string"}},
+				}},
+			},
+			Interfaces: []*parser.Interface{
+				{Name: "CatalogService", Methods: []*parser.Method{
+					{Name: "listProducts", Parameters: []*parser.Parameter{}, ReturnType: &parser.Type{Array: &parser.Type{UserDefined: "Product"}}},
+					{Name: "getProduct", Parameters: []*parser.Parameter{{Name: "productId", Type: &parser.Type{BuiltIn: "string"}}}, ReturnType: &parser.Type{UserDefined: "Product"}},
+				}},
+				{Name: "CartService", Methods: []*parser.Method{
+					{Name: "getCart", Parameters: []*parser.Parameter{{Name: "cartId", Type: &parser.Type{BuiltIn: "string"}}}, ReturnType: &parser.Type{UserDefined: "Cart"}, ReturnOptional: true},
+				}},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		assertTsFileContains(t, outputDir, "client.ts", "async listProducts(): Promise<types.Product[]>")
+		assertTsFileContains(t, outputDir, "client.ts", "async getProduct(productId: string): Promise<types.Product>")
+		assertTsFileContains(t, outputDir, "client.ts", "async getCart(cartId: string): Promise<types.Cart | null>")
+	})
+}
+
+func TestTsStaticClientTransport(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Interfaces: []*parser.Interface{
+				{Name: "TestService", Methods: []*parser.Method{
+					{Name: "test", Parameters: []*parser.Parameter{}, ReturnType: &parser.Type{BuiltIn: "string"}},
+				}},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		assertTsFileContains(t, outputDir, "client.ts", "import { Transport, HttpTransport } from './pulserpc/transport'")
+		assertTsFileContains(t, outputDir, "client.ts", "constructor(private transport: Transport)")
+		assertTsFileContains(t, outputDir, "client.ts", "export { Transport, HttpTransport }")
+	})
+}
+
+func TestTsStaticClientMultiNamespace(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := buildMultiNamespaceIDL()
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		assertTsFileExists(t, outputDir, "book/client.ts")
+		assertTsFileExists(t, outputDir, "common/client.ts")
+		assertTsFileContains(t, outputDir, "book/client.ts", "export class BookServiceClient")
+		assertTsFileContains(t, outputDir, "book/client.ts", "constructor(private transport: Transport)")
+		assertTsFileContains(t, outputDir, "common/client.ts", "export class CommonServiceClient")
+		assertTsFileContains(t, outputDir, "common/client.ts", "constructor(private transport: Transport)")
+		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport'")
+		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/transport'")
+	})
+}
+
+func TestTsStaticClientExports(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Interfaces: []*parser.Interface{
+				{Name: "ServiceA", Methods: []*parser.Method{{Name: "methodA", Parameters: []*parser.Parameter{}, ReturnType: nil}}},
+				{Name: "ServiceB", Methods: []*parser.Method{{Name: "methodB", Parameters: []*parser.Parameter{}, ReturnType: nil}}},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		assertTsFileContains(t, outputDir, "client.ts", "export class ServiceAClient")
+		assertTsFileContains(t, outputDir, "client.ts", "export class ServiceBClient")
+	})
+}
+
+func TestTsStaticClientNoDynamicProxy(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Interfaces: []*parser.Interface{
+				{Name: "TestService", Methods: []*parser.Method{{Name: "test", Parameters: []*parser.Parameter{}, ReturnType: nil}}},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		content, err := os.ReadFile(filepath.Join(outputDir, "client.ts"))
+		if err != nil {
+			t.Fatalf("failed to read client.ts: %v", err)
+		}
+
+		if strings.Contains(string(content), "new Client(") {
+			t.Error("client.ts should not contain 'new Client(' - dynamic proxy pattern")
+		}
+		if strings.Contains(string(content), "class Client") {
+			t.Error("client.ts should not contain 'class Client' - dynamic proxy pattern")
+		}
+		if strings.Contains(string(content), "InterfaceClientProxy") {
+			t.Error("client.ts should not contain 'InterfaceClientProxy' - dynamic proxy pattern")
+		}
+	})
+}
+
+func TestTsStaticClientRPCError(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Interfaces: []*parser.Interface{
+				{Name: "TestService", Methods: []*parser.Method{{Name: "test", Parameters: []*parser.Parameter{}, ReturnType: &parser.Type{BuiltIn: "string"}}}},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		assertTsFileContains(t, outputDir, "client.ts", "import { RPCError } from './pulserpc/rpc'")
+		assertTsFileContains(t, outputDir, "client.ts", "throw new RPCError(resp.error.code, resp.error.message, resp.error.data)")
+	})
+}
+
+func TestTsStaticClientMethodCalls(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Structs: []*parser.Struct{
+				{Name: "Request", Fields: []*parser.Field{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}}},
+			},
+			Interfaces: []*parser.Interface{
+				{Name: "TestService", Methods: []*parser.Method{
+					{Name: "testMethod", Parameters: []*parser.Parameter{{Name: "req", Type: &parser.Type{UserDefined: "Request"}}}, ReturnType: &parser.Type{BuiltIn: "string"}},
+				}},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		assertTsFileContains(t, outputDir, "client.ts", "method: \"TestService.testMethod\"")
+		assertTsFileContains(t, outputDir, "client.ts", "params: [req]")
 	})
 }
