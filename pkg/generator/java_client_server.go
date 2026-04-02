@@ -264,21 +264,8 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 // copyRuntimeFiles copies the Java runtime library files to the output directory
 // Selectively copies files based on json-lib flag
 func (p *JavaClientServer) copyRuntimeFiles(outputDir string, jsonLib string, silent bool) error {
-	// Check if pom.xml exists in outputDir - this indicates a Maven project
-	pomPath := filepath.Join(outputDir, "pom.xml")
-	isMavenProject := false
-	if _, err := os.Stat(pomPath); err == nil {
-		isMavenProject = true
-	}
-
-	var runtimeBaseDir string
-	if isMavenProject {
-		// Maven project - copy to src/main/java/com/bitmechanic/pulserpc/
-		runtimeBaseDir = filepath.Join(outputDir, "src", "main", "java", "com", "bitmechanic", "pulserpc")
-	} else {
-		// Non-Maven project - use legacy location
-		runtimeBaseDir = filepath.Join(outputDir, getRuntimePackageDirName())
-	}
+	// Runtime always goes to {dir}/pulserpc/ regardless of package flag
+	runtimeBaseDir := filepath.Join(outputDir, getRuntimePackageDirName())
 
 	// Get runtime files
 	files, err := runtime.GetRuntimeFiles("java")
