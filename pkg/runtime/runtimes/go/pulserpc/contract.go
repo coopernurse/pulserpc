@@ -3,6 +3,7 @@ package pulserpc
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 )
 
@@ -121,6 +122,21 @@ func NewContract(idlParsed interface{}) *Contract {
 	}
 
 	return c
+}
+
+// LoadContractFromFile loads and parses an IDL contract from a JSON file
+func LoadContractFromFile(path string) (*Contract, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read idl.json: %w", err)
+	}
+
+	var idlParsed interface{}
+	if err := json.Unmarshal(data, &idlParsed); err != nil {
+		return nil, fmt.Errorf("failed to parse idl.json: %w", err)
+	}
+
+	return NewContract(idlParsed), nil
 }
 
 // HasInterface checks if an interface exists in the contract
