@@ -21,3 +21,6 @@ docs/examples/checkout-csharp/obj/
 docs/examples/checkout-java/target/.DS_Store
 .DS_Store
 *.vsix
+**/java/.classpath
+**/java/.project
+**/java/.settings
