@@ -41,7 +41,7 @@
     </dependencies>
 
     <build>
-        <sourceDirectory>pulserpc</sourceDirectory>
+        <sourceDirectory>com</sourceDirectory>
         <testSourceDirectory>tests</testSourceDirectory>
         <plugins>
             <plugin>

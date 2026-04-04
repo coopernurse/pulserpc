@@ -1,4 +1,4 @@
-.PHONY: build build-linux test cover lint quality clean install-tools test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
+.PHONY: build build-linux test cover lint quality quality-full clean install-tools test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
 
 # Variables
 BINARY_NAME=pulserpc
@@ -77,6 +77,10 @@ test-webui:
 # Run quality checks (lint + test + webui lint + webui test)
 quality: lint test lint-webui test-webui
 	@echo "Quality checks completed"
+
+# Run quality checks plus slower generator and quickstart tests
+quality-full: build quality test-runtimes test-quickstarts test-generators
+	@echo "Full quality checks completed"
 
 # Install required tools
 install-tools:

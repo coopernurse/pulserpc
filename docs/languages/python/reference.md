@@ -167,6 +167,191 @@ cart = cart.addToCart({
 })
 ```
 
+## Pydantic Models
+
+When generating Python code with the `--use-pydantic` flag, PulseRPC creates a `models.py` file containing Pydantic `BaseModel` classes for all struct and enum types:
+
+```bash
+pulserpc -plugin python-client-server -dir ./output --use-pydantic api/service.pulse
+```
+
+This generates `models.py` with Pydantic models:
+
+```python
+from pydantic import BaseModel
+from typing import Optional
+from enum import Enum
+
+class Product(BaseModel):
+    productId: str
+    name: str
+    price: float
+    stock: int
+    imageUrl: Optional[str] = None  # optional field
+
+    class Config:
+        # Pydantic v1 style
+        schema_extra = {
+            "example": {
+                "productId": "prod001",
+                "name": "Wireless Mouse",
+                "price": 29.99,
+                "stock": 50
+            }
+        }
+
+class OrderStatus(str, Enum):
+    pending = "pending"
+    paid = "paid"
+    shipped = "shipped"
+    delivered = "delivered"
+```
+
+### Using Pydantic Models
+
+```python
+from checkout.models import Product, OrderStatus
+
+# Create and validate
+product = Product(
+    productId="prod001",
+    name="Wireless Mouse",
+    price=29.99,
+    stock=50
+)
+
+# Validation happens automatically
+try:
+    invalid_product = Product(
+        productId="prod001",
+        name="Mouse",
+        price="not a number",  # Will raise ValidationError
+        stock=50
+    )
+except Exception as e:
+    print(f"Validation failed: {e}")
+```
+
+### Pydantic Version Compatibility
+
+Generated Pydantic models use Pydantic v1 style (`BaseModel` with `class Config`). If using Pydantic v2, the models are compatible via `pydantic.v1 import BaseModel` import aliasing.
+
+## Multi-Namespace Projects
+
+When your IDL defines multiple namespaces, use the `-package` flag to generate properly structured Python packages:
+
+```bash
+pulserpc -plugin python-client-server -dir ./generated -package myapp.lib.rpc api/service.pulse
+```
+
+### Output Structure
+
+```
+generated/
+├── myapp/
+│   └── lib/
+│       └── rpc/
+│           ├── __init__.py           # Imports from pulserpc runtime
+│           ├── pulserpc/              # Runtime library
+│           │   ├── __init__.py
+│           │   ├── rpc.py
+│           │   ├── server.py
+│           │   ├── client.py
+│           │   ├── contract.py
+│           │   ├── transport.py
+│           │   └── validation.py
+│           ├── common/                # Namespace: common
+│           │   ├── __init__.py
+│           │   ├── types.py
+│           │   ├── server.py
+│           │   └── client.py
+│           └── orders/                # Namespace: orders
+│               ├── __init__.py
+│               ├── types.py
+│               ├── server.py
+│               └── client.py
+└── idl.json
+```
+
+### Import Patterns
+
+```python
+# Import from same namespace
+from myapp.lib.rpc.orders.types import CreateOrderRequest
+
+# Import from another namespace
+from myapp.lib.rpc.common.types import Address
+
+# Import runtime
+from myapp.lib.rpc.pulserpc import RPCError, Server, Client, HttpTransport
+```
+
+### Runtime Auto-Discovery
+
+The Python `Client` automatically fetches the IDL from the server using the `pulserpc-idl` RPC method:
+
+```python
+from myapp.lib.rpc.pulserpc import Client, HttpTransport
+
+# Client bootstraps by fetching IDL from server
+transport = HttpTransport("http://localhost:8080")
+client = Client(transport)
+
+# Interfaces are auto-discovered and available as attributes
+client.OrdersService.createOrder({"cartId": "cart_123", ...})
+```
+
+## In-Process Transport
+
+For testing without network overhead, use `InProcTransport`:
+
+```python
+from myapp.lib.rpc.pulserpc import Client, InProcTransport, Server
+
+# Create server with your handlers
+server = Server(handlers={"CatalogService": CatalogServiceImpl()})
+
+# Create in-process transport connected to server
+transport = InProcTransport(server)
+client = Client(transport)
+
+# RPC calls happen in-process without HTTP
+products = client.CatalogService.listProducts()
+```
+
+## Runtime Reference
+
+### Client Validation
+
+The `Client` constructor accepts validation flags:
+
+```python
+from myapp.lib.rpc.pulserpc import Client, HttpTransport
+
+transport = HttpTransport("http://localhost:8080")
+
+# Enable request validation (validates params before sending)
+client = Client(transport, validate_request=True)
+
+# Enable response validation (validates responses after receiving)
+client = Client(transport, validate_response=True)
+
+# Enable both
+client = Client(transport, validate_request=True, validate_response=True)
+```
+
+### Fire-and-Forget Notifications
+
+Use `notify()` for RPC calls that don't require a response:
+
+```python
+# Send notification (no response expected)
+client.notify("LoggingService.logEvent", {"event": "user_login", "userId": "123"})
+
+# Unlike regular calls, notify() never raises RPCError
+# Useful for logging, analytics, or one-way events
+```
+
 ## Best Practices
 
 1. **Use dicts for struct values**: All struct values should be dictionaries

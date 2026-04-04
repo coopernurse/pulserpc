@@ -52,8 +52,19 @@ This creates:
 - `server.ts` - PulseRPC server framework
 - `client.ts` - HTTP client framework
 - `pulserpc/` - Runtime library
+- `idl.json` - IDL metadata (required at runtime)
 
-The IDL is embedded directly in `server.ts` for the `pulserpc-idl` RPC method.
+**Important:** `idl.json` must be accessible at runtime. The TypeScript `Contract` class loads it via `readFileSync('idl.json')`. Place it at your project's root directory where you run the compiled JavaScript.
+
+### Multi-Namespace Projects
+
+If your IDL defines multiple namespaces, use the `-package` flag:
+
+```bash
+pulserpc -plugin ts-client-server -dir ./generated -package '@mycompany/api' checkout.pulse
+```
+
+This creates per-namespace directories (`common/`, `orders/`, etc.) with `index.ts` re-export files. See the [TypeScript Reference](reference.html#multi-namespace-projects) for details on the output structure and import patterns.
 
 ## 3. Implement the Server (10-15 min)
 
