@@ -31,6 +31,26 @@ Create `checkout.pulse` with your service definition:
 
 {% include quickstart/checkout.idl %}
 
+## Defining Service Errors
+
+The IDL uses the `errors` keyword to declare error codes and `raises()` clauses to specify which errors each method can raise:
+
+```idl
+errors {
+    1001 CartNotFound "Cart doesn't exist"
+    1002 CartEmpty "Cart has no items"
+    1003 PaymentFailed "Payment method rejected"
+    1004 OutOfStock "Insufficient inventory"
+    1005 InvalidAddress "Shipping address validation failed"
+}
+
+interface OrderService {
+    createOrder(request CreateOrderRequest) CheckoutResponse raises(CartNotFound, CartEmpty, PaymentFailed, OutOfStock, InvalidAddress)
+}
+```
+
+For details on error handling, see [Error Handling](../../idl-guide/errors.html).
+
 ## 2. Generate Code (1 min)
 
 Generate the Go code from your IDL:

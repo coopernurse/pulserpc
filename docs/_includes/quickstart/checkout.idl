@@ -78,12 +78,15 @@ struct CheckoutResponse {
     message      string  [optional]
 }
 
-// Error Codes for createOrder:
-//   1001 - CartNotFound: Cart doesn't exist
-//   1002 - CartEmpty: Cart has no items
-//   1003 - PaymentFailed: Payment method rejected
-//   1004 - OutOfStock: Insufficient inventory
-//   1005 - InvalidAddress: Shipping address validation failed
+// Error declarations for createOrder
+
+errors {
+    1001 CartNotFound "Cart doesn't exist"
+    1002 CartEmpty "Cart has no items"
+    1003 PaymentFailed "Payment method rejected"
+    1004 OutOfStock "Insufficient inventory"
+    1005 InvalidAddress "Shipping address validation failed"
+}
 
 // Service interfaces
 
@@ -108,7 +111,7 @@ interface CartService {
 
 interface OrderService {
     // Converts a cart to an order
-    createOrder(request CreateOrderRequest) CheckoutResponse
+    createOrder(request CreateOrderRequest) CheckoutResponse raises(CartNotFound, CartEmpty, PaymentFailed, OutOfStock, InvalidAddress)
 
     // Returns the order details, or null if order doesn't exist
     getOrder(orderId string) Order  [optional]

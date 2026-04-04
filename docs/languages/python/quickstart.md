@@ -22,7 +22,27 @@ This IDL defines:
 - **3 interfaces**: CatalogService, CartService, OrderService
 - **7 structs**: Product, CartItem, Cart, Address, Order, AddToCartRequest, CreateOrderRequest, CheckoutResponse
 - **2 enums**: OrderStatus, PaymentMethod
-- **Custom error codes** (1001-1005): cart_not_found, cart_empty, payment_failed, out_of_stock, invalid_address
+- **5 errors** (1001-1005): CartNotFound, CartEmpty, PaymentFailed, OutOfStock, InvalidAddress
+
+## Defining Service Errors
+
+The IDL uses the `errors` keyword to declare error codes and `raises()` clauses to specify which errors each method can raise:
+
+```idl
+errors {
+    1001 CartNotFound "Cart doesn't exist"
+    1002 CartEmpty "Cart has no items"
+    1003 PaymentFailed "Payment method rejected"
+    1004 OutOfStock "Insufficient inventory"
+    1005 InvalidAddress "Shipping address validation failed"
+}
+
+interface OrderService {
+    createOrder(request CreateOrderRequest) CheckoutResponse raises(CartNotFound, CartEmpty, PaymentFailed, OutOfStock, InvalidAddress)
+}
+```
+
+For details on error handling, see [Error Handling](../../idl-guide/errors.html).
 
 ## 2. Generate Code (1 min)
 
