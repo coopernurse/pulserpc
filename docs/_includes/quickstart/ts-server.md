@@ -1,7 +1,5 @@
 {% highlight typescript %}
-import { readFileSync } from 'fs';
-import { Server, Contract } from './pulserpc';
-import { CatalogService, CartService, OrderService } from './server';
+import { PulseRPCServer, CatalogService, CartService, OrderService } from './server';
 import { RPCError } from './pulserpc/rpc';
 
 const products = [
@@ -111,64 +109,9 @@ class OrderServiceImpl extends OrderService {
   }
 }
 
-// Load IDL and create Contract
-const idlData = JSON.parse(readFileSync('idl.json', 'utf-8'));
-const contract = new Contract(idlData);
-
-// Create Server instance
-const server = new Server({ contract, validateRequests: true, validateResponses: true });
-server.addHandler('CatalogService', new CatalogServiceImpl());
-server.addHandler('CartService', new CartServiceImpl());
-server.addHandler('OrderService', new OrderServiceImpl());
-
-// HTTP server
-import * as http from 'http';
-
-class RPCHandler {
-  private server: Server;
-
-  constructor(server: Server) {
-    this.server = server;
-  }
-
-  handle(req: http.IncomingMessage, res: http.ServerResponse): void {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk.toString(); });
-    req.on('end', () => {
-      try {
-        const data = JSON.parse(body);
-        const response = this.server.call(data);
-        if (response === null || response === undefined) {
-          res.writeHead(204);
-          res.end();
-        } else {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(response));
-        }
-      } catch (err: any) {
-        const errorResponse = {
-          jsonrpc: '2.0',
-          error: { code: -32700, message: `Parse error: ${err.message}` },
-          id: null,
-        };
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(errorResponse));
-      }
-    });
-  }
-}
-
-const handler = new RPCHandler(server);
-const httpServer = http.createServer((req, res) => {
-  if (req.method === 'POST') {
-    handler.handle(req, res);
-  } else {
-    res.writeHead(405, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Method Not Allowed' }));
-  }
-});
-
-httpServer.listen(8080, '0.0.0.0', () => {
-  console.log('PulseRPC server listening on http://0.0.0.0:8080');
-});
-{% endblock %}
+const server = new PulseRPCServer('0.0.0.0', 8080);
+server.register('CatalogService', new CatalogServiceImpl());
+server.register('CartService', new CartServiceImpl());
+server.register('OrderService', new OrderServiceImpl());
+server.serveForever();
+{% endhighlight %}

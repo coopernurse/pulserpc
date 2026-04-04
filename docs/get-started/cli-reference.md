@@ -73,14 +73,13 @@ pulserpc [flags] <idl-file>
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `-package` | string | Package prefix for generated TypeScript modules. Sets the import path prefix (e.g., `@mycompany/api`). In multi-namespace mode, enables per-namespace subdirectories with `index.ts` re-exports. |
+| `-package` | string | Package prefix for generated types and classes. Used for namespace isolation. |
 
 #### Python Plugin (`python-client-server`)
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `-package` | string | Base import path for namespace packages and runtime imports. Use this when generating multi-namespace Python output. When set, namespaces are placed in subdirectories under `{package}/` (e.g., `myapp/lib/rpc/common/`) and runtime is importable from `{package}.pulserpc`. |
-| `-use-pydantic` | bool | Generate Pydantic `BaseModel` classes for all struct and enum types. Creates `models.py` with validated models. |
+| `-package` | string | Base import path for namespace packages and runtime imports. Use this when generating multi-namespace Python output. |
 
 #### C# Plugin (`csharp-client-server`)
 
@@ -172,18 +171,7 @@ Generate additional test files for integration testing:
 pulserpc -plugin python-client-server -dir ./output -generate-test-files api/service.pulse
 ```
 
-This creates:
-- `test_server.py` - Test server with `TestRPCHandler` extending `BaseHTTPRequestHandler`, listens on port 8080
-- `test_client.py` - Test client with `wait_for_server()` function and `main()` that validates RPC calls
-
-For TypeScript:
-```bash
-pulserpc -plugin ts-client-server -dir ./output -generate-test-files api/service.pulse
-```
-
-This creates:
-- `test_server.ts` - HTTP server implementation with handlers
-- `test_client.ts` - `waitForServer()` async function and `main()` async function for testing
+This creates `test_server.py` and `test_client.py` in addition to the normal output files.
 
 ### Silent Mode
 

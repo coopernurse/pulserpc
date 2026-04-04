@@ -1,8 +1,7 @@
 {% highlight typescript %}
-import { HttpTransport } from './pulserpc/transport';
-import { CatalogServiceClient, CartServiceClient, OrderServiceClient } from './client';
+import { HTTPTransport, CatalogServiceClient, CartServiceClient, OrderServiceClient } from './client';
 
-const transport = new HttpTransport('http://localhost:8080');
+const transport = new HTTPTransport('http://localhost:8080');
 const catalog = new CatalogServiceClient(transport);
 const cart = new CartServiceClient(transport);
 const orders = new OrderServiceClient(transport);
@@ -36,4 +35,4 @@ async function main() {
 }
 
 main().catch(console.error);
-{% endblock %}
+{% endhighlight %}

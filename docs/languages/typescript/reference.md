@@ -116,13 +116,8 @@ Common error codes:
 Extend generated service classes:
 
 ```typescript
-import { Server, Contract } from './pulserpc';
-import { CatalogService } from './server';
+import { PulseRPCServer, CatalogService } from './server';
 import * as checkout from './checkout';
-
-// Load IDL and create Contract
-const idlData = JSON.parse(readFileSync('idl.json', 'utf-8'));
-const contract = new Contract(idlData);
 
 class CatalogServiceImpl extends CatalogService {
   private products: checkout.Product[] = [
@@ -144,37 +139,20 @@ class CatalogServiceImpl extends CatalogService {
   }
 }
 
-// Create server and register handler
-const server = new Server({ contract });
-server.addHandler('CatalogService', new CatalogServiceImpl());
-
-// Use with HTTP server
-import * as http from 'http';
-const httpServer = http.createServer((req, res) => {
-  if (req.method === 'POST') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk.toString(); });
-    req.on('end', () => {
-      const response = server.call(JSON.parse(body));
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(response));
-    });
-  } else {
-    res.writeHead(405);
-    res.end();
-  }
-});
-httpServer.listen(8080);
+// Start server
+const server = new PulseRPCServer(8080);
+server.registerCatalogService(new CatalogServiceImpl());
+server.start();
 ```
 
 ## Client Usage
 
 ```typescript
-import { HttpTransport } from './pulserpc/transport';
-import { CatalogServiceClient } from './client';
+import { HTTPTransport } from './client';
 import * as checkout from './checkout';
+import { CatalogServiceClient } from './checkout';
 
-const transport = new HttpTransport('http://localhost:8080');
+const transport = new HTTPTransport('http://localhost:8080');
 const catalog = new CatalogServiceClient(transport);
 
 // Method calls return TypeScript objects
@@ -202,7 +180,7 @@ class OrderServiceImpl extends OrderService {
     const validated = await this.validateCart(request.cartId);
 
     if (!validated) {
-      throw new RPCError(1002, 'CartEmpty: Cannot create order from empty cart');
+      throw new RPCException(1002, 'CartEmpty: Cannot create order from empty cart');
     }
 
     return new checkout.CheckoutResponse({ orderId });
@@ -218,7 +196,7 @@ PulseRPC automatically validates:
 - Enum values are valid
 
 ```typescript
-// This will throw RPCError (-32602) if validation fails
+// This will throw RPCException (-32602) if validation fails
 const cart = cart.addToCart({
   cartId: null,
   productId: 'prod001',
@@ -252,7 +230,7 @@ cart.clearCart(cartId: string): boolean
 2. **Type assertions**: Avoid `as`, use proper type guards
 3. **Null checks**: Always check for `null` on optional returns
 4. **Async patterns**: Use async/await for I/O operations
-5. **Error boundaries**: Catch RPCError at appropriate levels
+5. **Error boundaries**: Catch RPCException at appropriate levels
 
 ## Working with Nested Structs
 
@@ -301,25 +279,16 @@ Add to `package.json`:
 
 ```typescript
 import express from 'express';
-import { Server, Contract } from './pulserpc';
-import { CatalogService } from './server';
-import * as http from 'http';
+import { PulseRPCServer } from './server';
 
 const app = express();
 app.use(express.json());
 
-// Load IDL and create Contract
-const idlData = JSON.parse(readFileSync('idl.json', 'utf-8'));
-const contract = new Contract(idlData);
-
-// Create PulseRPC server
-const rpcServer = new Server({ contract });
-rpcServer.addHandler('CatalogService', new CatalogServiceImpl());
+const pulserpc = new PulseRPCServer(8080);
 
 // Mount PulseRPC server on Express
-app.use('/rpc', express.json(), (req, res) => {
-  const response = rpcServer.call(req.body);
-  res.json(response);
+app.use('/rpc', (req, res) => {
+  // Forward Express requests to PulseRPC
 });
 
 app.listen(3000);
@@ -337,177 +306,4 @@ class ProductServiceImpl extends ProductService {
     return JSON.parse(data);
   }
 }
-```
-
-## Multi-Namespace Projects
-
-When your IDL defines multiple namespaces, use the `-package` flag to generate properly structured TypeScript modules:
-
-```bash
-pulserpc -plugin ts-client-server -dir ./generated -package '@mycompany/api' api/service.pulse
-```
-
-### Output Structure
-
-```
-generated/
-├── common/                     # Namespace: common
-│   ├── index.ts               # Re-exports from types, server, client
-│   ├── types.ts
-│   ├── server.ts
-│   └── client.ts
-├── orders/                    # Namespace: orders
-│   ├── index.ts
-│   ├── types.ts
-│   ├── server.ts
-│   └── client.ts
-├── pulserpc/                  # Runtime library
-│   ├── index.ts
-│   ├── rpc.ts
-│   ├── server.ts
-│   ├── client.ts
-│   ├── contract.ts
-│   ├── transport.ts
-│   └── validation.ts
-└── idl.json                   # Must be at root, not in namespace subdirs
-```
-
-### index.ts Re-Exports
-
-Each namespace directory contains an `index.ts` that re-exports the public API:
-
-```typescript
-// orders/index.ts
-export * from './types';
-export * from './server';
-export * from './client';
-```
-
-This allows convenient imports from the namespace:
-
-```typescript
-import { OrderService, CreateOrderRequest } from './orders';
-// vs
-import { OrderService } from './orders/server';
-import { CreateOrderRequest } from './orders/types';
-```
-
-### Cross-Namespace Imports
-
-Import types from other namespaces using relative paths:
-
-```typescript
-// In orders/server.ts, import from common namespace
-import * as common from '../common/types';
-
-class OrderServiceImpl extends OrderService {
-  processOrder(request: common.CreateOrderRequest): common.Order {
-    // Use common types across namespaces
-  }
-}
-```
-
-### Contract and IDL Loading
-
-The TypeScript runtime requires `idl.json` to be at the project root:
-
-```typescript
-import { promises as fs } from 'fs';
-import { Contract } from './pulserpc/contract';
-
-// Load IDL from file (must be at project root)
-const idlData = JSON.parse(await fs.readFile('idl.json', 'utf-8'));
-const contract = new Contract(idlData);
-```
-
-## Runtime Reference
-
-### Client Async Initialization
-
-The `Client` requires async initialization to fetch IDL from the server:
-
-```typescript
-import { Client, HttpTransport } from './pulserpc';
-import { CatalogServiceClient } from './client';
-
-const transport = new HttpTransport('http://localhost:8080');
-const client = new Client(transport);
-
-// Wait for client to be ready before making calls
-await client.ready();
-
-// Now interface proxies are available
-const catalog = client.CatalogService;
-const products = await catalog.listProducts();
-```
-
-The `Client.ready()` promise resolves when:
-1. IDL has been fetched from the server via `pulserpc-idl`
-2. Interface proxies have been created
-
-### Server Validation Options
-
-The `Server` constructor accepts validation options:
-
-```typescript
-import { Server, Contract } from './pulserpc';
-
-const contract = new Contract(idlData);
-
-// Enable request validation
-const server = new Server({ 
-  contract,
-  validateRequests: true 
-});
-
-// Enable response validation
-const server2 = new Server({ 
-  contract,
-  validateResponses: true 
-});
-
-// Enable both
-const server3 = new Server({ 
-  contract,
-  validateRequests: true,
-  validateResponses: true 
-});
-```
-
-When enabled:
-- `validateRequests`: Validates incoming params against IDL before calling handler
-- `validateResponses`: Validates handler return values against IDL before sending response
-
-### Contract Validation API
-
-The `Contract` class provides manual validation:
-
-```typescript
-import { Contract } from './pulserpc';
-
-const contract = new Contract(idlData);
-
-// Validate request parameters
-contract.validateRequest('CatalogService', 'listProducts', []);
-
-// Validate response
-contract.validateResponse('CatalogService', 'getProduct', { productId: 'p1', ... });
-
-// Throws error if validation fails
-try {
-  contract.validateRequest('CatalogService', 'listProducts', ['too', 'many', 'params']);
-} catch (e) {
-  console.error('Validation failed:', e.message);
-}
-```
-
-## IDL JSON Artifact
-
-The generator creates an `idl.json` file containing the parsed IDL metadata. This file is required at runtime for:
-
-1. **TypeScript `Contract`** - Parses it to get interface/struct/enum definitions
-2. **Python `Client`** - Fetches it automatically via `pulserpc-idl` RPC
-
-Deploy `idl.json` alongside your generated code. The TypeScript runtime expects it at the project root (where you run the script).
-
 ```

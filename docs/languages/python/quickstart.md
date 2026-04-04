@@ -64,52 +64,7 @@ For multi-namespace projects, add `-dir` and `-package` so each namespace is gen
 pulserpc -plugin python-client-server -dir ./generated -package myapp.lib.rpc checkout.pulse
 ```
 
-This creates a proper Python package structure:
-
-```
-generated/
-├── myapp/
-│   └── lib/
-│       └── rpc/
-│           ├── __init__.py              # Imports from pulserpc runtime
-│           ├── pulserpc/                # Runtime library
-│           │   ├── __init__.py
-│           │   ├── rpc.py
-│           │   ├── server.py
-│           │   └── ...
-│           ├── catalog/                  # Namespace: catalog
-│           │   ├── __init__.py
-│           │   ├── types.py
-│           │   ├── server.py
-│           │   └── client.py
-│           └── orders/                  # Namespace: orders
-│               ├── __init__.py
-│               ├── types.py
-│               ├── server.py
-│               └── client.py
-└── idl.json
-```
-
-Import packages in your code:
-
-```python
-from myapp.lib.rpc.pulserpc import RPCError, Server, HttpTransport
-from myapp.lib.rpc.catalog.client import CatalogServiceClient
-from myapp.lib.rpc.orders.client import OrderServiceClient
-```
-
-The Python `Client` auto-discovers interfaces via the `pulserpc-idl` RPC method, so you can also use:
-
-```python
-from myapp.lib.rpc.pulserpc import Client, HttpTransport
-
-transport = HttpTransport("http://localhost:8080")
-client = Client(transport)  # Auto-discovers all interfaces
-
-# Works for any interface
-client.CatalogService.listProducts()
-client.OrderService.createOrder({...})
-```
+That layout places runtime files in `./generated/pulserpc/` and namespace code in `./generated/<namespace>/`.
 
 The IDL is embedded directly in `server.py` for the `pulserpc-idl` RPC method.
 
