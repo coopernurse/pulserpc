@@ -427,6 +427,9 @@ func generateTypesPyForNamespace(nsTypes *NamespaceTypes, currentNS string, pack
 		writeTypesPyEnum(&sb, enum)
 	}
 
+	// Generate error constants for this namespace
+	writeTypesPyErrors(&sb, nsTypes.Errors)
+
 	return sb.String()
 }
 
@@ -496,6 +499,36 @@ func writeTypesPyEnum(sb *strings.Builder, enum *parser.Enum) {
 		}
 		fmt.Fprintf(sb, "    %s = \"%s\"\n", value.Name, value.Name)
 	}
+	sb.WriteString("\n")
+}
+
+// writeTypesPyErrors generates error constant classes (ErrJsonRpc and Err) for types.py
+func writeTypesPyErrors(sb *strings.Builder, errors []*parser.ErrorDef) {
+	// Generate ErrJsonRpc class with standard JSON-RPC error codes
+	sb.WriteString("# Standard JSON-RPC error codes\n")
+	fmt.Fprintf(sb, "class %s:\n", "ErrJsonRpc")
+	fmt.Fprintf(sb, "    \"\"\"Standard JSON-RPC error codes\"\"\"\n\n")
+	fmt.Fprintf(sb, "    ParseError = -32700  # Invalid JSON was received\n")
+	fmt.Fprintf(sb, "    InvalidRequest = -32600  # The JSON sent is not a valid Request object\n")
+	fmt.Fprintf(sb, "    MethodNotFound = -32601  # The method does not exist or is not available\n")
+	fmt.Fprintf(sb, "    InvalidParams = -32602  # Invalid method parameter(s)\n")
+	fmt.Fprintf(sb, "    InternalError = -32603  # Internal JSON-RPC error\n")
+
+	// Generate Err class with namespace-specific error codes if any
+	if len(errors) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString("# Error codes for this namespace\n")
+		fmt.Fprintf(sb, "class %s:\n", "Err")
+		fmt.Fprintf(sb, "    \"\"\"Error codes for this namespace\"\"\"\n\n")
+		for _, errDef := range errors {
+			baseName := GetBaseName(errDef.Name)
+			if errDef.Comment != "" {
+				fmt.Fprintf(sb, "    # %s\n", errDef.Comment)
+			}
+			fmt.Fprintf(sb, "    %s = %d\n", baseName, errDef.Code)
+		}
+	}
+
 	sb.WriteString("\n")
 }
 

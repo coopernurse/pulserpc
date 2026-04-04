@@ -4,6 +4,7 @@ import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
 from checkout.server import CatalogService, CartService, OrderService
+from checkout.types import Err, ErrJsonRpc
 from pulserpc import Server, Contract, RPCError
 import random
 import time
@@ -65,7 +66,7 @@ class CartServiceImpl(CartService):
         )
 
         if not product:
-            raise RPCError(-32602, f"Product '{request.get('productId')}' not found")
+            raise RPCError(ErrJsonRpc.InvalidParams, f"Product '{request.get('productId')}' not found")
 
         # Add or update item
         for item in cart["items"]:
@@ -101,18 +102,18 @@ class OrderServiceImpl(OrderService):
     def createOrder(self, request):
         # Validate cart exists
         if request.get("cartId") not in carts_db:
-            raise RPCError(1001, "CartNotFound: Cart does not exist")
+            raise RPCError(Err.CartNotFound, "CartNotFound: Cart does not exist")
 
         cart = carts_db[request.get("cartId")]
 
         # Check if cart is empty
         if not cart["items"]:
-            raise RPCError(1002, "CartEmpty: Cannot create order from empty cart")
+            raise RPCError(Err.CartEmpty, "CartEmpty: Cannot create order from empty cart")
 
         # Validate address
         addr = request.get("shippingAddress") or {}
         if not addr.get("street") or not addr.get("city") or not addr.get("zipCode"):
-            raise RPCError(1005, "InvalidAddress: Shipping address validation failed")
+            raise RPCError(Err.InvalidAddress, "InvalidAddress: Shipping address validation failed")
 
         # Check stock
         for item in cart["items"]:
@@ -120,7 +121,7 @@ class OrderServiceImpl(OrderService):
                 (p for p in products_db if p["productId"] == item["productId"]), None
             )
             if product and product["stock"] < item["quantity"]:
-                raise RPCError(1004, "OutOfStock: Insufficient inventory")
+                raise RPCError(Err.OutOfStock, "OutOfStock: Insufficient inventory")
 
         # Simulate payment (deterministic: always succeeds in tests)
         # For real implementations, use actual payment gateway integration
