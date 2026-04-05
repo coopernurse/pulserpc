@@ -26,10 +26,20 @@ namespace PulseRPC
         /// </summary>
         public static void ValidateInt(object? value)
         {
-            if (value is not int)
+            if (value is int)
             {
-                throw new ArgumentException($"Expected int, got {value?.GetType().Name ?? "null"}");
+                return;
             }
+            // Accept whole-number floats/doubles
+            if (value is double d && d == Math.Floor(d))
+            {
+                return;
+            }
+            if (value is long l && l == Math.Floor((double)l))
+            {
+                return;
+            }
+            throw new ArgumentException($"Expected int, got {value?.GetType().Name ?? "null"}");
         }
 
         /// <summary>

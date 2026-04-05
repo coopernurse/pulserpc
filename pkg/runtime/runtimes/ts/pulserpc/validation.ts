@@ -16,9 +16,14 @@ export function validateInt(value: any): void {
   if (typeof value !== "number") {
     throw new TypeError(`Expected number for int, got ${typeof value}`);
   }
-  if (!Number.isInteger(value)) {
-    throw new TypeError(`Expected integer, got number with fractional component: ${value}`);
+  if (Number.isInteger(value)) {
+    return;
   }
+  // Accept whole-number floats (e.g., 5.0, -3.0)
+  if (value === Math.floor(value)) {
+    return;
+  }
+  throw new TypeError(`Expected integer, got number with fractional component: ${value}`);
 }
 
 export function validateFloat(value: any): void {
@@ -120,10 +125,16 @@ export function validateStruct(
     } else {
       // Field is present, validate it
       const fieldValue = value[fieldName];
-      if (fieldValue === null || fieldValue === undefined) {
+      if (fieldValue === null) {
         if (!isOptional) {
           throw new Error(
-            `Field '${fieldName}' in struct ${structName} cannot be null or undefined`
+            `Field '${fieldName}' in struct ${structName} cannot be null`
+          );
+        }
+      } else if (fieldValue === undefined) {
+        if (!isOptional) {
+          throw new Error(
+            `Field '${fieldName}' in struct ${structName} cannot be undefined`
           );
         }
       } else {
@@ -147,13 +158,18 @@ export function validateType(
   allEnums: EnumMap,
   isOptional: boolean = false
 ): void {
-  // Handle optional types
-  if (value === null || value === undefined) {
+  // Handle optional types - only null is valid, not undefined
+  if (value === null) {
     if (isOptional) {
       return;
     } else {
-      throw new Error("Value cannot be null or undefined for non-optional type");
+      throw new Error("Value cannot be null for non-optional type");
     }
+  }
+
+  // undefined is never valid (not even for optional fields)
+  if (value === undefined) {
+    throw new Error("Value cannot be undefined");
   }
 
   // Built-in types

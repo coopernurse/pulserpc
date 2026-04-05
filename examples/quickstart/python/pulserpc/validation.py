@@ -13,11 +13,8 @@ def validate_string(value: Any) -> None:
 
 def validate_int(value: Any) -> None:
     """Validate that value is an int"""
-    if isinstance(value, int):
-        return
-    if isinstance(value, float) and value == int(value):
-        return
-    raise TypeError(f"Expected int, got {type(value).__name__}")
+    if not isinstance(value, int):
+        raise TypeError(f"Expected int, got {type(value).__name__}")
 
 
 def validate_float(value: Any) -> None:

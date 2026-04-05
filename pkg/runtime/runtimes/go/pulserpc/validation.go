@@ -2,6 +2,7 @@ package pulserpc
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 )
 
@@ -15,14 +16,16 @@ func ValidateString(value interface{}) error {
 
 // ValidateInt validates that value is an int
 func ValidateInt(value interface{}) error {
-	if _, ok := value.(int); !ok {
-		if _, ok := value.(float64); ok {
-			// JSON numbers are decoded as float64, but we accept them for int
+	if _, ok := value.(int); ok {
+		return nil
+	}
+	if v, ok := value.(float64); ok {
+		if v == float64(int64(v)) || math.Abs(v-math.Floor(v)) < 1e-9 {
 			return nil
 		}
-		return fmt.Errorf("expected int, got %T", value)
+		return fmt.Errorf("expected int, got float with fractional part")
 	}
-	return nil
+	return fmt.Errorf("expected int, got %T", value)
 }
 
 // ValidateFloat validates that value is a float64 or int
@@ -249,4 +252,3 @@ func ValidateType(
 
 	return fmt.Errorf("invalid type definition: %v", typeDef)
 }
-

@@ -1,0 +1,438 @@
+{
+  "rootNamespace": "checkout",
+  "interfaces": [
+    {
+      "name": "CatalogService",
+      "namespace": "checkout",
+      "methods": [
+        {
+          "name": "listProducts",
+          "returnType": {
+            "array": {
+              "userDefined": "Product"
+            }
+          }
+        },
+        {
+          "name": "getProduct",
+          "parameters": [
+            {
+              "name": "productId",
+              "type": {
+                "builtIn": "string"
+              }
+            }
+          ],
+          "returnType": {
+            "userDefined": "Product"
+          },
+          "returnOptional": true
+        }
+      ]
+    },
+    {
+      "name": "CartService",
+      "namespace": "checkout",
+      "methods": [
+        {
+          "name": "addToCart",
+          "parameters": [
+            {
+              "name": "request",
+              "type": {
+                "userDefined": "AddToCartRequest"
+              }
+            }
+          ],
+          "returnType": {
+            "userDefined": "Cart"
+          }
+        },
+        {
+          "name": "getCart",
+          "parameters": [
+            {
+              "name": "cartId",
+              "type": {
+                "builtIn": "string"
+              }
+            }
+          ],
+          "returnType": {
+            "userDefined": "Cart"
+          },
+          "returnOptional": true
+        },
+        {
+          "name": "clearCart",
+          "parameters": [
+            {
+              "name": "cartId",
+              "type": {
+                "builtIn": "string"
+              }
+            }
+          ],
+          "returnType": {
+            "builtIn": "bool"
+          }
+        }
+      ]
+    },
+    {
+      "name": "OrderService",
+      "namespace": "checkout",
+      "methods": [
+        {
+          "name": "createOrder",
+          "parameters": [
+            {
+              "name": "request",
+              "type": {
+                "userDefined": "CreateOrderRequest"
+              }
+            }
+          ],
+          "returnType": {
+            "userDefined": "CheckoutResponse"
+          }
+        },
+        {
+          "name": "getOrder",
+          "parameters": [
+            {
+              "name": "orderId",
+              "type": {
+                "builtIn": "string"
+              }
+            }
+          ],
+          "returnType": {
+            "userDefined": "Order"
+          },
+          "returnOptional": true
+        }
+      ]
+    }
+  ],
+  "structs": [
+    {
+      "name": "Product",
+      "namespace": "checkout",
+      "fields": [
+        {
+          "name": "productId",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "name",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "description",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "price",
+          "type": {
+            "builtIn": "float"
+          }
+        },
+        {
+          "name": "stock",
+          "type": {
+            "builtIn": "int"
+          }
+        },
+        {
+          "name": "imageUrl",
+          "type": {
+            "builtIn": "string"
+          },
+          "optional": true
+        }
+      ]
+    },
+    {
+      "name": "CartItem",
+      "namespace": "checkout",
+      "fields": [
+        {
+          "name": "productId",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "quantity",
+          "type": {
+            "builtIn": "int"
+          }
+        },
+        {
+          "name": "price",
+          "type": {
+            "builtIn": "float"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cart",
+      "namespace": "checkout",
+      "fields": [
+        {
+          "name": "cartId",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "items",
+          "type": {
+            "array": {
+              "userDefined": "CartItem"
+            }
+          }
+        },
+        {
+          "name": "subtotal",
+          "type": {
+            "builtIn": "float"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Address",
+      "namespace": "checkout",
+      "fields": [
+        {
+          "name": "street",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "city",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "state",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "zipCode",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "country",
+          "type": {
+            "builtIn": "string"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Order",
+      "namespace": "checkout",
+      "fields": [
+        {
+          "name": "orderId",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "cart",
+          "type": {
+            "userDefined": "Cart"
+          }
+        },
+        {
+          "name": "shippingAddress",
+          "type": {
+            "userDefined": "Address"
+          }
+        },
+        {
+          "name": "paymentMethod",
+          "type": {
+            "userDefined": "PaymentMethod"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "userDefined": "OrderStatus"
+          }
+        },
+        {
+          "name": "total",
+          "type": {
+            "builtIn": "float"
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "builtIn": "int"
+          }
+        }
+      ]
+    },
+    {
+      "name": "AddToCartRequest",
+      "namespace": "checkout",
+      "fields": [
+        {
+          "name": "cartId",
+          "type": {
+            "builtIn": "string"
+          },
+          "optional": true
+        },
+        {
+          "name": "productId",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "quantity",
+          "type": {
+            "builtIn": "int"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CreateOrderRequest",
+      "namespace": "checkout",
+      "fields": [
+        {
+          "name": "cartId",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "shippingAddress",
+          "type": {
+            "userDefined": "Address"
+          }
+        },
+        {
+          "name": "paymentMethod",
+          "type": {
+            "userDefined": "PaymentMethod"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CheckoutResponse",
+      "namespace": "checkout",
+      "fields": [
+        {
+          "name": "orderId",
+          "type": {
+            "builtIn": "string"
+          }
+        },
+        {
+          "name": "message",
+          "type": {
+            "builtIn": "string"
+          },
+          "optional": true
+        }
+      ]
+    }
+  ],
+  "enums": [
+    {
+      "name": "OrderStatus",
+      "namespace": "checkout",
+      "values": [
+        {
+          "name": "pending"
+        },
+        {
+          "name": "paid"
+        },
+        {
+          "name": "shipped"
+        },
+        {
+          "name": "delivered"
+        },
+        {
+          "name": "cancelled"
+        }
+      ]
+    },
+    {
+      "name": "PaymentMethod",
+      "namespace": "checkout",
+      "values": [
+        {
+          "name": "credit_card"
+        },
+        {
+          "name": "debit_card"
+        },
+        {
+          "name": "paypal"
+        },
+        {
+          "name": "apple_pay"
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "name": "checkout.CartNotFound",
+      "namespace": "checkout",
+      "code": 1001,
+      "message": "Cart doesn't exist"
+    },
+    {
+      "name": "checkout.CartEmpty",
+      "namespace": "checkout",
+      "code": 1002,
+      "message": "Cart has no items"
+    },
+    {
+      "name": "checkout.PaymentFailed",
+      "namespace": "checkout",
+      "code": 1003,
+      "message": "Payment method rejected"
+    },
+    {
+      "name": "checkout.OutOfStock",
+      "namespace": "checkout",
+      "code": 1004,
+      "message": "Insufficient inventory"
+    },
+    {
+      "name": "checkout.InvalidAddress",
+      "namespace": "checkout",
+      "code": 1005,
+      "message": "Shipping address validation failed"
+    }
+  ]
+}

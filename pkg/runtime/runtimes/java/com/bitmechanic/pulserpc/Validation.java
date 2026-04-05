@@ -24,9 +24,24 @@ public class Validation {
      * Validate that value is an int
      */
     public static void validateInt(Object value) {
-        if (!(value instanceof Integer)) {
-            throw new IllegalArgumentException("Expected int, got " + getTypeName(value));
+        if (value instanceof Integer) {
+            return;
         }
+        // Accept whole-number doubles
+        if (value instanceof Double) {
+            double d = (Double) value;
+            if (d == Math.floor(d)) {
+                return;
+            }
+        }
+        // Accept whole-number longs
+        if (value instanceof Long) {
+            long l = (Long) value;
+            if (l == Math.floor(l)) {
+                return;
+            }
+        }
+        throw new IllegalArgumentException("Expected int, got " + getTypeName(value));
     }
 
     /**

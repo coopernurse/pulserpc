@@ -252,13 +252,17 @@ function testValidateTypeString() {
 function testValidateTypeOptionalNone() {
   const allStructs: StructMap = {};
   const allEnums: EnumMap = {};
+  // null is valid for optional fields
   validateType(null, { builtIn: "string" }, allStructs, allEnums, true);
-  validateType(undefined, { builtIn: "string" }, allStructs, allEnums, true);
-
+  // undefined is NOT valid for optional fields (per spec: only null is valid)
   assert.throws(
-    () =>
-      validateType(null, { builtIn: "string" }, allStructs, allEnums, false),
-    /cannot be null or undefined/
+    () => validateType(undefined, { builtIn: "string" }, allStructs, allEnums, true),
+    /cannot be undefined/
+  );
+  // null is NOT valid for non-optional fields
+  assert.throws(
+    () => validateType(null, { builtIn: "string" }, allStructs, allEnums, false),
+    /cannot be null/
   );
   console.log("✓ testValidateTypeOptionalNone");
 }
