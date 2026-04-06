@@ -4,7 +4,7 @@ import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
 from checkout.server import CatalogService, CartService, OrderService
-from checkout.types import Err, ErrJsonRpc
+from checkout.rpctypes import Err, ErrJsonRpc
 from pulserpc import Server, Contract, RPCError
 import random
 import time

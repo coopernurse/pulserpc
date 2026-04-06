@@ -30,7 +30,7 @@ func (p *TSClientServer) Name() string {
 // RegisterFlags registers CLI flags for this plugin
 func (p *TSClientServer) RegisterFlags(fs *flag.FlagSet) {
 	if fs.Lookup("package") == nil {
-		fs.String("package", "", "Base module path for generated imports (e.g., @myapp/lib/rpc)")
+		fs.String("package", "", "Base module path for generated imports (e.g., @myapp/lib/rpc). Creates single directory level under -dir.")
 	}
 }
 
@@ -88,11 +88,14 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
-	// Determine if multi-namespace mode is active
+	// Determine if multi-namespace mode or package mode is active
+	// When -package flag is set, use namespace directories even for single namespace
+	hasPackage := packagePrefix != ""
 	multiNsMode := isMultiNamespaceMode(outputDir, namespaceMap)
+	useNamespaceDirs := multiNsMode || hasPackage
 
-	// Create per-namespace subdirectories when in multi-namespace mode
-	if multiNsMode {
+	// Create per-namespace subdirectories when needed
+	if useNamespaceDirs {
 		for ns := range namespaceMap {
 			if err := paths.EnsureNamespaceDir(ns); err != nil {
 				return fmt.Errorf("failed to create namespace directory: %w", err)
@@ -100,15 +103,37 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		}
 	}
 
-	// Write IDL JSON file
-	if err := writeIDLJSONTs(idl, outputDir, fs); err != nil {
-		return fmt.Errorf("failed to write idl.json: %w", err)
+	// Write IDL JSON file to entry-point namespace directory only
+	// The entry-point is the namespace of the root file being parsed
+	// This applies in ALL cases, regardless of multi-namespace mode
+	entryPointNs := idl.RootNamespace
+	if entryPointNs == "" {
+		// Fallback: if no RootNamespace set, use the first namespace
+		for ns := range namespaceMap {
+			entryPointNs = ns
+			break
+		}
+	}
+	if entryPointNs != "" {
+		entryPointDir := paths.ResolveNamespaceDir(entryPointNs)
+		// Ensure entry-point namespace directory exists
+		if err := paths.EnsureNamespaceDir(entryPointNs); err != nil {
+			return fmt.Errorf("failed to create entry-point namespace directory: %w", err)
+		}
+		if err := writeIDLJSONTs(idl, entryPointDir, fs); err != nil {
+			return fmt.Errorf("failed to write idl.json: %w", err)
+		}
+	} else {
+		// No namespaces at all - write to root (edge case)
+		if err := writeIDLJSONTs(idl, outputDir, fs); err != nil {
+			return fmt.Errorf("failed to write idl.json: %w", err)
+		}
 	}
 
-	// Generate per-namespace files when in multi-namespace mode,
-	// or flat files for backwards-compatible single-namespace output.
-	if multiNsMode {
-		// Multi-namespace mode: generate types.ts, server.ts, client.ts per namespace
+	// Generate per-namespace files when using namespace directories,
+	// or flat files for backwards-compatible single-namespace output without package.
+	if useNamespaceDirs {
+		// Multi-namespace or package mode: generate types.ts, server.ts, client.ts per namespace
 		for ns, nsTypes := range namespaceMap {
 			nsDir := paths.ResolveNamespaceDir(ns)
 
@@ -187,17 +212,23 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 	// Generate test server and client if flag is set
 	if generateTestServer {
+		// Determine entry-point namespace directory for test files
+		testDir := outputDir
+		if entryPointNs != "" {
+			testDir = paths.ResolveNamespaceDir(entryPointNs)
+		}
+
 		// Generate test_server.ts
-		testServerCode := generateTestServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap)
-		testServerPath := filepath.Join(outputDir, "test_server.ts")
+		testServerCode := generateTestServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, entryPointNs)
+		testServerPath := filepath.Join(testDir, "test_server.ts")
 		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_server.ts: %w", err)
 		}
 		PrintFileCreated(testServerPath, fs)
 
 		// Generate test_client.ts
-		testClientCode := generateTestClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap)
-		testClientPath := filepath.Join(outputDir, "test_client.ts")
+		testClientCode := generateTestClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, entryPointNs)
+		testClientPath := filepath.Join(testDir, "test_client.ts")
 		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_client.ts: %w", err)
 		}
@@ -235,12 +266,9 @@ func (p *TSClientServer) copyRuntimeFiles(paths TSNamespacePaths, silent bool) e
 
 // writeIDLJSONTs writes the IDL metadata as JSON to idl.json
 //
-// IDL Placement Note (2026-04-01):
-// This function intentionally writes idl.json directly to outputDir (the root -dir),
-// NOT to a namespace subdirectory. The idl.json file is consumed by the runtime
-// Contract class at startup, and it must be accessible as {root}/idl.json regardless
-// of which namespace mode is active. This mirrors the behavior of the original
-// single-namespace generator and ensures the runtime can locate the contract.
+// IDL Placement:
+// - Writes to the specified output directory (e.g., {dir}/{namespace}/idl.json)
+// - Only the entry-point namespace directory gets idl.json
 func writeIDLJSONTs(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 	idlJSON, err := json.MarshalIndent(idl, "", "  ")
 	if err != nil {
@@ -933,18 +961,37 @@ func generateNamespaceIndexTs(paths TSNamespacePaths, namespace string) error {
 }
 
 // generateTestServerTs generates test_server.ts with concrete implementations of all interfaces
-func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes) string {
+// When entryPointNs is provided, the file will be placed in that namespace subdirectory,
+// so imports are adjusted accordingly.
+func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, entryPointNs string) string {
 	var sb strings.Builder
+
+	// Determine if we're generating in a namespace subdirectory
+	inNsSubdir := entryPointNs != ""
+	// Runtime import path: '../pulserpc' from namespace subdir, './pulserpc' from root
+	runtimeImport := "./pulserpc"
+	if inNsSubdir {
+		runtimeImport = "../pulserpc"
+	}
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n")
 	sb.WriteString("// Test server implementation for integration testing\n\n")
 	sb.WriteString("import { readFileSync } from 'fs';\n")
-	sb.WriteString("import { Server, Contract } from './pulserpc';\n")
+	fmt.Fprintf(&sb, "import { Server, Contract } from '%s';\n", runtimeImport)
 
 	for _, iface := range idl.Interfaces {
 		ns := GetNamespaceFromType(iface.Name, iface.Namespace)
 		if ns != "" {
-			fmt.Fprintf(&sb, "import { %s } from './%s/server';\n", iface.Name, ns)
+			if inNsSubdir && ns == entryPointNs {
+				// Interface is in the same namespace as where we're placing the test file
+				fmt.Fprintf(&sb, "import { %s } from './server';\n", iface.Name)
+			} else if inNsSubdir {
+				// Interface is in a different namespace - go up and into that namespace
+				fmt.Fprintf(&sb, "import { %s } from '../%s/server';\n", iface.Name, ns)
+			} else {
+				// File is at root - standard path
+				fmt.Fprintf(&sb, "import { %s } from './%s/server';\n", iface.Name, ns)
+			}
 		} else {
 			fmt.Fprintf(&sb, "import { %s } from './server';\n", iface.Name)
 		}
@@ -1236,12 +1283,22 @@ func writeDefaultTestValueTs(sb *strings.Builder, t *parser.Type, structMap map[
 }
 
 // generateTestClientTs generates test_client.ts that exercises all client methods
-func generateTestClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes) string {
+// When entryPointNs is provided, the file will be placed in that namespace subdirectory,
+// so imports are adjusted accordingly.
+func generateTestClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, entryPointNs string) string {
 	var sb strings.Builder
+
+	// Determine if we're generating in a namespace subdirectory
+	inNsSubdir := entryPointNs != ""
+	// Runtime import path: '../pulserpc' from namespace subdir, './pulserpc' from root
+	runtimeImport := "./pulserpc"
+	if inNsSubdir {
+		runtimeImport = "../pulserpc"
+	}
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n")
 	sb.WriteString("// Test client for integration testing\n\n")
-	sb.WriteString("import { HttpTransport, Client } from './pulserpc';\n\n")
+	fmt.Fprintf(&sb, "import { HttpTransport, Client } from '%s';\n\n", runtimeImport)
 
 	// Generate wait for server function
 	sb.WriteString("async function waitForServer(url: string, timeout: number = 10000): Promise<boolean> {\n")

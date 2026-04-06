@@ -32,7 +32,7 @@ func (p *PythonClientServer) Name() string {
 func (p *PythonClientServer) RegisterFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&p.usePydantic, "use-pydantic", false, "Generate Pydantic models for types")
 	if fs.Lookup("package") == nil {
-		fs.String("package", "", "Base package prefix for generated Python imports (e.g., myapp.lib.rpc)")
+		fs.String("package", "", "Base package prefix for generated Python imports (e.g., myapp.lib.rpc). Creates single directory level under -dir.")
 	}
 }
 
@@ -78,14 +78,34 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// Initialize path helpers
 	paths := NewPythonNamespacePaths(outputDir, p.packageBase)
 
+	// Ensure all namespace directories exist before writing files
+	if _, err := paths.EnsureAllNamespaceDirs(namespaceMap); err != nil {
+		return fmt.Errorf("failed to create namespace directories: %w", err)
+	}
+
 	// Copy runtime library files (uses package-base-aware path from paths)
 	if err := p.copyRuntimeFiles(paths, isSilent()); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
 	// Write IDL JSON file
-	if err := writeIDLJSON(idl, outputDir, fs); err != nil {
-		return fmt.Errorf("failed to write idl.json: %w", err)
+	// Multi-namespace mode: write to each namespace directory
+	// Package mode (with -package flag): write to namespace directory even for single namespace
+	// Single-namespace flat mode without package: write to root
+	multiNsMode := len(namespaceMap) > 1
+	hasPackage := p.packageBase != ""
+	useNamespaceDirs := multiNsMode || hasPackage
+
+	if useNamespaceDirs {
+		for ns := range namespaceMap {
+			if err := writeIDLJSON(idl, paths.ResolveNamespaceDir(ns), fs); err != nil {
+				return fmt.Errorf("failed to write idl.json: %w", err)
+			}
+		}
+	} else {
+		if err := writeIDLJSON(idl, outputDir, fs); err != nil {
+			return fmt.Errorf("failed to write idl.json: %w", err)
+		}
 	}
 
 	// Generate __init__.py files for all namespace directories
@@ -137,11 +157,11 @@ func (p *PythonClientServer) generateNamespaceFiles(namespaceMap map[string]*Nam
 			return fmt.Errorf("failed to ensure namespace dir for %q: %w", ns, err)
 		}
 
-		// Generate types.py for this namespace
+		// Generate rpctypes.py for this namespace
 		typesCode := generateTypesPyForNamespace(nsTypes, ns, p.packageBase)
-		typesPath := paths.ResolveOutputPath(ns, "types.py")
+		typesPath := paths.ResolveOutputPath(ns, "rpctypes.py")
 		if err := os.WriteFile(typesPath, []byte(typesCode), 0644); err != nil {
-			return fmt.Errorf("failed to write types.py in namespace %q: %w", ns, err)
+			return fmt.Errorf("failed to write rpctypes.py in namespace %q: %w", ns, err)
 		}
 		PrintFileCreated(typesPath, fs)
 
@@ -264,9 +284,9 @@ func generateServerPyForNamespace(nsTypes *NamespaceTypes, packageBase string) s
 	sb.WriteString("import abc\n")
 	sb.WriteString(fmt.Sprintf("from %s import RPCError\n", runtimeImport))
 
-	// Import types from local types.py if there are any
+	// Import types from local rpctypes.py if there are any
 	if len(nsTypes.Structs) > 0 || len(nsTypes.Enums) > 0 {
-		sb.WriteString("from .types import ")
+		sb.WriteString("from .rpctypes import ")
 		typeNames := make([]string, 0, len(nsTypes.Structs)+len(nsTypes.Enums))
 		for _, s := range nsTypes.Structs {
 			typeNames = append(typeNames, s.Name)
@@ -899,7 +919,14 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 	sb.WriteString("from http.server import HTTPServer, BaseHTTPRequestHandler\n")
 	sb.WriteString("from typing import Any\n")
 	fmt.Fprintf(&sb, "from %s import Server, Contract, RPCError\n\n", runtimeImport)
-	sb.WriteString("from .server import *\n")
+
+	// Use absolute imports from namespace package (e.g., "from conform.server import *")
+	// instead of relative imports to support running as standalone script
+	if currentNS != "" {
+		fmt.Fprintf(&sb, "from %s.server import *\n", currentNS)
+	} else {
+		sb.WriteString("from server import *\n")
+	}
 
 	// Emit cross-namespace imports for types.py
 	crossRefs := collectCrossNamespaceRefs(nsTypes, currentNS)
@@ -911,7 +938,12 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 	}
 
 	if len(nsTypes.Structs) > 0 || len(nsTypes.Enums) > 0 {
-		sb.WriteString("from .types import ")
+		// Use absolute imports from namespace package instead of relative imports
+		if currentNS != "" {
+			fmt.Fprintf(&sb, "from %s.rpctypes import ", currentNS)
+		} else {
+			sb.WriteString("from rpctypes import ")
+		}
 		typeNames := make([]string, 0, len(nsTypes.Structs)+len(nsTypes.Enums))
 		for _, s := range nsTypes.Structs {
 			typeNames = append(typeNames, s.Name)

@@ -124,14 +124,17 @@ func (m *Manager) Generate(idl string, runtime string) (*Session, error) {
 	}
 
 	// Set default values for Java-specific flags if they exist and are empty
-	if pkgFlag := fs.Lookup("package"); pkgFlag != nil {
-		if pkgFlag.Value.String() == "" {
-			pkgFlag.Value.Set("com.example.generated")
+	// Only Java requires a default package; other runtimes should work without one
+	if runtime == "java-client-server" {
+		if pkgFlag := fs.Lookup("package"); pkgFlag != nil {
+			if pkgFlag.Value.String() == "" {
+				pkgFlag.Value.Set("com.example.generated")
+			}
 		}
-	}
-	if jsonFlag := fs.Lookup("json-lib"); jsonFlag != nil {
-		if jsonFlag.Value.String() == "" {
-			jsonFlag.Value.Set("jackson")
+		if jsonFlag := fs.Lookup("json-lib"); jsonFlag != nil {
+			if jsonFlag.Value.String() == "" {
+				jsonFlag.Value.Set("jackson")
+			}
 		}
 	}
 

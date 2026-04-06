@@ -49,14 +49,14 @@ func TestPythonNamespacePathsResolveNamespaceDir(t *testing.T) {
 			baseDir:     "/output",
 			namespace:   "common",
 			packageBase: "myapp.lib.rpc",
-			expected:    "/output/myapp/lib/rpc/common",
+			expected:    "/output/myapp.lib.rpc/common",
 		},
 		{
 			name:        "empty namespace with package base",
 			baseDir:     "/output",
 			namespace:   "",
 			packageBase: "myapp.lib.rpc",
-			expected:    "/output/myapp/lib/rpc",
+			expected:    "/output/myapp.lib.rpc",
 		},
 	}
 
@@ -91,10 +91,10 @@ func TestPythonNamespacePathsResolveRuntimeDir(t *testing.T) {
 			expected:    "/output/myapp/pulserpc",
 		},
 		{
-			name:        "nested package base prepends full package path",
+			name:        "nested package base treats package as single dir",
 			baseDir:     "/output",
 			packageBase: "myapp.lib.rpc",
-			expected:    "/output/myapp/lib/rpc/pulserpc",
+			expected:    "/output/myapp.lib.rpc/pulserpc",
 		},
 	}
 
@@ -156,7 +156,7 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 			packageBase: "myapp.lib.rpc",
 			namespace:   "book",
 			filename:    "types.py",
-			expected:    "/output/myapp/lib/rpc/book/types.py",
+			expected:    "/output/myapp.lib.rpc/book/types.py",
 		},
 	}
 
@@ -208,13 +208,13 @@ func TestPythonNamespacePathsEnsureNamespaceDir(t *testing.T) {
 			name:        "named namespace with nested package",
 			namespace:   "book",
 			packageBase: "myapp.lib.rpc",
-			expected:    filepath.Join(tmpDir, "myapp", "lib", "rpc", "book"),
+			expected:    filepath.Join(tmpDir, "myapp.lib.rpc", "book"),
 		},
 		{
 			name:        "empty namespace with package",
 			namespace:   "",
 			packageBase: "myapp.lib.rpc",
-			expected:    filepath.Join(tmpDir, "myapp", "lib", "rpc"),
+			expected:    filepath.Join(tmpDir, "myapp.lib.rpc"),
 		},
 	}
 
@@ -248,7 +248,7 @@ func TestPythonNamespacePathsEnsureRuntimeDir(t *testing.T) {
 		{
 			name:        "with package base",
 			packageBase: "myapp.lib.rpc",
-			expected:    filepath.Join(tmpDir, "myapp", "lib", "rpc", "pulserpc"),
+			expected:    filepath.Join(tmpDir, "myapp.lib.rpc", "pulserpc"),
 		},
 	}
 
@@ -393,12 +393,12 @@ func TestPythonNamespacePathsWithNestedOutputDirs(t *testing.T) {
 
 	// Verify namespace dir resolution
 	got := paths.ResolveNamespaceDir("common")
-	expected := filepath.Join(nestedDir, "myapp", "lib", "rpc", "common")
+	expected := filepath.Join(nestedDir, "myapp.lib.rpc", "common")
 	assertPathEqual(t, got, expected)
 
 	// Verify runtime dir resolution
 	got = paths.ResolveRuntimeDir()
-	expected = filepath.Join(nestedDir, "myapp", "lib", "rpc", "pulserpc")
+	expected = filepath.Join(nestedDir, "myapp.lib.rpc", "pulserpc")
 	assertPathEqual(t, got, expected)
 
 	// Ensure directories can be created
@@ -411,10 +411,10 @@ func TestPythonNamespacePathsWithNestedOutputDirs(t *testing.T) {
 	}
 
 	// Verify they exist
-	if _, err := os.Stat(filepath.Join(nestedDir, "myapp", "lib", "rpc", "common")); err != nil {
+	if _, err := os.Stat(filepath.Join(nestedDir, "myapp.lib.rpc", "common")); err != nil {
 		t.Fatalf("common directory not created: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(nestedDir, "myapp", "lib", "rpc", "pulserpc")); err != nil {
+	if _, err := os.Stat(filepath.Join(nestedDir, "myapp.lib.rpc", "pulserpc")); err != nil {
 		t.Fatalf("runtime directory not created: %v", err)
 	}
 }
@@ -448,9 +448,9 @@ func TestPythonNamespacePathsMultipleNamespaces(t *testing.T) {
 
 	// Verify each namespace has expected paths
 	expectedPaths := map[string]string{
-		"common": filepath.Join(tmpDir, "myapp", "rpc", "common"),
-		"book":   filepath.Join(tmpDir, "myapp", "rpc", "book"),
-		"user":   filepath.Join(tmpDir, "myapp", "rpc", "user"),
+		"common": filepath.Join(tmpDir, "myapp.rpc", "common"),
+		"book":   filepath.Join(tmpDir, "myapp.rpc", "book"),
+		"user":   filepath.Join(tmpDir, "myapp.rpc", "user"),
 	}
 
 	for ns, expectedPath := range expectedPaths {
@@ -472,6 +472,6 @@ func TestPythonNamespacePathsMultipleNamespaces(t *testing.T) {
 
 	// Verify runtime path
 	runtimeDir := paths.ResolveRuntimeDir()
-	expectedRuntime := filepath.Join(tmpDir, "myapp", "rpc", "pulserpc")
+	expectedRuntime := filepath.Join(tmpDir, "myapp.rpc", "pulserpc")
 	assertPathEqual(t, runtimeDir, expectedRuntime)
 }

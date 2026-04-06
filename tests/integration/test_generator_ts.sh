@@ -21,6 +21,9 @@ SERVER_PORT=8080
 SERVER_URL="http://localhost:$SERVER_PORT"
 TIMEOUT=30
 
+# Entry-point namespace for conform.pulse
+ENTRY_POINT_NS="conform"
+
 # Cleanup function
 cleanup() {
     echo -e "${YELLOW}Cleaning up...${NC}"
@@ -77,9 +80,12 @@ if ! "$BINARY_PATH" -plugin ts-client-server -generate-test-files -dir "$OUTPUT_
     exit 1
 fi
 
-# Verify generated files exist
-if [ ! -f "$OUTPUT_DIR/test_server.ts" ] || [ ! -f "$OUTPUT_DIR/test_client.ts" ]; then
-    echo -e "${RED}ERROR: Test files not generated${NC}"
+# Verify generated files exist (now in entry-point namespace directory)
+TEST_SERVER_PATH="$OUTPUT_DIR/$ENTRY_POINT_NS/test_server.ts"
+TEST_CLIENT_PATH="$OUTPUT_DIR/$ENTRY_POINT_NS/test_client.ts"
+if [ ! -f "$TEST_SERVER_PATH" ] || [ ! -f "$TEST_CLIENT_PATH" ]; then
+    echo -e "${RED}ERROR: Test files not generated at expected location${NC}"
+    echo "Looking for: $TEST_SERVER_PATH and $TEST_CLIENT_PATH"
     exit 1
 fi
 
@@ -92,8 +98,9 @@ npm install -g typescript ts-node @types/node >/dev/null 2>&1 || true
 
 # Step 5: Start test server in background
 echo -e "${YELLOW}Starting test server on port $SERVER_PORT...${NC}"
-cd "$OUTPUT_DIR"
-# Create tsconfig.json in output directory
+# Create tsconfig.json in entry-point namespace directory
+TS_CONFIG_DIR="$OUTPUT_DIR/$ENTRY_POINT_NS"
+cd "$TS_CONFIG_DIR"
 cat > tsconfig.json << 'EOF'
 {
   "compilerOptions": {
@@ -142,8 +149,9 @@ fi
 
 echo ""
 
-# Step 7: Run test client  
+# Step 7: Run test client
 echo -e "${YELLOW}Running test client...${NC}"
+cd "$TS_CONFIG_DIR"
 if ts-node --project tsconfig.json test_client.ts 2>&1; then
     echo ""
     echo -e "${GREEN}Test client passed${NC}"
@@ -152,7 +160,7 @@ else
     echo ""
     echo -e "${RED}=== Tests failed with exit code $CLIENT_EXIT_CODE ===${NC}"
     echo "Server log:"
-    cat server.log
+    cat server.log 2>/dev/null || echo "No server.log found"
     exit $CLIENT_EXIT_CODE
 fi
 

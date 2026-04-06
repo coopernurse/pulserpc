@@ -110,7 +110,7 @@ class OrderServiceImpl extends OrderService {
 }
 
 // Load IDL and create Contract
-const idlData = JSON.parse(readFileSync('idl.json', 'utf-8'));
+const idlData = JSON.parse(readFileSync('checkout/idl.json', 'utf-8'));
 const contract = new Contract(idlData);
 
 // Create Server instance

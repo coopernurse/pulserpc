@@ -50,7 +50,7 @@ func TestPythonGeneratorBasicFiles(t *testing.T) {
 	}
 
 	// Check server.py in default namespace (root dir for single-namespace)
-	assertFilesExist(t, tmpDir, "server.py", "client.py", "types.py", "idl.json")
+	assertFilesExist(t, tmpDir, "server.py", "client.py", "rpctypes.py", "idl.json")
 	assertDirExists(t, filepath.Join(tmpDir, "pulserpc"))
 }
 
@@ -340,7 +340,7 @@ func TestPythonGeneratorInitPyIdempotent(t *testing.T) {
 	}
 
 	// Verify other generated files are still intact
-	for _, filename := range []string{"types.py", "server.py", "client.py", "idl.json"} {
+	for _, filename := range []string{"rpctypes.py", "server.py", "client.py", "idl.json"} {
 		path := filepath.Join(tmpDir, filename)
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s at %s after regeneration, missing: %v", filename, path, err)
@@ -379,7 +379,7 @@ func TestPythonGeneratorInitPyWithPackageBase(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	initPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "__init__.py")
+	initPath := filepath.Join(tmpDir, "myapp.lib.rpc", "__init__.py")
 	assertFileExists(t, initPath)
 	assertFileContains(t, initPath, "myapp.lib.rpc.pulserpc")
 }
@@ -421,7 +421,7 @@ func TestPythonGeneratorNamespaceSplitFiles(t *testing.T) {
 	}
 
 	for _, ns := range []string{"common", "book"} {
-		assertNamespaceFilesExist(t, tmpDir, ns, "types.py", "server.py", "client.py", "test_server.py", "test_client.py", "__init__.py")
+		assertNamespaceFilesExist(t, tmpDir, ns, "rpctypes.py", "server.py", "client.py", "test_server.py", "test_client.py", "__init__.py")
 	}
 
 	// Verify book/server.py contains the BookService interface
@@ -484,7 +484,7 @@ func TestPythonGeneratorSingleNamespaceEquivalence(t *testing.T) {
 	}
 
 	// For single-namespace, files should be at root level (backwards compatible)
-	for _, filename := range []string{"types.py", "server.py", "client.py", "test_server.py", "test_client.py"} {
+	for _, filename := range []string{"rpctypes.py", "server.py", "client.py", "test_server.py", "test_client.py"} {
 		path := filepath.Join(tmpDir, filename)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected %s at root %s, missing: %v", filename, path, err)
@@ -565,42 +565,42 @@ func TestPythonGeneratorTypesPyContent(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Verify types.py in common namespace contains struct and enum
-	commonTypesPath := filepath.Join(tmpDir, "common", "types.py")
+	// Verify rpctypes.py in common namespace contains struct and enum
+	commonTypesPath := filepath.Join(tmpDir, "common", "rpctypes.py")
 	content, err := os.ReadFile(commonTypesPath)
 	if err != nil {
-		t.Fatalf("failed to read common/types.py: %v", err)
+		t.Fatalf("failed to read common/rpctypes.py: %v", err)
 	}
 	commonTypesContent := string(content)
 	if !strings.Contains(commonTypesContent, "class Response:") {
-		t.Errorf("common/types.py should contain Response dataclass")
+		t.Errorf("common/rpctypes.py should contain Response dataclass")
 	}
 	if !strings.Contains(commonTypesContent, "class Status:") {
-		t.Errorf("common/types.py should contain Status enum")
+		t.Errorf("common/rpctypes.py should contain Status enum")
 	}
 	if !strings.Contains(commonTypesContent, "@dataclass") {
-		t.Errorf("common/types.py should use @dataclass decorator")
+		t.Errorf("common/rpctypes.py should use @dataclass decorator")
 	}
 
-	// Verify types.py in book namespace contains struct
-	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	// Verify rpctypes.py in book namespace contains struct
+	bookTypesPath := filepath.Join(tmpDir, "book", "rpctypes.py")
 	content, err = os.ReadFile(bookTypesPath)
 	if err != nil {
-		t.Fatalf("failed to read book/types.py: %v", err)
+		t.Fatalf("failed to read book/rpctypes.py: %v", err)
 	}
 	bookTypesContent := string(content)
 	if !strings.Contains(bookTypesContent, "class Book:") {
-		t.Errorf("book/types.py should contain Book dataclass")
+		t.Errorf("book/rpctypes.py should contain Book dataclass")
 	}
 
-	// Verify server.py imports types from local types.py
+	// Verify server.py imports types from local rpctypes.py
 	bookServerPath := filepath.Join(tmpDir, "book", "server.py")
 	content, err = os.ReadFile(bookServerPath)
 	if err != nil {
 		t.Fatalf("failed to read book/server.py: %v", err)
 	}
-	if !strings.Contains(string(content), "from .types import") {
-		t.Errorf("book/server.py should import from .types")
+	if !strings.Contains(string(content), "from .rpctypes import") {
+		t.Errorf("book/server.py should import from .rpctypes")
 	}
 }
 
@@ -648,12 +648,12 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Assert output tree includes myapp/lib/rpc/pulserpc/, myapp/lib/rpc/common/, etc.
+	// Assert output tree includes myapp.lib.rpc/pulserpc/, myapp.lib.rpc/common/, etc.
 	expectedDirs := []string{
-		filepath.Join("myapp", "lib", "rpc", "pulserpc"),
-		filepath.Join("myapp", "lib", "rpc", "common"),
-		filepath.Join("myapp", "lib", "rpc", "book"),
-		filepath.Join("myapp", "lib", "rpc", "user"),
+		filepath.Join("myapp.lib.rpc", "pulserpc"),
+		filepath.Join("myapp.lib.rpc", "common"),
+		filepath.Join("myapp.lib.rpc", "book"),
+		filepath.Join("myapp.lib.rpc", "user"),
 	}
 	for _, dir := range expectedDirs {
 		dirPath := filepath.Join(tmpDir, dir)
@@ -665,38 +665,38 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 		}
 	}
 
-	// Each namespace dir should have types.py, server.py, client.py, __init__.py
+	// Each namespace dir should have rpctypes.py, server.py, client.py, __init__.py
 	for _, ns := range []string{"common", "book", "user"} {
-		for _, filename := range []string{"types.py", "server.py", "client.py", "__init__.py"} {
-			path := filepath.Join(tmpDir, "myapp", "lib", "rpc", ns, filename)
+		for _, filename := range []string{"rpctypes.py", "server.py", "client.py", "__init__.py"} {
+			path := filepath.Join(tmpDir, "myapp.lib.rpc", ns, filename)
 			if _, err := os.Stat(path); err != nil {
 				t.Errorf("expected %s in %s namespace at %s, missing: %v", filename, ns, path, err)
 			}
 		}
 	}
 
-	bookTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "book", "types.py")
+	bookTypesPath := filepath.Join(tmpDir, "myapp.lib.rpc", "book", "rpctypes.py")
 	bookTypesContent, err := os.ReadFile(bookTypesPath)
 	if err != nil {
-		t.Fatalf("failed to read book/types.py: %v", err)
+		t.Fatalf("failed to read book/rpctypes.py: %v", err)
 	}
 	if !strings.Contains(string(bookTypesContent), "from myapp.lib.rpc.common import Response") {
-		t.Errorf("book/types.py should import Response from myapp.lib.rpc.common, got:\n%s", string(bookTypesContent))
+		t.Errorf("book/rpctypes.py should import Response from myapp.lib.rpc.common, got:\n%s", string(bookTypesContent))
 	}
 
-	userTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "user", "types.py")
+	userTypesPath := filepath.Join(tmpDir, "myapp.lib.rpc", "user", "rpctypes.py")
 	userTypesContent, err := os.ReadFile(userTypesPath)
 	if err != nil {
-		t.Fatalf("failed to read user/types.py: %v", err)
+		t.Fatalf("failed to read user/rpctypes.py: %v", err)
 	}
 	if !strings.Contains(string(userTypesContent), "from myapp.lib.rpc.common import Response") {
-		t.Errorf("user/types.py should import Response from myapp.lib.rpc.common, got:\n%s", string(userTypesContent))
+		t.Errorf("user/rpctypes.py should import Response from myapp.lib.rpc.common, got:\n%s", string(userTypesContent))
 	}
 
 	// pulserpc runtime dir should have its files
 	runtimeFiles := []string{"__init__.py", "rpc.py", "server.py", "client.py", "transport.py", "types.py"}
 	for _, filename := range runtimeFiles {
-		path := filepath.Join(tmpDir, "myapp", "lib", "rpc", "pulserpc", filename)
+		path := filepath.Join(tmpDir, "myapp.lib.rpc", "pulserpc", filename)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected runtime file %s at %s, missing: %v", filename, path, err)
 		}
@@ -748,37 +748,37 @@ func TestPythonGeneratorCrossNamespaceImports(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Verify book/types.py imports from myapp.lib.rpc.common
-	bookTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "book", "types.py")
+	// Verify book/rpctypes.py imports from myapp.lib.rpc.common
+	bookTypesPath := filepath.Join(tmpDir, "myapp.lib.rpc", "book", "rpctypes.py")
 	content, err := os.ReadFile(bookTypesPath)
 	if err != nil {
-		t.Fatalf("failed to read book/types.py: %v", err)
+		t.Fatalf("failed to read book/rpctypes.py: %v", err)
 	}
 	bookTypesContent := string(content)
 	if !strings.Contains(bookTypesContent, "from myapp.lib.rpc.common import Address") {
-		t.Errorf("book/types.py should contain 'from myapp.lib.rpc.common import Address', got:\n%s", bookTypesContent)
+		t.Errorf("book/rpctypes.py should contain 'from myapp.lib.rpc.common import Address', got:\n%s", bookTypesContent)
 	}
 
-	// Verify user/types.py imports from myapp.lib.rpc.common
-	userTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "user", "types.py")
+	// Verify user/rpctypes.py imports from myapp.lib.rpc.common
+	userTypesPath := filepath.Join(tmpDir, "myapp.lib.rpc", "user", "rpctypes.py")
 	content, err = os.ReadFile(userTypesPath)
 	if err != nil {
-		t.Fatalf("failed to read user/types.py: %v", err)
+		t.Fatalf("failed to read user/rpctypes.py: %v", err)
 	}
 	userTypesContent := string(content)
 	if !strings.Contains(userTypesContent, "from myapp.lib.rpc.common import Address") {
-		t.Errorf("user/types.py should contain 'from myapp.lib.rpc.common import Address', got:\n%s", userTypesContent)
+		t.Errorf("user/rpctypes.py should contain 'from myapp.lib.rpc.common import Address', got:\n%s", userTypesContent)
 	}
 
-	// Verify common/types.py does NOT have cross-namespace imports (it has none)
-	commonTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "common", "types.py")
+	// Verify common/rpctypes.py does NOT have cross-namespace imports (it has none)
+	commonTypesPath := filepath.Join(tmpDir, "myapp.lib.rpc", "common", "rpctypes.py")
 	content, err = os.ReadFile(commonTypesPath)
 	if err != nil {
-		t.Fatalf("failed to read common/types.py: %v", err)
+		t.Fatalf("failed to read common/rpctypes.py: %v", err)
 	}
 	commonTypesContent := string(content)
 	if strings.Contains(commonTypesContent, "Cross-namespace imports") {
-		t.Errorf("common/types.py should NOT have cross-namespace imports section, got:\n%s", commonTypesContent)
+		t.Errorf("common/rpctypes.py should NOT have cross-namespace imports section, got:\n%s", commonTypesContent)
 	}
 }
 
@@ -818,14 +818,14 @@ func TestPythonGeneratorCrossNamespaceImportsNoPackage(t *testing.T) {
 	}
 
 	// Without -package, cross-namespace imports should use bare namespace (e.g., "from common import Address")
-	bookTypesPath := filepath.Join(tmpDir, "book", "types.py")
+	bookTypesPath := filepath.Join(tmpDir, "book", "rpctypes.py")
 	content, err := os.ReadFile(bookTypesPath)
 	if err != nil {
-		t.Fatalf("failed to read book/types.py: %v", err)
+		t.Fatalf("failed to read book/rpctypes.py: %v", err)
 	}
 	bookTypesContent := string(content)
 	if !strings.Contains(bookTypesContent, "from common import Address") {
-		t.Errorf("book/types.py should contain 'from common import Address' (no package), got:\n%s", bookTypesContent)
+		t.Errorf("book/rpctypes.py should contain 'from common import Address' (no package), got:\n%s", bookTypesContent)
 	}
 }
 
@@ -868,15 +868,15 @@ func TestPythonGeneratorCrossNamespaceImportsNestedTypes(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// Verify book/types.py imports Item from common even though it's inside an array
-	bookTypesPath := filepath.Join(tmpDir, "myapp", "lib", "rpc", "book", "types.py")
+	// Verify book/rpctypes.py imports Item from common even though it's inside an array
+	bookTypesPath := filepath.Join(tmpDir, "myapp.lib.rpc", "book", "rpctypes.py")
 	content, err := os.ReadFile(bookTypesPath)
 	if err != nil {
-		t.Fatalf("failed to read book/types.py: %v", err)
+		t.Fatalf("failed to read book/rpctypes.py: %v", err)
 	}
 	bookTypesContent := string(content)
 	if !strings.Contains(bookTypesContent, "from myapp.lib.rpc.common import Item") {
-		t.Errorf("book/types.py should contain 'from myapp.lib.rpc.common import Item' for array element type, got:\n%s", bookTypesContent)
+		t.Errorf("book/rpctypes.py should contain 'from myapp.lib.rpc.common import Item' for array element type, got:\n%s", bookTypesContent)
 	}
 }
 

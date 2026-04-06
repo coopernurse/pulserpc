@@ -4,6 +4,32 @@
 
 This document defines how PulseRPC code generators should handle multi-file IDL projects with namespaces, respecting the `-dir` and `-package` flags to produce well-organized output that enables cross-namespace references.
 
+## Package Flag Semantics
+
+The `-package` flag creates a **single directory level** under `-dir`, not a nested hierarchy based on dot separators.
+
+**Examples:**
+| Command | Directory Structure |
+|---------|-------------------|
+| `pulserpc -dir output -package myapp book.pulse` | `output/myapp/pulserpc/` and `output/myapp/book/` |
+| `pulserpc -dir output -package com.example.generated book.pulse` | `output/com.example.generated/pulserpc/` (single level, not split by dots) |
+
+**Rationale:**
+- The `-dir` flag defines the project root for generated code
+- The `-package` flag defines the package/namespace prefix for RPC-related code
+- Splitting `com.example.generated` into nested directories would force users into deep nesting they may not want
+- Simpler structure: `{dir}/{package}/{namespace}/`
+
+### Single Namespace Behavior (No Package Flag)
+
+When no `-package` is specified and there is only one namespace, the generator outputs files to the `-dir` root (not in a subdirectory):
+
+| Command | Directory Structure |
+|---------|-------------------|
+| `pulserpc -dir output book.pulse` | `output/pulserpc/` and `output/types.ts`, `output/server.ts`, `output/client.ts` |
+
+This maintains backward compatibility for simple single-namespace projects.
+
 ## Core Requirements
 
 ### Flag Definitions
@@ -31,10 +57,11 @@ lib/rpc/
 
 ### Namespace Mapping Rules
 
-1. Each IDL namespace → One subdirectory under `-dir`
+1. Each IDL namespace → One subdirectory under `-dir` (or under `-package` if specified)
 2. The subdirectory name = the namespace name (lowercase for Java, original case for others)
 3. Generated file(s) inside subdirectory use namespace as package/module name
-4. All cross-namespace references use full `-package` qualified paths
+4. All cross-namespace references use relative paths (e.g., `../common`)
+5. The `-package` flag creates a single directory level, NOT nested directories based on dots
 
 ---
 
@@ -665,3 +692,25 @@ func runGenerator(t *testing.T, plugin, dir, pkg, idlFile string) error {
     // ... implementation
 }
 ```
+
+## Migration Guide
+
+### Package Directory Structure Change
+
+Prior versions of PulseRPC treated the `-package` flag as a dot-separated path that created nested directories. For example, `-package com.example.generated` would create `com/example/generated/`.
+
+This has been changed to create a single directory level: `-package com.example.generated` now creates `com.example.generated/` (the full value as one directory name).
+
+**Migration Steps:**
+
+1. **Update your generated code structure**: If you were using `-package com.foo.bar`, rename the directory from `com/foo/bar/` to `com.foo.bar/`
+
+2. **Update import paths**: Generated code uses relative imports, so no changes should be needed in your application code
+
+3. **Update `idl.json` location**: The `idl.json` file is now placed inside each namespace directory. If your runtime loads `idl.json` from a specific path, update that path to point to the namespace subdirectory
+
+### Playground Mode Changes
+
+The playground (web UI) no longer applies a default `-package com.example.generated` for TypeScript, Python, C#, or Go generators. Only Java maintains this default.
+
+If you were relying on the default package in playground mode, specify `-package` explicitly when generating code.

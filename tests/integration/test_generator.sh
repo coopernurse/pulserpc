@@ -29,6 +29,7 @@ cleanup() {
         wait $SERVER_PID 2>/dev/null || true
     fi
     rm -rf "$OUTPUT_DIR"
+    rm -rf "$RUN_DIR_CLEANUP"
 }
 
 trap cleanup EXIT
@@ -107,8 +108,22 @@ for dir in "$OUTPUT_DIR"/*/; do
 done
 # Extract namespace name from path (e.g., "conform" from "/tmp/.../conform/")
 NAMESPACE_NAME=$(basename "$TEST_DIR")
-cd "$OUTPUT_DIR"
-PYTHONPATH="$OUTPUT_DIR:$PYTHONPATH" python3 -m ${NAMESPACE_NAME}.test_server > server.log 2>&1 &
+# Run from a clean temp directory to avoid namespace collision with Python stdlib
+# Copy the necessary files to a temp run directory
+RUN_DIR="/tmp/pulserpc_run_$$"
+mkdir -p "$RUN_DIR/$NAMESPACE_NAME"
+# Copy all files from namespace dir using find to avoid glob expansion issues
+find "$TEST_DIR" -maxdepth 1 -type f -exec cp {} "$RUN_DIR/$NAMESPACE_NAME/" \;
+# Also copy idl.json explicitly to the run directory (where the server runs from)
+cp -f "$OUTPUT_DIR/conform/idl.json" "$RUN_DIR/" 2>/dev/null || true
+cp -r "$OUTPUT_DIR/pulserpc" "$RUN_DIR/"
+cp -r "$OUTPUT_DIR/inc" "$RUN_DIR/" 2>/dev/null || true
+cd "$RUN_DIR"
+PYTHONPATH="$RUN_DIR:$PYTHONPATH" python3 "${NAMESPACE_NAME}/test_server.py" > server.log 2>&1 &
+SERVER_PID=$!
+
+# Store the run dir for cleanup
+RUN_DIR_CLEANUP="$RUN_DIR"
 SERVER_PID=$!
 
 # Step 5: Wait for server to be ready
@@ -134,7 +149,9 @@ echo ""
 
 # Step 6: Run test client
 echo -e "${YELLOW}Running test client...${NC}"
-if PYTHONPATH="$OUTPUT_DIR:$PYTHONPATH" python3 -m ${NAMESPACE_NAME}.test_client; then
+# Run from the isolated run directory
+cd "$RUN_DIR"
+if PYTHONPATH="$RUN_DIR:$PYTHONPATH" python3 "${NAMESPACE_NAME}/test_client.py"; then
     echo ""
     echo -e "${GREEN}Test client passed${NC}"
 else

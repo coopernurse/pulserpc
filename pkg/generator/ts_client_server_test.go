@@ -145,8 +145,9 @@ func TestTsMultiNamespace(t *testing.T) {
 		// Assert runtime exists
 		assertTsFileExists(t, outputDir, "pulserpc/index.ts")
 
-		// Assert idl.json is at root
-		assertTsFileExists(t, outputDir, "idl.json")
+		// Assert idl.json is in the entry-point namespace directory only
+		// (idl.json is only written to the entry-point namespace, not all namespaces)
+		assertTsFileExists(t, outputDir, "common/idl.json")
 	})
 }
 
@@ -495,8 +496,8 @@ func TestTsIdlAndRuntime(t *testing.T) {
 			t.Fatalf("Generate() failed: %v", err)
 		}
 
-		// idl.json should be at root (lib/rpc/idl.json), NOT inside any namespace subdir
-		assertTsFileExists(t, outputDir, "idl.json")
+		// idl.json is only written to the entry-point namespace directory
+		assertTsFileExists(t, outputDir, "common/idl.json")
 
 		// pulserpc/index.ts should exist for runtime re-exports
 		// This allows "import { ... } from '../pulserpc'" to work from inside namespace subdirs
@@ -698,7 +699,7 @@ func TestTsMultiFileEndToEnd(t *testing.T) {
 }
 
 func TestTsPackageFlag(t *testing.T) {
-	t.Run("-package flag does not affect class names", func(t *testing.T) {
+	t.Run("-package flag places files in package directory", func(t *testing.T) {
 		withTempOutputDir(t, func(outputDir string) {
 			idl := &parser.IDL{
 				Interfaces: []*parser.Interface{
@@ -732,11 +733,12 @@ func TestTsPackageFlag(t *testing.T) {
 				t.Fatalf("Generate() failed: %v", err)
 			}
 
+			// When -package is set with single namespace, files should go into package directory
 			// Class name should be exactly "UserService", not "MyAppUserService" or any prefixed version
-			assertTsFileContains(t, outputDir, "server.ts", "export abstract class UserService")
+			assertTsFileContains(t, outputDir, "@myapp/lib/rpc/server.ts", "export abstract class UserService")
 
 			// Verify package value is not prepended to class names
-			content, err := os.ReadFile(filepath.Join(outputDir, "server.ts"))
+			content, err := os.ReadFile(filepath.Join(outputDir, "@myapp/lib/rpc/server.ts"))
 			if err != nil {
 				t.Fatalf("failed to read server.ts: %v", err)
 			}

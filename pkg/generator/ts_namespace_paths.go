@@ -26,8 +26,7 @@ func NewTSNamespacePaths(baseDir, packageBase string) TSNamespacePaths {
 func (p TSNamespacePaths) ResolveNamespaceDir(namespace string) string {
 	base := p.BaseDir
 	if p.PackageBase != "" {
-		pkgParts := splitByDot(p.PackageBase)
-		base = filepath.Join(append([]string{p.BaseDir}, pkgParts...)...)
+		base = filepath.Join(p.BaseDir, p.PackageBase)
 	}
 	if namespace == "" {
 		return base
@@ -41,8 +40,7 @@ func (p TSNamespacePaths) ResolveNamespaceDir(namespace string) string {
 func (p TSNamespacePaths) ResolveRuntimeDir() string {
 	base := p.BaseDir
 	if p.PackageBase != "" {
-		pkgParts := splitByDot(p.PackageBase)
-		base = filepath.Join(append([]string{p.BaseDir}, pkgParts...)...)
+		base = filepath.Join(p.BaseDir, p.PackageBase)
 	}
 	return filepath.Join(base, "pulserpc")
 }

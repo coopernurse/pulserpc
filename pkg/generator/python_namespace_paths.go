@@ -21,8 +21,7 @@ type PythonNamespacePaths struct {
 func (p PythonNamespacePaths) ResolveNamespaceDir(namespace string) string {
 	base := p.BaseDir
 	if p.PackageBase != "" {
-		pkgParts := splitByDot(p.PackageBase)
-		base = filepath.Join(append([]string{p.BaseDir}, pkgParts...)...)
+		base = filepath.Join(p.BaseDir, p.PackageBase)
 	}
 	if namespace == "" {
 		return base
@@ -36,8 +35,7 @@ func (p PythonNamespacePaths) ResolveNamespaceDir(namespace string) string {
 func (p PythonNamespacePaths) ResolveRuntimeDir() string {
 	base := p.BaseDir
 	if p.PackageBase != "" {
-		pkgParts := splitByDot(p.PackageBase)
-		base = filepath.Join(append([]string{p.BaseDir}, pkgParts...)...)
+		base = filepath.Join(p.BaseDir, p.PackageBase)
 	}
 	return filepath.Join(base, "pulserpc")
 }

@@ -335,3 +335,70 @@ func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// TestNoDefaultPackageForNonJava verifies that non-Java generators work without a default package
+func TestNoDefaultPackageForNonJava(t *testing.T) {
+	tempDir, err := newTempDir("pulserpc-test-no-pkg-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer removeAllDir(tempDir)
+
+	plugins := []generator.Plugin{
+		generator.NewTSClientServer(),
+		generator.NewPythonClientServer(),
+	}
+
+	mgr, err := NewManager(tempDir, plugins)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	idl := `
+namespace test
+
+struct User {
+	name string
+	age int
+}
+`
+
+	nonJavaRuntimes := []string{"ts-client-server", "python-client-server"}
+
+	for _, runtime := range nonJavaRuntimes {
+		t.Run(runtime, func(t *testing.T) {
+			session, err := mgr.Generate(idl, runtime)
+			if err != nil {
+				t.Fatalf("failed to generate for %s: %v", runtime, err)
+			}
+
+			if len(session.Files) == 0 {
+				t.Errorf("%s: expected files to be generated", runtime)
+			}
+
+			for _, file := range session.Files {
+				if len(file) == 0 {
+					t.Errorf("%s: expected non-empty file path", runtime)
+				}
+				if containsString(file, "com.example.generated") {
+					t.Errorf("%s: file path should not contain default package 'com.example.generated': %s", runtime, file)
+				}
+			}
+
+			t.Logf("%s: %d files generated without default package", runtime, len(session.Files))
+		})
+	}
+}
+
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && (s[:len(substr)] == substr || containsAny(s, substr)))
+}
+
+func containsAny(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
