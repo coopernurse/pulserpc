@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: Package flag creates single directory level
+### Requirement: Package flag creates single directory level for most generators
 
 The `-package` flag SHALL create a single directory level under `-dir`, not a nested hierarchy based on dot separators.
 
@@ -9,7 +9,7 @@ For a command like `pulserpc -dir foo -package myapp example.pulse`, the output 
 - Namespace files: `foo/myapp/example/`
 - IDL file: `foo/myapp/example/idl.json`
 
-This applies to both TypeScript and Python generators.
+This applies to TypeScript, Go, Java, and C# generators.
 
 #### Scenario: TypeScript generator with package flag
 - **WHEN** user runs `pulserpc -plugin ts-client-server -dir output -package myapp book.pulse`
@@ -17,11 +17,36 @@ This applies to both TypeScript and Python generators.
 - **AND** namespace files are written to `output/myapp/book/`
 - **AND** idl.json is written to `output/myapp/book/idl.json`
 
-#### Scenario: Python generator with package flag
+#### Scenario: Go generator with package flag
+- **WHEN** user runs `pulserpc -plugin go-client-server -dir output -package myapp book.pulse`
+- **THEN** runtime files are written to `output/myapp/pulserpc/`
+- **AND** namespace files are written to `output/myapp/book/`
+
+### Requirement: Package flag creates nested directory structure for Python
+
+The Python generator SHALL split the `-package` flag value by dots to create a nested directory hierarchy, following Python package conventions.
+
+For a command like `pulserpc -dir foo -package myapp example.pulse`, the output directory structure SHALL be:
+- Runtime files: `foo/myapp/pulserpc/`
+- Namespace files: `foo/myapp/example/`
+- `__init__.py` files: `foo/myapp/__init__.py` and `foo/myapp/example/__init__.py`
+
+For a dotted package like `pulserpc -dir foo -package myapp.lib.rpc example.pulse`:
+- Runtime files: `foo/myapp/lib/rpc/pulserpc/`
+- Namespace files: `foo/myapp/lib/rpc/example/`
+- `__init__.py` files: `foo/myapp/__init__.py`, `foo/myapp/lib/__init__.py`, `foo/myapp/lib/rpc/__init__.py`, and `foo/myapp/lib/rpc/example/__init__.py`
+
+#### Scenario: Python generator with package flag creates nested directories
 - **WHEN** user runs `pulserpc -plugin python-client-server -dir output -package myapp book.pulse`
 - **THEN** runtime files are written to `output/myapp/pulserpc/`
 - **AND** namespace files are written to `output/myapp/book/`
-- **AND** __init__.py files are written to `output/myapp/` and `output/myapp/book/`
+- **AND** `__init__.py` files are written to `output/myapp/` and `output/myapp/book/`
+
+#### Scenario: Python generator with dotted package flag splits by dots
+- **WHEN** user runs `pulserpc -plugin python-client-server -dir output -package myapp.lib.rpc book.pulse`
+- **THEN** runtime files are written to `output/myapp/lib/rpc/pulserpc/`
+- **AND** namespace files are written to `output/myapp/lib/rpc/book/`
+- **AND** `__init__.py` files are written to `output/myapp/`, `output/myapp/lib/`, `output/myapp/lib/rpc/`, and `output/myapp/lib/rpc/book/`
 
 #### Scenario: No package flag specified
 - **WHEN** user runs `pulserpc -plugin ts-client-server -dir output book.pulse` without `-package`

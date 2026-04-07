@@ -64,7 +64,7 @@ For multi-namespace projects, add `-dir` and `-package` so each namespace is gen
 pulserpc -plugin python-client-server -dir ./generated -package myapp.lib.rpc checkout.pulse
 ```
 
-That layout places runtime files in `./generated/pulserpc/` and namespace code in `./generated/<namespace>/`.
+That layout places runtime files in `./generated/myapp/lib/rpc/pulserpc/` and namespace code in `./generated/myapp/lib/rpc/<namespace>/`.
 
 The IDL is embedded directly in `server.py` for the `pulserpc-idl` RPC method.
 

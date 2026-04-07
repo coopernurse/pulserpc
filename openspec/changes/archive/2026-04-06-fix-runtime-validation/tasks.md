@@ -43,7 +43,7 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Run test_all_runtimes.sh to verify existing functionality
-- [ ] 6.2 Run test_http_api.sh against all servers
-- [ ] 6.3 Verify no regression in existing quickstart tests
-- [ ] 6.4 Run `make quality-full` and fix any lint or test errors (C# has ambiguous Math.Floor call)
+- [x] 6.1 Run test_all_runtimes.sh to verify existing functionality
+- [x] 6.2 Run test_http_api.sh against all servers
+- [x] 6.3 Verify no regression in existing quickstart tests
+- [x] 6.4 Run `make quality-full` and fix any lint or test errors (C# has ambiguous Math.Floor call)
