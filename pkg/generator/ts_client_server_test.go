@@ -2,6 +2,7 @@ package generator
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1039,4 +1040,137 @@ func TestTsStaticClientMethodCalls(t *testing.T) {
 		assertTsFileContains(t, outputDir, "client.ts", "method: \"TestService.testMethod\"")
 		assertTsFileContains(t, outputDir, "client.ts", "params: [req]")
 	})
+}
+
+func TestTsTestsAreDeterministic(t *testing.T) {
+	for iteration := 0; iteration < 3; iteration++ {
+		t.Run(fmt.Sprintf("iteration_%d", iteration), func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "pulserpc-ts-det-")
+			if err != nil {
+				t.Fatalf("failed to create temp dir: %v", err)
+			}
+			defer func() { _ = os.RemoveAll(tmpDir) }()
+
+			idl := &parser.IDL{
+				Structs: []*parser.Struct{
+					{
+						Name:      "Zoo",
+						Namespace: "animals",
+						Fields:    []*parser.Field{{Name: "name", Type: &parser.Type{BuiltIn: "string"}}},
+					},
+					{
+						Name:      "Alpha",
+						Namespace: "animals",
+						Fields:    []*parser.Field{{Name: "value", Type: &parser.Type{BuiltIn: "int"}}},
+					},
+					{
+						Name:      "Mango",
+						Namespace: "animals",
+						Fields:    []*parser.Field{{Name: "color", Type: &parser.Type{BuiltIn: "string"}}},
+					},
+				},
+				Enums: []*parser.Enum{
+					{
+						Name:      "Status",
+						Namespace: "common",
+						Values:    []*parser.EnumValue{{Name: "ACTIVE"}, {Name: "INACTIVE"}},
+					},
+					{
+						Name:      "Priority",
+						Namespace: "common",
+						Values:    []*parser.EnumValue{{Name: "HIGH"}, {Name: "LOW"}, {Name: "MEDIUM"}},
+					},
+				},
+				Interfaces: []*parser.Interface{
+					{
+						Name:      "ZooService",
+						Namespace: "animals",
+						Methods: []*parser.Method{
+							{Name: "getZoo", Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}}, ReturnType: &parser.Type{UserDefined: "Zoo"}},
+						},
+					},
+					{
+						Name:      "AlphaService",
+						Namespace: "animals",
+						Methods: []*parser.Method{
+							{Name: "processAlpha", Parameters: []*parser.Parameter{{Name: "data", Type: &parser.Type{BuiltIn: "string"}}}, ReturnType: &parser.Type{BuiltIn: "int"}},
+						},
+					},
+					{
+						Name:      "MangoService",
+						Namespace: "animals",
+						Methods: []*parser.Method{
+							{Name: "getMango", Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}}, ReturnType: &parser.Type{UserDefined: "Mango"}},
+						},
+					},
+				},
+			}
+
+			gen := NewTSClientServer()
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.String("dir", "", "output dir")
+			gen.RegisterFlags(fs)
+			if err := fs.Set("dir", tmpDir); err != nil {
+				t.Fatalf("failed to set dir flag: %v", err)
+			}
+
+			if err := gen.Generate(idl, fs); err != nil {
+				t.Fatalf("Generate failed: %v", err)
+			}
+
+			collectedFiles := map[string][]byte{}
+			err = filepath.Walk(tmpDir, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.IsDir() {
+					return nil
+				}
+				relPath, err := filepath.Rel(tmpDir, path)
+				if err != nil {
+					return err
+				}
+				content, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				collectedFiles[relPath] = content
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("failed to walk temp dir: %v", err)
+			}
+
+			if iteration == 0 {
+				t.Logf("Collected %d files from first iteration", len(collectedFiles))
+				for relPath := range collectedFiles {
+					t.Logf("  %s", relPath)
+				}
+			}
+
+			for relPath, content := range collectedFiles {
+				firstContent, ok := collectedFiles[relPath]
+				if !ok {
+					t.Errorf("File missing in iteration %d: %s", iteration, relPath)
+					continue
+				}
+				if iteration > 0 && !bytesEqual(firstContent, content) {
+					t.Errorf("File content differs in iteration %d: %s\nFirst iteration:\n%s\nCurrent iteration:\n%s",
+						iteration, relPath, string(firstContent), string(content))
+				}
+			}
+		})
+	}
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

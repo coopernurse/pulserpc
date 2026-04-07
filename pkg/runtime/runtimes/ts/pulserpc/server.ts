@@ -51,7 +51,7 @@ export class Server {
    * @param req JSON-RPC request dict with 'jsonrpc', 'method', 'params', 'id'
    * @returns JSON-RPC response dict, or null for notification (requests without 'id')
    */
-  call(req: JsonRpcRequest): JsonRpcResponse | null {
+  async call(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
     // Validate request format
     if (typeof req !== "object" || req === null) {
       return this.errorResponse(
@@ -164,7 +164,7 @@ export class Server {
     try {
       // Call handler function with positional params (spread the object values)
       const args = Object.values(params);
-      const result = func(...args);
+      const result = await func(...args);
       return {
         jsonrpc: "2.0",
         result,

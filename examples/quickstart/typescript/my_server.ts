@@ -132,10 +132,10 @@ class TestRPCHandler {
   handle(req: http.IncomingMessage, res: http.ServerResponse): void {
     let body = '';
     req.on('data', (chunk) => { body += chunk.toString(); });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const data = JSON.parse(body);
-        const response = this.rpcServer.call(data);
+        const response = await this.rpcServer.call(data);
         if (response === null || response === undefined) {
           res.writeHead(204);
           res.end();
