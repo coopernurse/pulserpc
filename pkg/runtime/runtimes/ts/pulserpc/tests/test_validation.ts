@@ -13,8 +13,8 @@ import {
   validateEnum,
   validateStruct,
   validateType,
-} from "../validation";
-import { StructMap, EnumMap } from "../types";
+} from "../validation.js";
+import { StructMap, EnumMap } from "../types.js";
 
 function testValidateStringSuccess() {
   validateString("hello");

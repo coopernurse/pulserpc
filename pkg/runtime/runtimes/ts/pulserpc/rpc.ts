@@ -4,7 +4,7 @@
 
 export class RPCError extends Error {
   public code: number;
-  public message: string;
+  public message!: string;
   public data?: any;
 
   constructor(code: number, message: string, data?: any) {

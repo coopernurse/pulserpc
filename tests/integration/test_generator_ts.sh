@@ -93,8 +93,8 @@ echo -e "${GREEN}Code generation successful${NC}"
 echo ""
 
 # Step 4: Install TypeScript and compile/run tools
-echo -e "${YELLOW}Installing TypeScript...${NC}"
-npm install -g typescript ts-node @types/node >/dev/null 2>&1 || true
+echo -e "${YELLOW}Installing TypeScript and tsx...${NC}"
+npm install -g typescript tsx @types/node >/dev/null 2>&1 || true
 
 # Step 5: Start test server in background
 echo -e "${YELLOW}Starting test server on port $SERVER_PORT...${NC}"
@@ -105,27 +105,26 @@ cat > tsconfig.json << 'EOF'
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "CommonJS",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2020"],
     "types": ["node"],
-    "moduleResolution": "node",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "strict": false,
     "resolveJsonModule": true,
-    "isolatedModules": false
+    "allowImportingTsExtensions": true
   },
   "ts-node": {
     "compilerOptions": {
-      "module": "CommonJS",
-      "types": ["node"],
-      "isolatedModules": false
+      "module": "NodeNext",
+      "moduleResolution": "NodeNext"
     }
   }
 }
 EOF
-# Use ts-node with project config
-ts-node --project tsconfig.json test_server.ts &
+# Use tsx (no project config needed)
+tsx test_server.ts &
 SERVER_PID=$!
 
 # Step 6: Wait for server to be ready
@@ -152,7 +151,7 @@ echo ""
 # Step 7: Run test client
 echo -e "${YELLOW}Running test client...${NC}"
 cd "$TS_CONFIG_DIR"
-if ts-node --project tsconfig.json test_client.ts 2>&1; then
+if tsx test_client.ts 2>&1; then
     echo ""
     echo -e "${GREEN}Test client passed${NC}"
 else

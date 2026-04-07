@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
-import { Server, Contract } from './pulserpc';
-import { CatalogService, CartService, OrderService } from './server';
+import { Server, Contract } from './pulserpc/index.js';
+import { CatalogService, CartService, OrderService } from './server.js';
 
 const products = [
   {

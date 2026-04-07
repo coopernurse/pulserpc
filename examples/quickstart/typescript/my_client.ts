@@ -1,4 +1,4 @@
-import { HttpTransport, Client } from './pulserpc';
+import { HttpTransport, Client } from './pulserpc/index.js';
 
 const port = parseInt(process.env.SERVER_PORT || '8080', 10);
 const transport = new HttpTransport(`http://localhost:${port}`);

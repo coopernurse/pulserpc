@@ -88,19 +88,19 @@ func TestTsCrossNamespaceImportPath(t *testing.T) {
 			name:          "book to common",
 			fromNamespace: "book",
 			toNamespace:   "common",
-			expected:      "../common",
+			expected:      "../common/types.js",
 		},
 		{
 			name:          "user to common",
 			fromNamespace: "user",
 			toNamespace:   "common",
-			expected:      "../common",
+			expected:      "../common/types.js",
 		},
 		{
 			name:          "common to book",
 			fromNamespace: "common",
 			toNamespace:   "book",
-			expected:      "../book",
+			expected:      "../book/types.js",
 		},
 	}
 

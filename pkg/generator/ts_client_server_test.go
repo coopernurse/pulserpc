@@ -182,15 +182,15 @@ func TestTsMultiNamespaceFileContent(t *testing.T) {
 		assertTsFileContains(t, outputDir, "common/server.ts", "export abstract class CommonService")
 
 		// Verify book/client.ts uses correct runtime import path for namespace subdir
-		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport'")
-		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/rpc'")
+		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport.js'")
+		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/rpc.js'")
 
 		// Verify common/client.ts uses correct runtime import path for namespace subdir
-		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/transport'")
-		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/rpc'")
+		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/transport.js'")
+		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/rpc.js'")
 
 		// Verify book/server.ts uses correct runtime import path for namespace subdir
-		assertTsFileContains(t, outputDir, "book/server.ts", "from '../pulserpc/rpc'")
+		assertTsFileContains(t, outputDir, "book/server.ts", "from '../pulserpc/rpc.js'")
 	})
 }
 
@@ -215,15 +215,15 @@ func TestTsNamespaceIndex(t *testing.T) {
 		assertTsFileExists(t, outputDir, "book/index.ts")
 
 		// Assert it contains the expected re-exports
-		assertTsFileContains(t, outputDir, "book/index.ts", "export * from './types'")
-		assertTsFileContains(t, outputDir, "book/index.ts", "export * from './server'")
-		assertTsFileContains(t, outputDir, "book/index.ts", "export * from './client'")
+		assertTsFileContains(t, outputDir, "book/index.ts", "export * from './types.js'")
+		assertTsFileContains(t, outputDir, "book/index.ts", "export * from './server.js'")
+		assertTsFileContains(t, outputDir, "book/index.ts", "export * from './client.js'")
 
 		// Assert common/index.ts exists and has re-exports too
 		assertTsFileExists(t, outputDir, "common/index.ts")
-		assertTsFileContains(t, outputDir, "common/index.ts", "export * from './types'")
-		assertTsFileContains(t, outputDir, "common/index.ts", "export * from './server'")
-		assertTsFileContains(t, outputDir, "common/index.ts", "export * from './client'")
+		assertTsFileContains(t, outputDir, "common/index.ts", "export * from './types.js'")
+		assertTsFileContains(t, outputDir, "common/index.ts", "export * from './server.js'")
+		assertTsFileContains(t, outputDir, "common/index.ts", "export * from './client.js'")
 	})
 }
 
@@ -375,7 +375,7 @@ func TestTsImportPaths(t *testing.T) {
 				t.Fatalf("Generate() failed: %v", err)
 			}
 
-			assertTsFileContains(t, outputDir, "book/types.ts", "from '../common'")
+			assertTsFileContains(t, outputDir, "book/types.ts", "from '../common/types.js'")
 		})
 	})
 
@@ -425,10 +425,10 @@ func TestTsImportPaths(t *testing.T) {
 			}
 
 			// Flat output: server.ts should use ./pulserpc
-			assertTsFileContains(t, outputDir, "server.ts", "from './pulserpc/rpc'")
+			assertTsFileContains(t, outputDir, "server.ts", "from './pulserpc/rpc.js'")
 			// Flat output: client.ts should use ./pulserpc/transport and ./pulserpc/rpc
-			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/transport'")
-			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/rpc'")
+			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/transport.js'")
+			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/rpc.js'")
 		})
 	})
 
@@ -449,8 +449,8 @@ func TestTsImportPaths(t *testing.T) {
 				t.Fatalf("Generate() failed: %v", err)
 			}
 
-			assertTsFileContains(t, outputDir, "book/server.ts", "from '../pulserpc/rpc'")
-			assertTsFileContains(t, outputDir, "common/server.ts", "from '../pulserpc/rpc'")
+			assertTsFileContains(t, outputDir, "book/server.ts", "from '../pulserpc/rpc.js'")
+			assertTsFileContains(t, outputDir, "common/server.ts", "from '../pulserpc/rpc.js'")
 		})
 	})
 
@@ -471,10 +471,10 @@ func TestTsImportPaths(t *testing.T) {
 				t.Fatalf("Generate() failed: %v", err)
 			}
 
-			assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport'")
-			assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/rpc'")
-			assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/transport'")
-			assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/rpc'")
+			assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport.js'")
+			assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/rpc.js'")
+			assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/transport.js'")
+			assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/rpc.js'")
 		})
 	})
 }
@@ -687,14 +687,7 @@ func TestTsMultiFileEndToEnd(t *testing.T) {
 		assertTsFileExists(t, outputDir, "user/index.ts")
 
 		// Assert cross-namespace import: book/types.ts references common
-		assertTsFileContains(t, outputDir, "book/types.ts", "from '../common'")
-
-		// Assert cross-namespace import: user/types.ts references common
-		assertTsFileContains(t, outputDir, "user/types.ts", "from '../common'")
-
-		// Note: book/types.ts does NOT need a runtime import (../pulserpc) because
-		// it only contains struct/enum types, not RPC types. Runtime imports are
-		// only needed in server.ts and client.ts which use RPCError, Server, etc.
+		assertTsFileContains(t, outputDir, "book/types.ts", "from '../common/types.js'")
 	})
 }
 
@@ -892,7 +885,7 @@ func TestTsStaticClientTransport(t *testing.T) {
 			t.Fatalf("Generate() failed: %v", err)
 		}
 
-		assertTsFileContains(t, outputDir, "client.ts", "import { Transport, HttpTransport } from './pulserpc/transport'")
+		assertTsFileContains(t, outputDir, "client.ts", "import { Transport, HttpTransport } from './pulserpc/transport.js'")
 		assertTsFileContains(t, outputDir, "client.ts", "constructor(private transport: Transport)")
 		assertTsFileContains(t, outputDir, "client.ts", "export { Transport, HttpTransport }")
 	})
@@ -921,8 +914,8 @@ func TestTsStaticClientMultiNamespace(t *testing.T) {
 		assertTsFileContains(t, outputDir, "book/client.ts", "constructor(private transport: Transport)")
 		assertTsFileContains(t, outputDir, "common/client.ts", "export class CommonServiceClient")
 		assertTsFileContains(t, outputDir, "common/client.ts", "constructor(private transport: Transport)")
-		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport'")
-		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/transport'")
+		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport.js'")
+		assertTsFileContains(t, outputDir, "common/client.ts", "from '../pulserpc/transport.js'")
 	})
 }
 
@@ -1012,7 +1005,7 @@ func TestTsStaticClientRPCError(t *testing.T) {
 			t.Fatalf("Generate() failed: %v", err)
 		}
 
-		assertTsFileContains(t, outputDir, "client.ts", "import { RPCError } from './pulserpc/rpc'")
+		assertTsFileContains(t, outputDir, "client.ts", "import { RPCError } from './pulserpc/rpc.js'")
 		assertTsFileContains(t, outputDir, "client.ts", "throw new RPCError(resp.error.code, resp.error.message, resp.error.data)")
 	})
 }

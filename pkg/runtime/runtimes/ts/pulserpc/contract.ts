@@ -5,8 +5,8 @@
  * and provides validation for requests and responses.
  */
 
-import { TypeDef, StructMap, EnumMap, findStruct, findEnum } from "./types";
-import { validateType } from "./validation";
+import { TypeDef, StructMap, EnumMap, findStruct, findEnum } from "./types.js";
+import { validateType } from "./validation.js";
 
 export interface FunctionDef {
   name: string;

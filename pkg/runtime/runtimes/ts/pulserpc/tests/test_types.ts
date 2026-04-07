@@ -9,7 +9,7 @@ import {
   getStructFields,
   StructMap,
   EnumMap,
-} from "../types";
+} from "../types.js";
 
 function testFindStruct() {
   const allStructs: StructMap = {

@@ -1,6 +1,9 @@
 {% highlight typescript %}
-import { PulseRPCServer, CatalogService, CartService, OrderService } from './server';
+import { readFileSync } from 'fs';
+import { Server, Contract } from './pulserpc';
+import { CatalogService, CartService, OrderService } from './server';
 import { RPCError } from './pulserpc/rpc';
+import * as http from 'http';
 
 const products = [
   {
@@ -109,9 +112,59 @@ class OrderServiceImpl extends OrderService {
   }
 }
 
-const server = new PulseRPCServer('0.0.0.0', 8080);
-server.register('CatalogService', new CatalogServiceImpl());
-server.register('CartService', new CartServiceImpl());
-server.register('OrderService', new OrderServiceImpl());
-server.serveForever();
-{% endhighlight %}
+const idlData = JSON.parse(readFileSync('idl.json', 'utf-8'));
+const contract = new Contract(idlData);
+const rpcServer = new Server({ contract, validateRequests: true, validateResponses: true });
+rpcServer.addHandler('CatalogService', new CatalogServiceImpl());
+rpcServer.addHandler('CartService', new CartServiceImpl());
+rpcServer.addHandler('OrderService', new OrderServiceImpl());
+
+class RPCHandler {
+  private rpcServer: Server;
+
+  constructor(rpcServer: Server) {
+    this.rpcServer = rpcServer;
+  }
+
+  handle(req: http.IncomingMessage, res: http.ServerResponse): void {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const response = this.rpcServer.call(data);
+        if (response === null || response === undefined) {
+          res.writeHead(204);
+          res.end();
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(response));
+        }
+      } catch (err: any) {
+        const errorResponse = {
+          jsonrpc: '2.0',
+          error: { code: -32700, message: `Parse error: ${err.message}` },
+          id: null,
+        };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(errorResponse));
+      }
+    });
+  }
+}
+
+const port = parseInt(process.env.SERVER_PORT || '8080', 10);
+const handler = new RPCHandler(rpcServer);
+const httpServer = http.createServer((req, res) => {
+  if (req.method === 'POST') {
+    handler.handle(req, res);
+  } else {
+    res.writeHead(405, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+  }
+});
+
+httpServer.listen(port, '0.0.0.0', () => {
+  console.log(`Server listening on http://0.0.0.0:${port}`);
+});
+{% highlight %}

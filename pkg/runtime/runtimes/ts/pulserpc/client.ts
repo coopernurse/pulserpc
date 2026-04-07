@@ -5,9 +5,9 @@
  * dynamic interface proxies for convenient RPC calls.
  */
 
-import { RPCError } from "./rpc";
-import { Contract, Interface } from "./contract";
-import { Transport, JsonRpcRequest, JsonRpcResponse } from "./transport";
+import { RPCError } from "./rpc.js";
+import { Contract, Interface } from "./contract.js";
+import { Transport, JsonRpcRequest, JsonRpcResponse } from "./transport.js";
 
 /**
  * Proxy for an interface that provides callable methods

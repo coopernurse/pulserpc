@@ -3,7 +3,7 @@
  */
 
 import { strict as assert } from "assert";
-import { RPCError } from "../rpc";
+import { RPCError } from "../rpc.js";
 
 function testRPCErrorCreation() {
   const error = new RPCError(-32603, "Internal error", {

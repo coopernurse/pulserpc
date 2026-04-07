@@ -5,9 +5,9 @@
  * and dispatches to registered handlers.
  */
 
-import { RPCError } from "./rpc";
-import { Contract } from "./contract";
-import { JsonRpcRequest, JsonRpcResponse } from "./transport";
+import { RPCError } from "./rpc.js";
+import { Contract } from "./contract.js";
+import { JsonRpcRequest, JsonRpcResponse } from "./transport.js";
 
 interface ServerOptions {
   contract: Contract;
@@ -241,7 +241,7 @@ export class Server {
     // Check parameter count
     if (positionalParams.length !== paramDefs.length) {
       // Allow fewer params if trailing ones are optional
-      const requiredCount = paramDefs.filter((p) => !p.optional).length;
+      const requiredCount = paramDefs.filter((p: { optional?: boolean }) => !p.optional).length;
       if (
         positionalParams.length < requiredCount ||
         positionalParams.length > paramDefs.length
