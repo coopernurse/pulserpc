@@ -31,7 +31,7 @@ export abstract class Transport {
   /**
    * Send a JSON-RPC request and return the response
    */
-  abstract request(req: JsonRpcRequest): Promise<JsonRpcResponse>;
+  abstract request(_req: JsonRpcRequest): Promise<JsonRpcResponse>;
 
   /**
    * Close the transport and release any resources

@@ -2,7 +2,7 @@
  * Validation functions for PulseRPC types
  */
 
-import { findStruct, findEnum, getStructFields, TypeDef, StructMap, EnumMap, StructDef } from "./types.js";
+import { findStruct, findEnum, getStructFields, TypeDef, StructMap, EnumMap } from "./types.js";
 
 export function validateString(value: any): void {
   if (typeof value !== "string") {
@@ -40,7 +40,7 @@ export function validateBool(value: any): void {
 
 export function validateArray(
   value: any,
-  elementValidator: (v: any) => void
+  elementValidator: (_v: any) => void
 ): void {
   if (!Array.isArray(value)) {
     throw new TypeError(`Expected array, got ${typeof value}`);
@@ -58,7 +58,7 @@ export function validateArray(
 
 export function validateMap(
   value: any,
-  valueValidator: (v: any) => void
+  valueValidator: (_v: any) => void
 ): void {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`Expected object for map, got ${typeof value}`);

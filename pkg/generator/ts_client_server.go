@@ -536,6 +536,9 @@ func writeInterfaceStubTs(sb *strings.Builder, iface *parser.Interface, structMa
 		if method.ReturnOptional {
 			returnType = returnType + " | null"
 		}
+		if returnType != "void" {
+			returnType = "Promise<" + returnType + ">"
+		}
 		sb.WriteString("): " + returnType + ";\n")
 	}
 	sb.WriteString("}\n\n")
@@ -579,6 +582,9 @@ func writeInterfaceStubTsForNamespace(sb *strings.Builder, iface *parser.Interfa
 		returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, true, allNamespaceMap)
 		if method.ReturnOptional {
 			returnType = returnType + " | null"
+		}
+		if returnType != "void" {
+			returnType = "Promise<" + returnType + ">"
 		}
 		sb.WriteString("): " + returnType + ";\n")
 	}

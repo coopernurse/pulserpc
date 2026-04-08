@@ -7,7 +7,7 @@
 
 import { RPCError } from "./rpc.js";
 import { Contract, Interface } from "./contract.js";
-import { Transport, JsonRpcRequest, JsonRpcResponse } from "./transport.js";
+import { Transport, JsonRpcRequest } from "./transport.js";
 
 /**
  * Proxy for an interface that provides callable methods

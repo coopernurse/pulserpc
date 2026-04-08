@@ -15,9 +15,7 @@ interface ServerOptions {
   validateResponses?: boolean;
 }
 
-interface HandlerMethod {
-  (...args: any[]): any;
-}
+type HandlerMethod = (...args: any[]) => any;
 
 /**
  * JSON-RPC 2.0 server with handler registration and optional validation
@@ -94,7 +92,6 @@ export class Server {
 
     // Check for notification (no 'id' means no response expected)
     const reqId = (req as any).id;
-    const isNotification = reqId === undefined || reqId === null;
 
     // Parse method name (e.g., "UserService.getUser")
     const dotIndex = method.lastIndexOf(".");

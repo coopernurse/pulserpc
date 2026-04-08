@@ -25,17 +25,17 @@ const carts = new Map<string, any>();
 const orders = new Map<string, any>();
 
 class CatalogServiceImpl extends CatalogService {
-  listProducts(): any[] {
+  async listProducts(): Promise<any[]> {
     return products;
   }
 
-  getProduct(productId: string): any | null {
+  async getProduct(productId: string): Promise<any | null> {
     return products.find((p: any) => p.productId === productId) || null;
   }
 }
 
 class CartServiceImpl extends CartService {
-  addToCart(request: any): any {
+  async addToCart(request: any): Promise<any> {
     let cartId = request.cartId || `cart_${Math.floor(Math.random() * 9000 + 1000)}`;
 
     let cart = carts.get(cartId);
@@ -63,11 +63,11 @@ class CartServiceImpl extends CartService {
     return cart;
   }
 
-  getCart(cartId: string): any | null {
+  async getCart(cartId: string): Promise<any | null> {
     return carts.get(cartId) || null;
   }
 
-  clearCart(cartId: string): boolean {
+  async clearCart(cartId: string): Promise<boolean> {
     const cart = carts.get(cartId);
     if (cart) {
       cart.items = [];
@@ -79,7 +79,7 @@ class CartServiceImpl extends CartService {
 }
 
 class OrderServiceImpl extends OrderService {
-  createOrder(request: any): any {
+  async createOrder(request: any): Promise<any> {
     const cart = carts.get(request.cartId);
     if (!cart) {
       throw { code: 1001, message: 'CartNotFound: Cart does not exist' };
@@ -104,7 +104,7 @@ class OrderServiceImpl extends OrderService {
     return { orderId, message: 'Order created successfully' };
   }
 
-  getOrder(orderId: string): any | null {
+  async getOrder(orderId: string): Promise<any | null> {
     return orders.get(orderId) || null;
   }
 }
