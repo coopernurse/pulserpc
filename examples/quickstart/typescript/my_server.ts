@@ -25,17 +25,17 @@ const carts = new Map<string, any>();
 const orders = new Map<string, any>();
 
 class CatalogServiceImpl extends CatalogService {
-  async listProducts(): Promise<any[]> {
+  async listProducts(ctx: Record<string, any>): Promise<any[]> {
     return products;
   }
 
-  async getProduct(productId: string): Promise<any | null> {
+  async getProduct(productId: string, ctx: Record<string, any>): Promise<any | null> {
     return products.find((p: any) => p.productId === productId) || null;
   }
 }
 
 class CartServiceImpl extends CartService {
-  async addToCart(request: any): Promise<any> {
+  async addToCart(request: any, ctx: Record<string, any>): Promise<any> {
     let cartId = request.cartId || `cart_${Math.floor(Math.random() * 9000 + 1000)}`;
 
     let cart = carts.get(cartId);
@@ -63,11 +63,11 @@ class CartServiceImpl extends CartService {
     return cart;
   }
 
-  async getCart(cartId: string): Promise<any | null> {
+  async getCart(cartId: string, ctx: Record<string, any>): Promise<any | null> {
     return carts.get(cartId) || null;
   }
 
-  async clearCart(cartId: string): Promise<boolean> {
+  async clearCart(cartId: string, ctx: Record<string, any>): Promise<boolean> {
     const cart = carts.get(cartId);
     if (cart) {
       cart.items = [];
@@ -79,7 +79,7 @@ class CartServiceImpl extends CartService {
 }
 
 class OrderServiceImpl extends OrderService {
-  async createOrder(request: any): Promise<any> {
+  async createOrder(request: any, ctx: Record<string, any>): Promise<any> {
     const cart = carts.get(request.cartId);
     if (!cart) {
       throw { code: 1001, message: 'CartNotFound: Cart does not exist' };
@@ -104,7 +104,7 @@ class OrderServiceImpl extends OrderService {
     return { orderId, message: 'Order created successfully' };
   }
 
-  async getOrder(orderId: string): Promise<any | null> {
+  async getOrder(orderId: string, ctx: Record<string, any>): Promise<any | null> {
     return orders.get(orderId) || null;
   }
 }
@@ -135,7 +135,9 @@ class TestRPCHandler {
     req.on('end', async () => {
       try {
         const data = JSON.parse(body);
-        const response = await this.rpcServer.call(data);
+        // ctx allows transport-specific metadata (e.g., HTTP headers) to be passed to handlers
+        const ctx = { headers: req.headers };
+        const response = await this.rpcServer.call(data, ctx);
         if (response === null || response === undefined) {
           res.writeHead(204);
           res.end();
