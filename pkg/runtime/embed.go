@@ -37,13 +37,19 @@ var javaRuntimeFiles embed.FS
 //go:embed all:runtimes/go/pulserpc
 var goRuntimeFiles embed.FS
 
+// Embed all Python 2 runtime files
+//
+//go:embed all:runtimes/python2/pulserpc
+var python2RuntimeFiles embed.FS
+
 // runtimeMap maps language names to their embedded file systems
 var runtimeMap = map[string]embed.FS{
-	"python": pythonRuntimeFiles,
-	"ts":     tsRuntimeFiles,
-	"csharp": csharpRuntimeFiles,
-	"java":   javaRuntimeFiles,
-	"go":     goRuntimeFiles,
+	"python":  pythonRuntimeFiles,
+	"python2": python2RuntimeFiles,
+	"ts":      tsRuntimeFiles,
+	"csharp":  csharpRuntimeFiles,
+	"java":    javaRuntimeFiles,
+	"go":      goRuntimeFiles,
 }
 
 // ListRuntimes returns a list of all available embedded runtimes
@@ -79,7 +85,7 @@ func GetRuntimeFiles(lang string) (map[string][]byte, error) {
 		}
 
 		// Filter files by language-specific extension
-		if lang == "python" && !strings.HasSuffix(entry.Name(), ".py") {
+		if (lang == "python" || lang == "python2") && !strings.HasSuffix(entry.Name(), ".py") {
 			continue
 		}
 		if lang == "ts" && !strings.HasSuffix(entry.Name(), ".ts") {
@@ -154,7 +160,7 @@ func CopyRuntimeFilesToPackage(lang string, outputDir string, packageName string
 // This is the directory name where runtime files are placed in the output
 func getRuntimePackageName(lang string) string {
 	switch lang {
-	case "go", "python", "ts":
+	case "go", "python", "python2", "ts":
 		return "pulserpc"
 	case "java":
 		return "com/bitmechanic/pulserpc"
@@ -169,7 +175,7 @@ func getRuntimePackageName(lang string) string {
 // This is the path used in //go:embed directives and must match the actual directory structure
 func getRuntimeEmbedPath(lang string) string {
 	switch lang {
-	case "go", "python", "ts":
+	case "go", "python", "python2", "ts":
 		return fmt.Sprintf("runtimes/%s/pulserpc", lang)
 	case "java":
 		return "runtimes/java/com/bitmechanic/pulserpc"

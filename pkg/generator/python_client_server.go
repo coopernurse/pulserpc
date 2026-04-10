@@ -14,8 +14,9 @@ import (
 
 // PythonClientServer is a plugin that generates Python HTTP server and client code from IDL
 type PythonClientServer struct {
-	usePydantic bool
-	packageBase string
+	usePydantic   bool
+	packageBase   string
+	pythonVersion string
 }
 
 // NewPythonClientServer creates a new PythonClientServer plugin instance
@@ -31,6 +32,7 @@ func (p *PythonClientServer) Name() string {
 // RegisterFlags registers CLI flags for this plugin
 func (p *PythonClientServer) RegisterFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&p.usePydantic, "use-pydantic", false, "Generate Pydantic models for types")
+	fs.StringVar(&p.pythonVersion, "python-version", "3", "Python version to generate for (\"2\" or \"3\")")
 	if fs.Lookup("package") == nil {
 		fs.String("package", "", "Base package prefix for generated Python imports (e.g., myapp.lib.rpc). Creates single directory level under -dir.")
 	}
@@ -84,7 +86,11 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 
 	// Copy runtime library files (uses package-base-aware path from paths)
-	if err := p.copyRuntimeFiles(paths, isSilent()); err != nil {
+	runtimeName := "python"
+	if p.pythonVersion == "2" {
+		runtimeName = "python2"
+	}
+	if err := p.copyRuntimeFiles(paths, isSilent(), runtimeName); err != nil {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
@@ -106,6 +112,11 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		if err := writeIDLJSON(idl, outputDir, fs); err != nil {
 			return fmt.Errorf("failed to write idl.json: %w", err)
 		}
+	}
+
+	// For Python 2, skip code generation - only idl.json and runtime files are needed
+	if p.pythonVersion == "2" {
+		return nil
 	}
 
 	// Generate __init__.py files for all namespace directories
@@ -223,13 +234,13 @@ func (p *PythonClientServer) generateTestFiles(namespaceMap map[string]*Namespac
 // copyRuntimeFiles copies the Python runtime library files to the output directory
 // Uses embedded runtime files from the binary.
 // When paths has a PackageBase set, runtime files are placed at the package-base-aware path.
-func (p *PythonClientServer) copyRuntimeFiles(paths PythonNamespacePaths, silent bool) error {
+func (p *PythonClientServer) copyRuntimeFiles(paths PythonNamespacePaths, silent bool, runtimeName string) error {
 	runtimeDir := paths.ResolveRuntimeDir()
 	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
 		return fmt.Errorf("failed to create runtime directory: %w", err)
 	}
 
-	files, err := runtime.GetRuntimeFiles("python")
+	files, err := runtime.GetRuntimeFiles(runtimeName)
 	if err != nil {
 		return err
 	}

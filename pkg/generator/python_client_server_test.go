@@ -1092,3 +1092,252 @@ func TestGenerateTestClientPyForNamespaceRuntimeImport(t *testing.T) {
 		t.Fatalf("expected default runtime import, got:\n%s", backwardsCompatible)
 	}
 }
+
+func TestPython2Generator_GeneratesIDLOnly(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-python2-gen-")
+
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "A",
+				Namespace: "",
+				Methods: []*parser.Method{
+					{
+						Name:       "add",
+						Parameters: []*parser.Parameter{{Name: "a", Type: &parser.Type{BuiltIn: "int"}}, {Name: "b", Type: &parser.Type{BuiltIn: "int"}}},
+						ReturnType: &parser.Type{BuiltIn: "int"},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("python-version", "2"); err != nil {
+		t.Fatalf("failed to set python-version flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	assertFilesExist(t, tmpDir, "idl.json")
+	assertDirExists(t, filepath.Join(tmpDir, "pulserpc"))
+}
+
+func TestPython2Generator_CopiesPython2Runtime(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-python2-runtime-")
+
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "A",
+				Namespace: "",
+			},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("python-version", "2"); err != nil {
+		t.Fatalf("failed to set python-version flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	pulserpcDir := filepath.Join(tmpDir, "pulserpc")
+	assertDirExists(t, pulserpcDir)
+
+	expectedFiles := []string{"__init__.py", "rpc.py", "types.py", "validation.py", "contract.py", "server.py", "transport.py", "client.py"}
+	assertFilesExist(t, pulserpcDir, expectedFiles...)
+}
+
+func TestPython2Generator_NoCodegenFiles(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-python2-nocode-")
+
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "A",
+				Namespace: "",
+				Methods: []*parser.Method{
+					{
+						Name:       "add",
+						Parameters: []*parser.Parameter{{Name: "a", Type: &parser.Type{BuiltIn: "int"}}, {Name: "b", Type: &parser.Type{BuiltIn: "int"}}},
+						ReturnType: &parser.Type{BuiltIn: "int"},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("python-version", "2"); err != nil {
+		t.Fatalf("failed to set python-version flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "rpctypes.py")); err == nil {
+		t.Fatalf("rpctypes.py should NOT be generated for Python 2")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "server.py")); err == nil {
+		t.Fatalf("server.py should NOT be generated for Python 2")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "client.py")); err == nil {
+		t.Fatalf("client.py should NOT be generated for Python 2")
+	}
+}
+
+func TestPython2Generator_DefaultIsPython3(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-python3-default-")
+
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "A",
+				Namespace: "",
+				Methods: []*parser.Method{
+					{
+						Name:       "add",
+						Parameters: []*parser.Parameter{{Name: "a", Type: &parser.Type{BuiltIn: "int"}}, {Name: "b", Type: &parser.Type{BuiltIn: "int"}}},
+						ReturnType: &parser.Type{BuiltIn: "int"},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	assertFilesExist(t, tmpDir, "server.py", "client.py", "rpctypes.py", "idl.json")
+}
+
+func TestPython2Generator_PythonVersionFlag(t *testing.T) {
+	tmpDirPy2 := newPythonTestTempDir(t, "pulserpc-py2-flag-")
+	tmpDirPy3 := newPythonTestTempDir(t, "pulserpc-py3-flag-")
+
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "A",
+				Namespace: "",
+				Methods: []*parser.Method{
+					{
+						Name:       "add",
+						Parameters: []*parser.Parameter{{Name: "a", Type: &parser.Type{BuiltIn: "int"}}, {Name: "b", Type: &parser.Type{BuiltIn: "int"}}},
+						ReturnType: &parser.Type{BuiltIn: "int"},
+					},
+				},
+			},
+		},
+	}
+
+	p2 := NewPythonClientServer()
+	fs2 := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs2.String("dir", "", "output dir")
+	p2.RegisterFlags(fs2)
+	if err := fs2.Set("dir", tmpDirPy2); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs2.Set("python-version", "2"); err != nil {
+		t.Fatalf("failed to set python-version flag: %v", err)
+	}
+	if err := p2.Generate(idl, fs2); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	p3 := NewPythonClientServer()
+	fs3 := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs3.String("dir", "", "output dir")
+	p3.RegisterFlags(fs3)
+	if err := fs3.Set("dir", tmpDirPy3); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs3.Set("python-version", "3"); err != nil {
+		t.Fatalf("failed to set python-version flag: %v", err)
+	}
+	if err := p3.Generate(idl, fs3); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(tmpDirPy2, "rpctypes.py")); err == nil {
+		t.Fatalf("Python 2 should NOT generate rpctypes.py")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDirPy3, "rpctypes.py")); err != nil {
+		t.Fatalf("Python 3 should generate rpctypes.py")
+	}
+}
+
+func TestPython2Generator_PackageFlag(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-py2-pkg-")
+
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "A",
+				Namespace: "",
+				Methods: []*parser.Method{
+					{
+						Name:       "add",
+						Parameters: []*parser.Parameter{{Name: "a", Type: &parser.Type{BuiltIn: "int"}}, {Name: "b", Type: &parser.Type{BuiltIn: "int"}}},
+						ReturnType: &parser.Type{BuiltIn: "int"},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	fs.String("package", "", "base package")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("python-version", "2"); err != nil {
+		t.Fatalf("failed to set python-version flag: %v", err)
+	}
+	if err := fs.Set("package", "myapp.lib.rpc"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	assertDirExists(t, filepath.Join(tmpDir, "myapp", "lib", "rpc", "pulserpc"))
+	assertFileExists(t, filepath.Join(tmpDir, "myapp", "lib", "rpc", "idl.json"))
+}

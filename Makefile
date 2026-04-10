@@ -1,4 +1,4 @@
-.PHONY: build build-linux test cover lint quality quality-full clean install-tools test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
+.PHONY: build build-linux test cover lint quality quality-full clean install-tools test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
 
 # Variables
 BINARY_NAME=pulserpc
@@ -100,6 +100,17 @@ test-runtime-python:
 	@echo "Testing Python runtime..."
 	@cd pkg/runtime/runtimes/python && $(MAKE) test
 
+# Test Python 2 runtime
+test-runtime-python2:
+	@echo "Testing Python 2 runtime..."
+	@mkdir -p /tmp/pulserpc_py2_test
+	@echo "Generating Python 2 code..."
+	@$(TARGET_DIR)/$(BINARY_NAME) -plugin python-client-server -python-version 2 -dir /tmp/pulserpc_py2_test $(shell find examples -name "*.pulse" | head -1)
+	@echo "Running Python 2 tests in Docker..."
+	@docker run --rm -v /tmp/pulserpc_py2_test:/workspace moxel/python2 sh -c "cd /workspace && python -m pulserpc.test_validation"
+	@rm -rf /tmp/pulserpc_py2_test
+	@echo "Python 2 runtime tests passed"
+
 # Test TypeScript runtime
 test-runtime-ts:
 	@echo "Testing TypeScript runtime..."
@@ -121,7 +132,7 @@ test-runtime-go:
 	@cd pkg/runtime/runtimes/go && $(MAKE) test
 
 # Test all runtimes
-test-runtimes: test-runtime-python test-runtime-ts test-runtime-csharp test-runtime-java test-runtime-go
+test-runtimes: test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-csharp test-runtime-java test-runtime-go
 	@echo "All runtime tests passed"
 
 # Test Python generator integration
