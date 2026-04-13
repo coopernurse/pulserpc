@@ -192,6 +192,11 @@ iface.Functions[funcName] = funcDef;
             return Interfaces.TryGetValue(ifaceName, out var iface) ? iface : null;
         }
 
+        public object GetIDLParsed()
+        {
+            return IdlParsed;
+        }
+
         /// <summary>
         /// Validate request parameters against the IDL
         /// </summary>

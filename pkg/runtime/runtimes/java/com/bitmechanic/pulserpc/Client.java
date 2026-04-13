@@ -5,42 +5,63 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
-/**
- * JSON-RPC 2.0 client with automatic interface discovery
- */
 public class Client {
     private final Transport transport;
     private final boolean validateRequest;
     private final boolean validateResponse;
     private int requestID = 0;
     private final Map<String, InterfaceClientProxy> ifaces = new HashMap<>();
+    private ContractAuditor auditor;
+    private boolean verifyOnBootstrap;
+    private Object localIDL;
 
     public Contract contract;
 
-    /**
-     * Creates a new Client and bootstraps by fetching IDL from server
-     */
     public Client(Transport transport, boolean validateRequest, boolean validateResponse) {
         this.transport = transport;
         this.validateRequest = validateRequest;
         this.validateResponse = validateResponse;
 
-        // Bootstrap: fetch IDL from server
         bootstrap();
     }
 
-    /**
-     * Gets an interface proxy by name
-     */
+    private Client(Transport transport, boolean validateRequest, boolean validateResponse, ContractAuditor auditor, boolean verifyOnBootstrap) {
+        this.transport = transport;
+        this.validateRequest = validateRequest;
+        this.validateResponse = validateResponse;
+        this.auditor = auditor;
+        this.verifyOnBootstrap = verifyOnBootstrap;
+
+        bootstrap();
+
+        if (this.verifyOnBootstrap) {
+            verifyCompatibility();
+        }
+    }
+
+    public static Client create(Transport transport, boolean validateRequest, boolean validateResponse) {
+        return new Client(transport, validateRequest, validateResponse);
+    }
+
+    public static Client create(Transport transport, boolean validateRequest, boolean validateResponse, ContractAuditor auditor, boolean verifyOnBootstrap) {
+        return new Client(transport, validateRequest, validateResponse, auditor, verifyOnBootstrap);
+    }
+
+    public Client withAuditor(ContractAuditor auditor) {
+        this.auditor = auditor;
+        return this;
+    }
+
+    public Client verifyOnBootstrap() {
+        this.verifyOnBootstrap = true;
+        return this;
+    }
+
     public InterfaceClientProxy getInterface(String ifaceName) {
         return ifaces.get(ifaceName);
     }
 
-    /**
-     * Makes a JSON-RPC call
-     */
     public Object call(String method, Object params) {
-        // Validate request if enabled
         if (validateRequest && contract != null) {
             String[] parts = parseMethodName(method);
             if (parts != null) {
@@ -55,18 +76,15 @@ public class Client {
             }
         }
 
-        // Generate request ID
         requestID++;
         Object reqId = requestID;
 
-        // Build request
         Request request = new Request();
         request.setJsonrpc("2.0");
         request.setMethod(method);
         request.setId(reqId);
         request.setParams(params);
 
-        // Send request via transport
         Response response;
         try {
             response = transport.call(request);
@@ -74,7 +92,6 @@ public class Client {
             throw new RuntimeException("Transport request failed: " + e.getMessage(), e);
         }
 
-        // Check for error response
         if (response.hasError()) {
             Map<String, Object> errObj = response.getError();
             int code = errObj.containsKey("code") ? ((Number) errObj.get("code")).intValue() : -32603;
@@ -83,10 +100,8 @@ public class Client {
             throw new RPCError(code, message, data);
         }
 
-        // Get result
         Object result = response.getResult();
 
-        // Validate response if enabled
         if (validateResponse && contract != null && result != null) {
             String[] parts = parseMethodName(method);
             if (parts != null) {
@@ -101,22 +116,14 @@ public class Client {
         return result;
     }
 
-    /**
-     * Sends a notification (no response expected)
-     */
     public void notify(String method, Object params) {
         try {
             call(method, params);
         } catch (Exception e) {
-            // Ignore errors for notifications
         }
     }
 
-    /**
-     * Bootstrap: fetch IDL from server and create interface proxies
-     */
     private void bootstrap() {
-        // Make request to get IDL
         Request req = new Request("pulserpc-idl", null, "bootstrap");
 
         Response resp;
@@ -135,19 +142,14 @@ public class Client {
             throw new RuntimeException("Server returned empty IDL");
         }
 
-        // Create contract
         contract = new Contract(idlJson);
 
-        // Create interface proxies
         for (Map.Entry<String, Interface> entry : contract.interfaces.entrySet()) {
             InterfaceClientProxy proxy = new InterfaceClientProxy(this, entry.getValue());
             ifaces.put(entry.getKey(), proxy);
         }
     }
 
-    /**
-     * Parses "Interface.method" format
-     */
     private String[] parseMethodName(String method) {
         int lastDot = method.lastIndexOf('.');
         if (lastDot < 0) {
@@ -156,9 +158,6 @@ public class Client {
         return new String[]{method.substring(0, lastDot), method.substring(lastDot + 1)};
     }
 
-    /**
-     * Converts params to positional list for validation
-     */
     @SuppressWarnings("unchecked")
     private List<Object> convertParamsToList(String ifaceName, String funcName, Object params) {
         if (contract == null) return null;
@@ -193,5 +192,51 @@ public class Client {
         }
 
         return result;
+    }
+
+    public VerificationResult verifyCompatibility() {
+        Object clientIDL;
+        if (localIDL != null) {
+            clientIDL = localIDL;
+        } else if (contract != null) {
+            clientIDL = contract.getIdlParsed();
+        } else {
+            clientIDL = null;
+        }
+
+        Object serverIDL = contract != null ? contract.getIdlParsed() : null;
+
+        List<ContractDelta> deltas = new java.util.ArrayList<>();
+        if (clientIDL != null && serverIDL != null) {
+            deltas = DiffEngine.diffIDL(clientIDL, serverIDL);
+        }
+
+        boolean compatible = true;
+        for (ContractDelta delta : deltas) {
+            if (delta.getSeverity() == ContractDelta.Severity.Error) {
+                compatible = false;
+                break;
+            }
+        }
+
+        VerificationResult result = new VerificationResult(
+            compatible,
+            serverIDL != null ? DiffEngine.computeChecksum(serverIDL) : "",
+            clientIDL != null ? DiffEngine.computeChecksum(clientIDL) : "",
+            deltas,
+            System.currentTimeMillis()
+        );
+
+        if (auditor != null) {
+            auditor.audit(result);
+        }
+
+        return result;
+    }
+
+    public Client setLocalIDL(String idlJson) {
+        JsonParser parser = new JacksonJsonParser();
+        this.localIDL = parser.fromJson(idlJson, Object.class);
+        return this;
     }
 }

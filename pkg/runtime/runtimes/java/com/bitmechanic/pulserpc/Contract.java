@@ -139,6 +139,10 @@ public class Contract {
         return interfaces.get(ifaceName);
     }
 
+    public Object getIdlParsed() {
+        return idlParsed;
+    }
+
     /**
      * Validate request parameters against the IDL
      */

@@ -387,3 +387,64 @@ public class CheckoutController {
     }
 }
 ```
+
+## Contract Compatibility Verification
+
+PulseRPC provides contract compatibility verification to detect when client and server IDLs have diverged. This helps catch integration issues early.
+
+### Using Auditors
+
+```java
+import com.bitmechanic.pulserpc.*;
+
+// Create client with FailFast auditor - throws if incompatible contract detected
+Client client = new Client("http://localhost:8080", jsonParser)
+    .withAuditor(ContractAuditor.failFast())
+    .verifyOnBootstrap();
+
+// Or use explicit verification
+VerificationResult result = client.verifyCompatibility();
+if (!result.isCompatible()) {
+    System.out.println("Contract incompatible: " + result.getDeltas().size() + " deltas found");
+    for (ContractDelta delta : result.getDeltas()) {
+        System.out.println("  - " + delta.getEntityType() + ": " + delta.getDescription());
+    }
+}
+```
+
+### Built-in Auditors
+
+| Auditor | Behavior |
+|---------|----------|
+| `ContractAuditor.noOp()` | Does nothing - inspect results directly |
+| `ContractAuditor.logging()` | Logs at appropriate levels (Error/Warning/Info) |
+| `ContractAuditor.failFast()` | Throws exception if any Error-level deltas found |
+
+### Severity Levels
+
+| Level | Meaning |
+|-------|---------|
+| Error | Breaking change - will cause runtime failures |
+| Warning | Potentially problematic - may cause issues |
+| Info | Non-breaking - server can ignore extra fields |
+
+### VerificationResult Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `isCompatible()` | `boolean` | True if no Error-level deltas |
+| `getServerChecksum()` | `String` | SHA-256 hash of server IDL |
+| `getClientChecksum()` | `String` | SHA-256 hash of client IDL |
+| `getDeltas()` | `List<ContractDelta>` | List of changes detected |
+| `getTimestamp()` | `long` | When verification ran (epoch ms) |
+
+### ContractDelta Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `getEntityType()` | `EntityType` | Type of entity (Interface, Struct, Enum, Error) |
+| `getEntityName()` | `String` | Name of the entity |
+| `getChangeType()` | `ChangeType` | Type of change (Added, Removed, Modified) |
+| `getDirection()` | `Direction` | ClientToServer or ServerToClient |
+| `getSeverity()` | `Severity` | Error, Warning, or Info |
+| `getDescription()` | `String` | Human-readable description |

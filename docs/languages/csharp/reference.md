@@ -369,3 +369,64 @@ var options = new JsonSerializerOptions {
 
 var json = JsonSerializer.Serialize(product, options);
 ```
+
+## Contract Compatibility Verification
+
+PulseRPC provides contract compatibility verification to detect when client and server IDLs have diverged. This helps catch integration issues early.
+
+### Using Auditors
+
+```csharp
+using PulseRPC;
+
+// Create client with FailFast auditor - throws if incompatible contract detected
+var client = new CatalogServiceClient(transport)
+    .WithAuditor(new FailFastAuditor())
+    .VerifyOnBootstrap();
+
+// Or use explicit verification
+var result = await client.VerifyCompatibility();
+if (!result.Compatible) {
+    Console.WriteLine($"Contract incompatible: {result.Deltas.Count} deltas found");
+    foreach (var delta in result.Deltas) {
+        Console.WriteLine($"  - {delta.EntityType}: {delta.Description}");
+    }
+}
+```
+
+### Built-in Auditors
+
+| Auditor | Behavior |
+|---------|----------|
+| `NoOpAuditor` | Does nothing - inspect results directly |
+| `LoggingAuditor` | Logs at appropriate levels (Error/Warning/Info) |
+| `FailFastAuditor` | Throws exception if any Error-level deltas found |
+
+### Severity Levels
+
+| Level | Meaning |
+|-------|---------|
+| Error | Breaking change - will cause runtime failures |
+| Warning | Potentially problematic - may cause issues |
+| Info | Non-breaking - server can ignore extra fields |
+
+### VerificationResult Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Compatible` | `bool` | True if no Error-level deltas |
+| `ServerChecksum` | `string` | SHA-256 hash of server IDL |
+| `ClientChecksum` | `string` | SHA-256 hash of client IDL |
+| `Deltas` | `List<ContractDelta>` | List of changes detected |
+| `Timestamp` | `DateTime` | When verification ran |
+
+### ContractDelta Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `EntityType` | `EntityType` | Type of entity (Interface, Struct, Enum, Error) |
+| `EntityName` | `string` | Name of the entity |
+| `ChangeType` | `ChangeType` | Type of change (Added, Removed, Modified) |
+| `Direction` | `Direction` | ClientToServer or ServerToClient |
+| `Severity` | `Severity` | Error, Warning, or Info |
+| `Description` | `string` | Human-readable description |

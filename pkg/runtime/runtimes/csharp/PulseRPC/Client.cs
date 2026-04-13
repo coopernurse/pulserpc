@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Dynamic;
 using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace PulseRPC
 {
-    /// <summary>
-    /// Dynamic proxy for an interface that provides callable methods
-    /// </summary>
     public class InterfaceClientProxy : DynamicObject
     {
         private readonly Client _client;
@@ -21,7 +21,6 @@ namespace PulseRPC
             _iface = iface;
             _ifaceName = iface.Name;
 
-            // Create method callables for each function
             foreach (var funcName in iface.Functions.Keys)
             {
                 var capturedFuncName = funcName;
@@ -29,9 +28,6 @@ namespace PulseRPC
             }
         }
 
-        /// <summary>
-        /// Calls a method on the interface
-        /// </summary>
         public object? Call(string funcName, params object[] args)
         {
             if (_methods.TryGetValue(funcName, out var method))
@@ -53,20 +49,13 @@ namespace PulseRPC
             throw new InvalidOperationException($"Method not found: {funcName}");
         }
 
-        /// <summary>
-        /// Gets a method by name for direct access
-        /// </summary>
         public Func<object?, object?>? GetMethod(string funcName)
         {
             return _methods.TryGetValue(funcName, out var method) ? method : null;
         }
 
-        /// <summary>
-        /// Lists all available method names
-        /// </summary>
         public IEnumerable<string> ListMethods() => _methods.Keys;
 
-        // DynamicObject implementation for dynamic access
         public override bool TryGetMember(GetMemberBinder binder, out object? result)
         {
             if (_methods.TryGetValue(binder.Name, out var method))
@@ -103,9 +92,6 @@ namespace PulseRPC
         }
     }
 
-    /// <summary>
-    /// JSON-RPC 2.0 client with automatic interface discovery
-    /// </summary>
     public class Client
     {
         private readonly Transport _transport;
@@ -113,41 +99,57 @@ namespace PulseRPC
         private readonly bool _validateResponse;
         private int _requestID;
         private readonly Dictionary<string, InterfaceClientProxy> _ifaces = new Dictionary<string, InterfaceClientProxy>();
+        private IContractAuditor? _auditor;
+        private bool _verifyOnBootstrap;
+        private object? _localIDL;
 
         public Contract? Contract { get; private set; }
 
-        /// <summary>
-        /// Creates a new Client and bootstraps by fetching IDL from server
-        /// </summary>
         public Client(Transport transport, bool validateRequest = false, bool validateResponse = false)
         {
             _transport = transport;
             _validateRequest = validateRequest;
             _validateResponse = validateResponse;
 
-            // Bootstrap: fetch IDL from server
             Bootstrap();
         }
 
-        /// <summary>
-        /// Gets an interface proxy by name
-        /// </summary>
+        private Client(Transport transport, bool validateRequest, bool validateResponse, ClientOptions options)
+        {
+            _transport = transport;
+            _validateRequest = validateRequest;
+            _validateResponse = validateResponse;
+            _auditor = options.GetAuditor();
+            _verifyOnBootstrap = options.GetVerifyOnBootstrap();
+
+            Bootstrap();
+
+            if (_verifyOnBootstrap)
+            {
+                VerifyCompatibility(CancellationToken.None).Wait();
+            }
+        }
+
+        public static Client Create(Transport transport, bool validateRequest = false, bool validateResponse = false, ClientOptions? options = null)
+        {
+            if (options != null)
+            {
+                return new Client(transport, validateRequest, validateResponse, options);
+            }
+            return new Client(transport, validateRequest, validateResponse);
+        }
+
+        public static ClientOptions Options => new ClientOptions();
+
         public InterfaceClientProxy? GetInterface(string ifaceName)
         {
             return _ifaces.TryGetValue(ifaceName, out var proxy) ? proxy : null;
         }
 
-        /// <summary>
-        /// Gets an interface proxy using dynamic access
-        /// </summary>
         public dynamic Interfaces => new InterfaceProxyAccessor(this);
 
-        /// <summary>
-        /// Makes a JSON-RPC call
-        /// </summary>
         public object? Call(string method, object? @params = null)
         {
-            // Validate request if enabled
             if (_validateRequest && Contract != null)
             {
                 var parts = ParseMethodName(method);
@@ -168,11 +170,9 @@ namespace PulseRPC
                 }
             }
 
-            // Generate request ID
             _requestID++;
             var reqID = _requestID;
 
-            // Build request
             var request = new Dictionary<string, object?>
             {
                 ["jsonrpc"] = "2.0",
@@ -185,10 +185,8 @@ namespace PulseRPC
                 request["params"] = @params;
             }
 
-            // Send request via transport
             var response = _transport.Request(method, @params);
 
-            // Check for error response
             if (response.TryGetValue("error", out var errorObj) && errorObj is Dictionary<string, object> errDict)
             {
                 var code = errDict.TryGetValue("code", out var codeObj) ? Convert.ToInt32(codeObj) : -32603;
@@ -197,10 +195,8 @@ namespace PulseRPC
                 throw new RPCError(code, message!, data);
             }
 
-            // Get result
             var result = response.TryGetValue("result", out var resultObj) ? resultObj : null;
 
-            // Validate response if enabled
             if (_validateResponse && Contract != null && result != null)
             {
                 var parts = ParseMethodName(method);
@@ -220,46 +216,33 @@ namespace PulseRPC
             return result;
         }
 
-        /// <summary>
-        /// Sends a notification (no response expected)
-        /// </summary>
         public void Notify(string method, object? @params = null)
         {
-            // Ignore errors for notifications
             try
             {
                 Call(method, @params);
             }
             catch
             {
-                // Ignore
             }
         }
 
-        /// <summary>
-        /// Bootstrap: fetch IDL from server and create interface proxies
-        /// </summary>
         private void Bootstrap()
         {
-            // Make request to get IDL
             var response = _transport.Request("pulserpc-idl", null);
 
-            // Check for error
             if (response.TryGetValue("error", out var errorObj) && errorObj is Dictionary<string, object> errDict)
             {
                 throw new Exception($"Failed to fetch IDL: {errDict["message"]}");
             }
 
-            // Get IDL result
             if (!response.TryGetValue("result", out var idlJSON) || idlJSON == null)
             {
                 throw new Exception("Server returned empty IDL");
             }
 
-            // Create contract
             Contract = new Contract(idlJSON);
 
-            // Create interface proxies
             foreach (var kvp in Contract.Interfaces)
             {
                 var proxy = new InterfaceClientProxy(this, kvp.Value);
@@ -267,9 +250,6 @@ namespace PulseRPC
             }
         }
 
-        /// <summary>
-        /// Parses "Interface.method" format
-        /// </summary>
         private (string ifaceName, string funcName)? ParseMethodName(string method)
         {
             var lastDot = method.LastIndexOf('.');
@@ -280,9 +260,6 @@ namespace PulseRPC
             return (method.Substring(0, lastDot), method.Substring(lastDot + 1));
         }
 
-        /// <summary>
-        /// Converts params to positional list for validation
-        /// </summary>
         private List<object?>? ConvertParamsToList(string ifaceName, string funcName, object? @params)
         {
             if (Contract == null) return null;
@@ -328,11 +305,85 @@ namespace PulseRPC
 
             return result;
         }
+
+        public async Task<VerificationResult> VerifyCompatibility(CancellationToken cancellationToken = default)
+        {
+            object? clientIDL;
+            if (_localIDL != null)
+            {
+                clientIDL = _localIDL;
+            }
+            else if (Contract != null)
+            {
+                clientIDL = Contract.GetIDLParsed();
+            }
+            else
+            {
+                clientIDL = null;
+            }
+
+            object? serverIDL = Contract?.GetIDLParsed();
+
+            var deltas = new List<ContractDelta>();
+            if (clientIDL != null && serverIDL != null)
+            {
+                deltas = DiffEngine.DiffIDL(clientIDL, serverIDL);
+            }
+
+            var compatible = true;
+            foreach (var delta in deltas)
+            {
+                if (delta.Severity == Severity.Error)
+                {
+                    compatible = false;
+                    break;
+                }
+            }
+
+            var result = new VerificationResult
+            {
+                Compatible = compatible,
+                ServerChecksum = serverIDL != null ? DiffEngine.ComputeChecksum(serverIDL) : string.Empty,
+                ClientChecksum = clientIDL != null ? DiffEngine.ComputeChecksum(clientIDL) : string.Empty,
+                Deltas = deltas,
+                Timestamp = DateTime.UtcNow
+            };
+
+            if (_auditor != null)
+            {
+                _auditor.Audit(result);
+            }
+
+            return result;
+        }
+
+        public void SetLocalIDL(string idlJson)
+        {
+            _localIDL = JsonSerializer.Deserialize<object>(idlJson);
+        }
+
+        public class ClientOptions
+        {
+            private IContractAuditor? _auditor;
+            private bool _verifyOnBootstrap;
+
+            public ClientOptions WithAuditor(IContractAuditor auditor)
+            {
+                _auditor = auditor;
+                return this;
+            }
+
+            public ClientOptions VerifyOnBootstrap()
+            {
+                _verifyOnBootstrap = true;
+                return this;
+            }
+
+            internal IContractAuditor? GetAuditor() => _auditor;
+            internal bool GetVerifyOnBootstrap() => _verifyOnBootstrap;
+        }
     }
 
-    /// <summary>
-    /// Helper class for dynamic interface access
-    /// </summary>
     public class InterfaceProxyAccessor
     {
         private readonly Client _client;
