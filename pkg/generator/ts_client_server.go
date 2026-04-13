@@ -271,6 +271,12 @@ func (p *TSClientServer) copyRuntimeFiles(paths TSNamespacePaths, silent bool) e
 // - Writes to the specified output directory (e.g., {dir}/{namespace}/idl.json)
 // - Only the entry-point namespace directory gets idl.json
 func writeIDLJSONTs(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
+	checksum, err := parser.ComputeChecksum(idl)
+	if err != nil {
+		return fmt.Errorf("failed to compute checksum: %w", err)
+	}
+	idl.Checksum = checksum
+
 	idlJSON, err := json.MarshalIndent(idl, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)

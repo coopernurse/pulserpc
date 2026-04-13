@@ -260,6 +260,12 @@ func (p *PythonClientServer) copyRuntimeFiles(paths PythonNamespacePaths, silent
 
 // writeIDLJSON writes the IDL metadata as JSON to idl.json
 func writeIDLJSON(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
+	checksum, err := parser.ComputeChecksum(idl)
+	if err != nil {
+		return fmt.Errorf("failed to compute checksum: %w", err)
+	}
+	idl.Checksum = checksum
+
 	idlJSON, err := json.MarshalIndent(idl, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)

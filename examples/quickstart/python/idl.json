@@ -1,5 +1,6 @@
 {
   "rootNamespace": "checkout",
+  "checksum": "QRhpvI82cyOt-09wpxUcS4-UvP8hFt5UuzryBpCpiF0",
   "interfaces": [
     {
       "name": "CatalogService",

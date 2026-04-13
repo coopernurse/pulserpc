@@ -145,6 +145,12 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 
 	// Marshal IDL JSON for embedding in Server.cs
+	checksum, err := parser.ComputeChecksum(idl)
+	if err != nil {
+		return fmt.Errorf("failed to compute checksum: %w", err)
+	}
+	idl.Checksum = checksum
+
 	jsonData, err := json.MarshalIndent(idl, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)

@@ -7,6 +7,7 @@ import (
 // IDL represents the root structure containing all parsed IDL elements
 type IDL struct {
 	RootNamespace string       `json:"rootNamespace,omitempty"` // Namespace of the root file being parsed
+	Checksum      string       `json:"checksum,omitempty"`      // SHA-256 checksum of structural elements
 	Interfaces    []*Interface `json:"interfaces,omitempty"`
 	Structs       []*Struct    `json:"structs,omitempty"`
 	Enums         []*Enum      `json:"enums,omitempty"`
@@ -76,11 +77,11 @@ type Enum struct {
 // ErrorDef represents a declared error with code, name, and message
 type ErrorDef struct {
 	Pos       lexer.Position `json:"-"`
-	Name      string         `json:"name"`      // e.g., "NotFound" or "errors.NotFound" if imported
+	Name      string         `json:"name"`                // e.g., "NotFound" or "errors.NotFound" if imported
 	Namespace string         `json:"namespace,omitempty"` // Namespace where declared
-	Code      int            `json:"code"`      // JSON-RPC error code
-	Message   string         `json:"message"`   // Error message template
-	Comment   string         `json:"comment,omitempty"` // Documentation comment
+	Code      int            `json:"code"`                // JSON-RPC error code
+	Message   string         `json:"message"`             // Error message template
+	Comment   string         `json:"comment,omitempty"`   // Documentation comment
 }
 
 // Type represents a type (built-in, array, map, or user-defined)
