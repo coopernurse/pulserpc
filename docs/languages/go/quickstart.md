@@ -131,6 +131,64 @@ mkdir -p cmd/client
 go run -tags client_only ./cmd/client
 ```
 
+## 8. Verify Contract Compatibility (Optional)
+
+PulseRPC provides contract compatibility verification to detect when client and server IDLs have diverged. This helps catch integration issues early.
+
+{% highlight go %}
+package main
+
+import (
+	"context"
+	"fmt"
+	"checkout-service/pkg/checkout"
+)
+
+func main() {
+	transport := checkout.NewHTTPTransport("http://localhost:8080", nil)
+	
+	// Create client with FailFast auditor - panics on incompatible contract
+	client := checkout.NewCatalogServiceClient(
+		transport,
+		checkout.WithAuditor(&checkout.FailFastAuditor{}),
+	)
+	
+	// Verify compatibility explicitly
+	result := client.VerifyCompatibility(context.Background())
+	if !result.Compatible {
+		fmt.Printf("Contract incompatible: %d deltas found\n", len(result.Deltas))
+		for _, delta := range result.Deltas {
+			fmt.Printf("  - %s: %s\n", delta.EntityType, delta.Description)
+		}
+	}
+	
+	// Or use VerifyOnBootstrap to check during client creation
+	client2 := checkout.NewCatalogServiceClient(
+		transport,
+		checkout.VerifyOnBootstrap(),
+		checkout.WithAuditor(&checkout.LoggingAuditor{}),
+	)
+	
+	_ = client2 // ready to use
+}
+{% endhighlight %}
+
+### Built-in Auditors
+
+| Auditor | Behavior |
+|---------|----------|
+| `NoOpAuditor` | Does nothing - inspect results directly |
+| `LoggingAuditor` | Logs at appropriate levels (Error/Warning/Info) |
+| `FailFastAuditor` | Panics if any Error-level deltas found |
+
+### Severity Levels
+
+| Level | Meaning |
+|-------|---------|
+| Error | Breaking change - will cause runtime failures |
+| Warning | Potentially problematic - may cause issues |
+| Info | Non-breaking - server can ignore extra fields |
+
 ## Error Codes
 
 Return errors using the pulserpc package:

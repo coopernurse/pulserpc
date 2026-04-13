@@ -1024,6 +1024,15 @@ func generateClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 
 	sb.WriteString(")\n\n")
 
+	// Embed IDL JSON for contract compatibility verification
+	idlJSON, err := json.MarshalIndent(idl, "", "  ")
+	if err == nil {
+		sb.WriteString("// IDL_JSON contains the IDL definition used to generate this client\n")
+		sb.WriteString("const IDL_JSON = ")
+		sb.WriteString(escapeGoString(string(idlJSON)))
+		sb.WriteString("\n\n")
+	}
+
 	// Generate Transport interface
 	writeTransportInterfaceGo(&sb)
 
@@ -1050,6 +1059,7 @@ func writeClientOptions(sb *strings.Builder) {
 	sb.WriteString("	SetValidateRequests(bool)\n")
 	sb.WriteString("	SetValidateResponses(bool)\n")
 	sb.WriteString("	SetContract(*pulserpc.Contract)\n")
+	sb.WriteString("	SetAuditor(pulserpc.ContractAuditor)\n")
 	sb.WriteString("}\n\n")
 	sb.WriteString("// WithValidateRequests enables request validation\n")
 	sb.WriteString("func WithValidateRequests(v bool) ClientOption {\n")
@@ -1067,6 +1077,20 @@ func writeClientOptions(sb *strings.Builder) {
 	sb.WriteString("func WithContract(contract *pulserpc.Contract) ClientOption {\n")
 	sb.WriteString("	return func(c ClientConfigurator) {\n")
 	sb.WriteString("		c.SetContract(contract)\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("}\n\n")
+	sb.WriteString("// WithAuditor sets a contract auditor for compatibility verification\n")
+	sb.WriteString("func WithAuditor(auditor pulserpc.ContractAuditor) ClientOption {\n")
+	sb.WriteString("	return func(c ClientConfigurator) {\n")
+	sb.WriteString("		c.SetAuditor(auditor)\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("}\n\n")
+	sb.WriteString("// VerifyOnBootstrap enables automatic contract verification during client creation\n")
+	sb.WriteString("func VerifyOnBootstrap() ClientOption {\n")
+	sb.WriteString("	return func(c ClientConfigurator) {\n")
+	sb.WriteString("		if hc, ok := c.(*Client); ok {\n")
+	sb.WriteString("			hc.verifyOnBootstrap = true\n")
+	sb.WriteString("		}\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("}\n\n")
 }
@@ -1165,8 +1189,11 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	fmt.Fprintf(sb, "type %s struct {\n", clientName)
 	sb.WriteString("	transport         Transport\n")
 	sb.WriteString("	contract         *pulserpc.Contract\n")
+	sb.WriteString("	localIDL         interface{}\n")
 	sb.WriteString("	validateRequests  bool\n")
 	sb.WriteString("	validateResponses bool\n")
+	sb.WriteString("	auditor          pulserpc.ContractAuditor\n")
+	sb.WriteString("	verifyOnBootstrap bool\n")
 	sb.WriteString("}\n\n")
 
 	fmt.Fprintf(sb, "// New%s creates a new %s\n", clientName, clientName)
@@ -1178,6 +1205,11 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	sb.WriteString("	}\n")
 	sb.WriteString("	for _, opt := range opts {\n")
 	sb.WriteString("		opt(c)\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("	// Parse and store local IDL for compatibility verification\n")
+	sb.WriteString("	var idlData interface{}\n")
+	sb.WriteString("	if err := json.Unmarshal([]byte(IDL_JSON), &idlData); err == nil {\n")
+	sb.WriteString("		c.localIDL = idlData\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("	if c.contract == nil {\n")
 	sb.WriteString("		c.contract, _ = pulserpc.LoadContractFromFile(\"idl.json\")\n")
@@ -1197,10 +1229,51 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	sb.WriteString("	c.contract = contract\n")
 	sb.WriteString("}\n\n")
 
+	fmt.Fprintf(sb, "func (c *%s) SetAuditor(auditor pulserpc.ContractAuditor) {\n", clientName)
+	sb.WriteString("	c.auditor = auditor\n")
+	sb.WriteString("}\n\n")
+
+	// Generate VerifyCompatibility method
+	writeVerifyCompatibilityMethod(sb, clientName)
+
 	// Generate methods
 	for _, method := range iface.Methods {
 		writeClientMethodGo(sb, iface, method, structMap, enumMap, namespace, nsImports, packageImportPath)
 	}
+}
+
+// writeVerifyCompatibilityMethod generates the VerifyCompatibility method for the client
+func writeVerifyCompatibilityMethod(sb *strings.Builder, clientName string) {
+	fmt.Fprintf(sb, "func (c *%s) VerifyCompatibility(ctx context.Context) *pulserpc.VerificationResult {\n", clientName)
+	sb.WriteString("	var clientIDL interface{}\n")
+	sb.WriteString("	if c.localIDL != nil {\n")
+	sb.WriteString("		clientIDL = c.localIDL\n")
+	sb.WriteString("	} else if c.contract != nil {\n")
+	sb.WriteString("		clientIDL = c.contract.GetIDLParsed()\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	var serverIDL interface{}\n")
+	sb.WriteString("	if c.contract != nil {\n")
+	sb.WriteString("		serverIDL = c.contract.GetIDLParsed()\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	deltas := pulserpc.DiffIDL(clientIDL, serverIDL)\n\n")
+	sb.WriteString("	compatible := true\n")
+	sb.WriteString("	for _, delta := range deltas {\n")
+	sb.WriteString("		if delta.Severity == pulserpc.SeverityError {\n")
+	sb.WriteString("			compatible = false\n")
+	sb.WriteString("			break\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	result := &pulserpc.VerificationResult{\n")
+	sb.WriteString("		Compatible:     compatible,\n")
+	sb.WriteString("		ServerChecksum: pulserpc.ComputeChecksum(serverIDL),\n")
+	sb.WriteString("		ClientChecksum: pulserpc.ComputeChecksum(clientIDL),\n")
+	sb.WriteString("		Deltas:         deltas,\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	if c.auditor != nil {\n")
+	sb.WriteString("		c.auditor.Audit(ctx, result)\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	return result\n")
+	sb.WriteString("}\n\n")
 }
 
 // writeClientMethodGo generates a method implementation for a client struct

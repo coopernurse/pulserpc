@@ -162,6 +162,11 @@ func (i *Interface) GetFunction(funcName string) FunctionDef {
 	return nil
 }
 
+// GetIDLParsed returns the raw parsed IDL data
+func (c *Contract) GetIDLParsed() interface{} {
+	return c.idlParsed
+}
+
 // ValidateRequest validates request parameters against the IDL
 func (c *Contract) ValidateRequest(ifaceName string, funcName string, params []interface{}) error {
 	iface := c.GetInterface(ifaceName)

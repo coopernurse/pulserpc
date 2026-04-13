@@ -1,6 +1,81 @@
 package pulserpc
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// EntityType represents the type of IDL entity
+type EntityType string
+
+const (
+	EntityInterface EntityType = "Interface"
+	EntityMethod    EntityType = "Method"
+	EntityStruct    EntityType = "Struct"
+	EntityField     EntityType = "Field"
+	EntityEnum      EntityType = "Enum"
+	EntityError     EntityType = "Error"
+)
+
+// ChangeType represents the type of change
+type ChangeType string
+
+const (
+	ChangeAdded    ChangeType = "Added"
+	ChangeRemoved  ChangeType = "Removed"
+	ChangeModified ChangeType = "Modified"
+)
+
+// Direction represents the direction of a delta
+type Direction string
+
+const (
+	DirectionClientHasMore Direction = "ClientHasMore"
+	DirectionClientHasLess Direction = "ClientHasLess"
+	DirectionMismatch      Direction = "Mismatch"
+)
+
+// Severity represents the severity of a delta
+type Severity string
+
+const (
+	SeverityError   Severity = "Error"
+	SeverityWarning Severity = "Warning"
+	SeverityInfo    Severity = "Info"
+)
+
+// ContractDelta represents a single difference between client and server IDL
+type ContractDelta struct {
+	EntityType  EntityType
+	EntityName  string
+	MemberName  string
+	ChangeType  ChangeType
+	Direction   Direction
+	Severity    Severity
+	Description string
+}
+
+// VerificationResult contains the result of a contract compatibility verification
+type VerificationResult struct {
+	Compatible     bool
+	ServerChecksum string
+	ClientChecksum string
+	Deltas         []ContractDelta
+	Timestamp      time.Time
+}
+
+// ComputeChecksum computes a SHA-256 checksum of the IDL data
+func ComputeChecksum(idl interface{}) string {
+	data, err := json.Marshal(idl)
+	if err != nil {
+		return ""
+	}
+	hash := sha256.Sum256(data)
+	return fmt.Sprintf("%x", hash)
+}
 
 // StructDef represents a struct definition
 type StructDef map[string]interface{}
@@ -113,4 +188,3 @@ func GetStructFields(structName string, allStructs StructMap) []map[string]inter
 
 	return fields
 }
-

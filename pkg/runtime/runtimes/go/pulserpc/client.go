@@ -1,7 +1,10 @@
 package pulserpc
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // InterfaceClientProxy represents a dynamic proxy for an interface
@@ -15,26 +18,38 @@ type InterfaceClientProxy struct {
 // Client is a JSON-RPC 2.0 client with automatic interface discovery
 type Client struct {
 	transport         Transport
-	contract         *Contract
+	contract          *Contract
+	localIDL          interface{}
 	validateRequest   bool
-	validateResponse bool
-	requestID        int
-	ifaces           map[string]*InterfaceClientProxy
+	validateResponse  bool
+	requestID         int
+	ifaces            map[string]*InterfaceClientProxy
+	auditor           ContractAuditor
+	verifyOnBootstrap bool
 }
 
 // NewClient creates a new Client and bootstraps by fetching IDL from server
-func NewClient(transport Transport, validateRequest bool, validateResponse bool) (*Client, error) {
+func NewClient(transport Transport, validateRequest bool, validateResponse bool, opts ...ClientOption) (*Client, error) {
 	c := &Client{
-		transport:         transport,
-		validateRequest:   validateRequest,
+		transport:        transport,
+		validateRequest:  validateRequest,
 		validateResponse: validateResponse,
 		requestID:        0,
 		ifaces:           make(map[string]*InterfaceClientProxy),
 	}
 
+	for _, opt := range opts {
+		opt(c)
+	}
+
 	// Bootstrap: fetch IDL from server
 	if err := c.bootstrap(); err != nil {
 		return nil, err
+	}
+
+	// If VerifyOnBootstrap is set, perform verification immediately after bootstrap
+	if c.verifyOnBootstrap {
+		c.VerifyCompatibility(context.Background())
 	}
 
 	return c, nil
@@ -278,4 +293,62 @@ func (p *InterfaceClientProxy) Invoke(funcName string, args ...interface{}) (int
 	}()
 
 	return p.Call(funcName, args...), nil
+}
+
+type ClientOption func(*Client)
+
+func WithAuditor(auditor ContractAuditor) ClientOption {
+	return func(c *Client) {
+		c.auditor = auditor
+	}
+}
+
+func VerifyOnBootstrap() ClientOption {
+	return func(c *Client) {
+		c.verifyOnBootstrap = true
+	}
+}
+
+func (c *Client) SetLocalIDL(idlJSON string) error {
+	var idlParsed interface{}
+	if err := json.Unmarshal([]byte(idlJSON), &idlParsed); err != nil {
+		return fmt.Errorf("failed to parse local IDL JSON: %w", err)
+	}
+	c.localIDL = idlParsed
+	return nil
+}
+
+func (c *Client) VerifyCompatibility(ctx context.Context) *VerificationResult {
+	var clientIDL interface{}
+	if c.localIDL != nil {
+		clientIDL = c.localIDL
+	} else {
+		clientIDL = c.contract.idlParsed
+	}
+
+	serverIDL := c.contract.idlParsed
+
+	deltas := DiffIDL(clientIDL, serverIDL)
+
+	compatible := true
+	for _, delta := range deltas {
+		if delta.Severity == SeverityError {
+			compatible = false
+			break
+		}
+	}
+
+	result := &VerificationResult{
+		Compatible:     compatible,
+		ServerChecksum: ComputeChecksum(serverIDL),
+		ClientChecksum: ComputeChecksum(clientIDL),
+		Deltas:         deltas,
+		Timestamp:      time.Now(),
+	}
+
+	if c.auditor != nil {
+		c.auditor.Audit(ctx, result)
+	}
+
+	return result
 }
