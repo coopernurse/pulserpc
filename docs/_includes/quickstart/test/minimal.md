@@ -1,1 +1,3 @@
-{% highlight python %}x = 1{% highlight %}
+{% highlight python %}
+x = 1
+{% endhighlight %}

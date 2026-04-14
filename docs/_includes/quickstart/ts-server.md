@@ -167,4 +167,4 @@ const httpServer = http.createServer((req, res) => {
 httpServer.listen(port, '0.0.0.0', () => {
   console.log(`Server listening on http://0.0.0.0:${port}`);
 });
-{% highlight %}
+{% endhighlight %}
