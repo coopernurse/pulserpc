@@ -1,7 +1,5 @@
 package com.bitmechanic.pulserpc;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.*;
 
 public class DiffEngine {
@@ -648,19 +646,4 @@ public class DiffEngine {
         return ContractDelta.Severity.Info;
     }
 
-    public static String computeChecksum(Object idl) {
-        try {
-            JsonParser parser = new JacksonJsonParser();
-            String json = parser.toJson(idl);
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(json.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hash) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (Exception e) {
-            return "";
-        }
-    }
 }

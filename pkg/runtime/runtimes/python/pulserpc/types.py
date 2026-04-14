@@ -41,3 +41,22 @@ def get_struct_fields(struct_name: str, all_structs: Dict[str, Any]) -> List[Dic
     
     return fields
 
+
+def extract_checksum(idl: Any) -> str:
+    """Extract checksum from IDL data.
+    
+    Reads the checksum field from IDL data that was computed at code generation time.
+    This avoids the need to compute SHA-256 at runtime.
+    
+    Args:
+        idl: Parsed IDL data (dict with 'checksum' field)
+        
+    Returns:
+        Checksum string, or empty string if not found
+    """
+    if isinstance(idl, dict):
+        checksum = idl.get('checksum')
+        if checksum is not None:
+            return str(checksum)
+    return ''
+

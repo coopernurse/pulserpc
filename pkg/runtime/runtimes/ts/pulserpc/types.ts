@@ -66,3 +66,10 @@ export function getStructFields(structName: string, allStructs: StructMap): Fiel
 
   return fields;
 }
+
+export function extractChecksum(idl: any): string {
+  if (idl && typeof idl === 'object' && 'checksum' in idl) {
+    return String(idl.checksum);
+  }
+  return '';
+}

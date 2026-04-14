@@ -189,29 +189,6 @@ namespace PulseRPC.Tests
         }
 
         [Fact]
-        public void ComputeChecksum_SameIDL_ReturnsSameChecksum()
-        {
-            var idl = JsonSerializer.Deserialize<Dictionary<string, object>>(@"{""test"": ""data""}");
-
-            var checksum1 = DiffEngine.ComputeChecksum(idl);
-            var checksum2 = DiffEngine.ComputeChecksum(idl);
-
-            Assert.Equal(checksum1, checksum2);
-        }
-
-        [Fact]
-        public void ComputeChecksum_DifferentIDL_ReturnsDifferentChecksum()
-        {
-            var idl1 = JsonSerializer.Deserialize<Dictionary<string, object>>(@"{""test"": ""data1""}");
-            var idl2 = JsonSerializer.Deserialize<Dictionary<string, object>>(@"{""test"": ""data2""}");
-
-            var checksum1 = DiffEngine.ComputeChecksum(idl1);
-            var checksum2 = DiffEngine.ComputeChecksum(idl2);
-
-            Assert.NotEqual(checksum1, checksum2);
-        }
-
-        [Fact]
         public void DiffIDL_StructRemovedFromServer_ReturnsErrorSeverity()
         {
             var clientIDL = JsonSerializer.Deserialize<Dictionary<string, object>>(@"{

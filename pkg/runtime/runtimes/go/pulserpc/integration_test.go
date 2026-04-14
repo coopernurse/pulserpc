@@ -278,7 +278,7 @@ func TestVerifyCompatibility_Checksums(t *testing.T) {
 }
 
 func TestVerifyCompatibility_VerificationResult(t *testing.T) {
-	idl := `{"interfaces": [], "structs": [], "enums": []}`
+	idl := `{"interfaces": [], "structs": [], "enums": [], "checksum": "abc123"}`
 	var idlData interface{}
 	json.Unmarshal([]byte(idl), &idlData)
 
@@ -294,8 +294,8 @@ func TestVerifyCompatibility_VerificationResult(t *testing.T) {
 
 	result := &VerificationResult{
 		Compatible:     compatible,
-		ServerChecksum: ComputeChecksum(idlData),
-		ClientChecksum: ComputeChecksum(idlData),
+		ServerChecksum: "abc123",
+		ClientChecksum: "abc123",
 		Deltas:         deltas,
 		Timestamp:      time.Now(),
 	}

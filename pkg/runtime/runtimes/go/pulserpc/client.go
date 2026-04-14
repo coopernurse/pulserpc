@@ -328,6 +328,16 @@ func (c *Client) VerifyCompatibility(ctx context.Context) *VerificationResult {
 
 	serverIDL := c.contract.idlParsed
 
+	var clientChecksum string
+	if dict, ok := clientIDL.(map[string]interface{}); ok {
+		clientChecksum, _ = dict["checksum"].(string)
+	}
+
+	var serverChecksum string
+	if dict, ok := serverIDL.(map[string]interface{}); ok {
+		serverChecksum, _ = dict["checksum"].(string)
+	}
+
 	deltas := DiffIDL(clientIDL, serverIDL)
 
 	compatible := true
@@ -340,8 +350,8 @@ func (c *Client) VerifyCompatibility(ctx context.Context) *VerificationResult {
 
 	result := &VerificationResult{
 		Compatible:     compatible,
-		ServerChecksum: ComputeChecksum(serverIDL),
-		ClientChecksum: ComputeChecksum(clientIDL),
+		ServerChecksum: serverChecksum,
+		ClientChecksum: clientChecksum,
 		Deltas:         deltas,
 		Timestamp:      time.Now(),
 	}

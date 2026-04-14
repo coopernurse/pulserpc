@@ -343,8 +343,8 @@ namespace PulseRPC
             var result = new VerificationResult
             {
                 Compatible = compatible,
-                ServerChecksum = serverIDL != null ? DiffEngine.ComputeChecksum(serverIDL) : string.Empty,
-                ClientChecksum = clientIDL != null ? DiffEngine.ComputeChecksum(clientIDL) : string.Empty,
+                ServerChecksum = serverIDL != null ? ExtractChecksum(serverIDL) : string.Empty,
+                ClientChecksum = clientIDL != null ? ExtractChecksum(clientIDL) : string.Empty,
                 Deltas = deltas,
                 Timestamp = DateTime.UtcNow
             };
@@ -355,6 +355,25 @@ namespace PulseRPC
             }
 
             return result;
+        }
+
+        private static string ExtractChecksum(object? idl)
+        {
+            if (idl is Dictionary<string, object> dict)
+            {
+                if (dict.TryGetValue("checksum", out var checksumObj) && checksumObj is string checksum)
+                {
+                    return checksum;
+                }
+            }
+            else if (idl is JsonElement element && element.ValueKind == JsonValueKind.Object)
+            {
+                if (element.TryGetProperty("checksum", out var checksumProp) && checksumProp.ValueKind == JsonValueKind.String)
+                {
+                    return checksumProp.GetString() ?? string.Empty;
+                }
+            }
+            return string.Empty;
         }
 
         public void SetLocalIDL(string idlJson)

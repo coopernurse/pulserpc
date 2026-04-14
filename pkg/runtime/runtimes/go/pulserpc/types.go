@@ -67,7 +67,10 @@ type VerificationResult struct {
 	Timestamp      time.Time
 }
 
-// ComputeChecksum computes a SHA-256 checksum of the IDL data
+// Deprecated: ComputeChecksum is no longer used for verification.
+// Checksums are now computed at code generation time and stored in idl.json.
+// Clients read checksums from IDL data via the "checksum" field.
+// This function is kept for backward compatibility with existing tests.
 func ComputeChecksum(idl interface{}) string {
 	data, err := json.Marshal(idl)
 	if err != nil {

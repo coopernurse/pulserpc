@@ -52,9 +52,22 @@ func (p *GoClientServer) RegisterFlags(fs *flag.FlagSet) {
 // Contract class at startup, and it must be accessible as {root}/idl.json regardless
 // of which namespace mode is active.
 func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
-	idlJSON, err := json.MarshalIndent(idl, "", "  ")
+	checksum, err := parser.ComputeChecksum(idl)
 	if err != nil {
-		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)
+		return fmt.Errorf("failed to compute checksum: %w", err)
+	}
+
+	output := map[string]interface{}{
+		"interfaces": idl.Interfaces,
+		"structs":    idl.Structs,
+		"enums":      idl.Enums,
+		"errors":     idl.Errors,
+		"checksum":   checksum,
+	}
+
+	idlJSON, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal IDL output to JSON: %w", err)
 	}
 
 	idlPath := filepath.Join(outputDir, "idl.json")
@@ -631,19 +644,6 @@ func findNamespaceForType(typeName string, structMap map[string]*parser.Struct, 
 	return ""
 }
 
-// findTestServerImports finds all namespace imports needed for test server code
-func findTestServerImports(t *parser.Type, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, currentNamespace string, nsImports map[string]bool) {
-	if t.IsUserDefined() {
-		if ns := findNamespaceForType(t.UserDefined, structMap, enumMap); ns != "" && ns != currentNamespace {
-			nsImports[ns] = true
-		}
-	} else if t.IsArray() {
-		findTestServerImports(t.Array, structMap, enumMap, currentNamespace, nsImports)
-	} else if t.IsMap() {
-		findTestServerImports(t.MapValue, structMap, enumMap, currentNamespace, nsImports)
-	}
-}
-
 // generateNamespaceGo generates a Go file for a single namespace
 func generateNamespaceGo(namespace string, types *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, packageImportPath string) string {
 	var sb strings.Builder
@@ -884,6 +884,11 @@ func writePulseRPCServerGo(sb *strings.Builder) {
 	sb.WriteString("	s.rpcServer.AddHandler(interfaceName, implementation)\n")
 	sb.WriteString("}\n\n")
 
+	sb.WriteString("// Call processes a JSON-RPC request and returns a response\n")
+	sb.WriteString("func (s *PulseRPCServer) Call(request map[string]interface{}) map[string]interface{} {\n")
+	sb.WriteString("	return s.rpcServer.Call(request)\n")
+	sb.WriteString("}\n\n")
+
 	sb.WriteString("// ServeForever starts the HTTP server and serves forever\n")
 	sb.WriteString("func (s *PulseRPCServer) ServeForever() error {\n")
 	sb.WriteString("	mux := http.NewServeMux()\n")
@@ -1009,6 +1014,7 @@ func generateClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 
 	sb.WriteString("import (\n")
 	sb.WriteString("	\"bytes\"\n")
+	sb.WriteString("	\"context\"\n")
 	sb.WriteString("	\"encoding/json\"\n")
 	sb.WriteString("	\"fmt\"\n")
 	sb.WriteString("	\"net/http\"\n")
@@ -1023,15 +1029,6 @@ func generateClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	}
 
 	sb.WriteString(")\n\n")
-
-	// Embed IDL JSON for contract compatibility verification
-	idlJSON, err := json.MarshalIndent(idl, "", "  ")
-	if err == nil {
-		sb.WriteString("// IDL_JSON contains the IDL definition used to generate this client\n")
-		sb.WriteString("const IDL_JSON = ")
-		sb.WriteString(escapeGoString(string(idlJSON)))
-		sb.WriteString("\n\n")
-	}
 
 	// Generate Transport interface
 	writeTransportInterfaceGo(&sb)
@@ -1083,14 +1080,6 @@ func writeClientOptions(sb *strings.Builder) {
 	sb.WriteString("func WithAuditor(auditor pulserpc.ContractAuditor) ClientOption {\n")
 	sb.WriteString("	return func(c ClientConfigurator) {\n")
 	sb.WriteString("		c.SetAuditor(auditor)\n")
-	sb.WriteString("	}\n")
-	sb.WriteString("}\n\n")
-	sb.WriteString("// VerifyOnBootstrap enables automatic contract verification during client creation\n")
-	sb.WriteString("func VerifyOnBootstrap() ClientOption {\n")
-	sb.WriteString("	return func(c ClientConfigurator) {\n")
-	sb.WriteString("		if hc, ok := c.(*Client); ok {\n")
-	sb.WriteString("			hc.verifyOnBootstrap = true\n")
-	sb.WriteString("		}\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("}\n\n")
 }
@@ -1206,11 +1195,7 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	sb.WriteString("	for _, opt := range opts {\n")
 	sb.WriteString("		opt(c)\n")
 	sb.WriteString("	}\n")
-	sb.WriteString("	// Parse and store local IDL for compatibility verification\n")
-	sb.WriteString("	var idlData interface{}\n")
-	sb.WriteString("	if err := json.Unmarshal([]byte(IDL_JSON), &idlData); err == nil {\n")
-	sb.WriteString("		c.localIDL = idlData\n")
-	sb.WriteString("	}\n")
+	sb.WriteString("	// Load contract from idl.json for compatibility verification\n")
 	sb.WriteString("	if c.contract == nil {\n")
 	sb.WriteString("		c.contract, _ = pulserpc.LoadContractFromFile(\"idl.json\")\n")
 	sb.WriteString("	}\n")
@@ -1242,41 +1227,7 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	}
 }
 
-// writeVerifyCompatibilityMethod generates the VerifyCompatibility method for the client
-func writeVerifyCompatibilityMethod(sb *strings.Builder, clientName string) {
-	fmt.Fprintf(sb, "func (c *%s) VerifyCompatibility(ctx context.Context) *pulserpc.VerificationResult {\n", clientName)
-	sb.WriteString("	var clientIDL interface{}\n")
-	sb.WriteString("	if c.localIDL != nil {\n")
-	sb.WriteString("		clientIDL = c.localIDL\n")
-	sb.WriteString("	} else if c.contract != nil {\n")
-	sb.WriteString("		clientIDL = c.contract.GetIDLParsed()\n")
-	sb.WriteString("	}\n\n")
-	sb.WriteString("	var serverIDL interface{}\n")
-	sb.WriteString("	if c.contract != nil {\n")
-	sb.WriteString("		serverIDL = c.contract.GetIDLParsed()\n")
-	sb.WriteString("	}\n\n")
-	sb.WriteString("	deltas := pulserpc.DiffIDL(clientIDL, serverIDL)\n\n")
-	sb.WriteString("	compatible := true\n")
-	sb.WriteString("	for _, delta := range deltas {\n")
-	sb.WriteString("		if delta.Severity == pulserpc.SeverityError {\n")
-	sb.WriteString("			compatible = false\n")
-	sb.WriteString("			break\n")
-	sb.WriteString("		}\n")
-	sb.WriteString("	}\n\n")
-	sb.WriteString("	result := &pulserpc.VerificationResult{\n")
-	sb.WriteString("		Compatible:     compatible,\n")
-	sb.WriteString("		ServerChecksum: pulserpc.ComputeChecksum(serverIDL),\n")
-	sb.WriteString("		ClientChecksum: pulserpc.ComputeChecksum(clientIDL),\n")
-	sb.WriteString("		Deltas:         deltas,\n")
-	sb.WriteString("	}\n\n")
-	sb.WriteString("	if c.auditor != nil {\n")
-	sb.WriteString("		c.auditor.Audit(ctx, result)\n")
-	sb.WriteString("	}\n\n")
-	sb.WriteString("	return result\n")
-	sb.WriteString("}\n\n")
-}
-
-// writeClientMethodGo generates a method implementation for a client struct
+// writeClientMethodGo generates a method implementation for a Go client struct
 func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, namespace string, nsImports map[string]string, packageImportPath string) {
 	methodName := snakeToCamelCase(method.Name)
 	fmt.Fprintf(sb, "// %s calls %s.%s\n", methodName, iface.Name, method.Name)
@@ -1302,141 +1253,122 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 	sb.WriteString(" {\n")
 
 	// Build params array
-	sb.WriteString("	params := []interface{}{\n")
+	sb.WriteString("\tparams := []interface{}{\n")
 	for _, param := range method.Parameters {
-		fmt.Fprintf(sb, "		%s,\n", param.Name)
+		fmt.Fprintf(sb, "\t\t%s,\n", param.Name)
 	}
-	sb.WriteString("	}\n\n")
-
-	// Validate parameters if enabled
-	sb.WriteString("	if c.validateRequests && c.contract != nil {\n")
-	sb.WriteString("		if err := c.contract.ValidateRequest(\"" + iface.Name + "\", \"" + method.Name + "\", params); err != nil {\n")
-	if method.ReturnType != nil {
-		returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
-		sb.WriteString("			var zero ")
-		sb.WriteString(returnType)
-		sb.WriteString("\n")
-		sb.WriteString("			return zero, fmt.Errorf(\"request validation failed: %w\", err)\n")
-	} else {
-		sb.WriteString("			return fmt.Errorf(\"request validation failed: %w\", err)\n")
-	}
-	sb.WriteString("		}\n")
-	sb.WriteString("	}\n\n")
+	sb.WriteString("\t}\n\n")
 
 	// Call transport
-	fmt.Fprintf(sb, "	methodName := \"%s.%s\"\n", iface.Name, method.Name)
-	sb.WriteString("	response, err := c.transport.Call(methodName, params)\n")
-	sb.WriteString("	if err != nil {\n")
+	fmt.Fprintf(sb, "\tmethodName := \"%s.%s\"\n", iface.Name, method.Name)
+	sb.WriteString("\tresponse, err := c.transport.Call(methodName, params)\n")
+	sb.WriteString("\tif err != nil {\n")
 	if method.ReturnType != nil {
-		sb.WriteString("		var zero ")
 		returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
+		sb.WriteString("\t\tvar zero ")
 		sb.WriteString(returnType)
 		sb.WriteString("\n")
-		sb.WriteString("		return zero, err\n")
+		sb.WriteString("\t\treturn zero, err\n")
 	} else {
-		sb.WriteString("		return err\n")
+		sb.WriteString("\t\treturn err\n")
 	}
-	sb.WriteString("	}\n\n")
+	sb.WriteString("\t}\n\n")
 
-	// Extract and validate result
+	// Extract result
 	if method.ReturnType != nil {
-		sb.WriteString("	result, ok := response[\"result\"]\n")
-		sb.WriteString("	if !ok {\n")
+		sb.WriteString("\tresult, ok := response[\"result\"]\n")
+		sb.WriteString("\tif !ok {\n")
+		returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
 		if method.ReturnOptional {
-			sb.WriteString("		var zero ")
-			returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
+			sb.WriteString("\t\tvar zero ")
 			sb.WriteString(returnType)
 			sb.WriteString("\n")
-			sb.WriteString("		return zero, nil\n")
+			sb.WriteString("\t\treturn zero, nil\n")
 		} else {
-			sb.WriteString("		var zero ")
-			returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
+			sb.WriteString("\t\tvar zero ")
 			sb.WriteString(returnType)
 			sb.WriteString("\n")
-			sb.WriteString("		return zero, fmt.Errorf(\"missing result in response\")\n")
+			sb.WriteString("\t\treturn zero, fmt.Errorf(\"missing result in response\")\n")
 		}
-		sb.WriteString("	}\n\n")
+		sb.WriteString("\t}\n\n")
 
-		sb.WriteString("	if c.validateResponses && c.contract != nil {\n")
-		sb.WriteString("		if err := c.contract.ValidateResponse(\"" + iface.Name + "\", \"" + method.Name + "\", result); err != nil {\n")
-		sb.WriteString("			var zero ")
 		goReturnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
+		sb.WriteString("\tvar typedResult ")
 		sb.WriteString(goReturnType)
 		sb.WriteString("\n")
-		sb.WriteString("			return zero, fmt.Errorf(\"response validation failed: %w\", err)\n")
-		sb.WriteString("		}\n")
-		sb.WriteString("	}\n\n")
-
-		// Deserialize result to typed value
-		goReturnType = getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
-		sb.WriteString("	var typedResult ")
+		sb.WriteString("\tresultJSON, _ := json.Marshal(result)\n")
+		sb.WriteString("\tif err := json.Unmarshal(resultJSON, &typedResult); err != nil {\n")
+		sb.WriteString("\t\tvar zero ")
 		sb.WriteString(goReturnType)
 		sb.WriteString("\n")
-		sb.WriteString("	resultJSON, _ := json.Marshal(result)\n")
-		sb.WriteString("	if err := json.Unmarshal(resultJSON, &typedResult); err != nil {\n")
-		sb.WriteString("		var zero ")
-		sb.WriteString(goReturnType)
-		sb.WriteString("\n")
-		sb.WriteString("		return zero, fmt.Errorf(\"failed to unmarshal result: %w\", err)\n")
-		sb.WriteString("	}\n")
-		sb.WriteString("	return typedResult, nil\n")
+		sb.WriteString("\t\treturn zero, fmt.Errorf(\"failed to unmarshal result: %w\", err)\n")
+		sb.WriteString("\t}\n")
+		sb.WriteString("\treturn typedResult, nil\n")
 	} else {
-		sb.WriteString("	return nil\n")
+		sb.WriteString("\treturn nil\n")
 	}
 	sb.WriteString("}\n\n")
 }
 
-// generateTestServerGo generates test_server.go with concrete implementations
-func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, primaryImportPath string, packageImportPath string, namespaceMap map[string]*NamespaceTypes, primaryNs string) string {
-	_ = namespaceMap // reserved for future use
+// writeVerifyCompatibilityMethod generates the VerifyCompatibility method for the client
+func writeVerifyCompatibilityMethod(sb *strings.Builder, clientName string) {
+	fmt.Fprintf(sb, "func (c *%s) VerifyCompatibility(ctx context.Context) *pulserpc.VerificationResult {\n", clientName)
+	sb.WriteString("	var clientIDL interface{}\n")
+	sb.WriteString("	if c.localIDL != nil {\n")
+	sb.WriteString("		clientIDL = c.localIDL\n")
+	sb.WriteString("	} else if c.contract != nil {\n")
+	sb.WriteString("		clientIDL = c.contract.GetIDLParsed()\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	var serverIDL interface{}\n")
+	sb.WriteString("	if c.contract != nil {\n")
+	sb.WriteString("		serverIDL = c.contract.GetIDLParsed()\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	var clientChecksum string\n")
+	sb.WriteString("	if dict, ok := clientIDL.(map[string]interface{}); ok {\n")
+	sb.WriteString("		clientChecksum, _ = dict[\"checksum\"].(string)\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	var serverChecksum string\n")
+	sb.WriteString("	if dict, ok := serverIDL.(map[string]interface{}); ok {\n")
+	sb.WriteString("		serverChecksum, _ = dict[\"checksum\"].(string)\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	deltas := pulserpc.DiffIDL(clientIDL, serverIDL)\n\n")
+	sb.WriteString("	compatible := true\n")
+	sb.WriteString("	for _, delta := range deltas {\n")
+	sb.WriteString("		if delta.Severity == pulserpc.SeverityError {\n")
+	sb.WriteString("			compatible = false\n")
+	sb.WriteString("			break\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	result := &pulserpc.VerificationResult{\n")
+	sb.WriteString("		Compatible:     compatible,\n")
+	sb.WriteString("		ServerChecksum: serverChecksum,\n")
+	sb.WriteString("		ClientChecksum: clientChecksum,\n")
+	sb.WriteString("		Deltas:         deltas,\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	if c.auditor != nil {\n")
+	sb.WriteString("		c.auditor.Audit(ctx, result)\n")
+	sb.WriteString("	}\n\n")
+	sb.WriteString("	return result\n")
+	sb.WriteString("}\n")
+}
+
+// generateTestServerGo generates test_server.go with concrete implementations of all interfaces
+func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, primaryImportPath string, packageImportPath string, _ map[string]*NamespaceTypes, _ string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n")
 	sb.WriteString("// Test server implementation for integration testing\n\n")
 	sb.WriteString("package main\n\n")
-
-	// Determine which imports are needed
-	needsMath := false
-	needsStrings := false
-	for _, iface := range idl.Interfaces {
-		for _, method := range iface.Methods {
-			methodNameLower := strings.ToLower(method.Name)
-			if methodNameLower == "sqrt" {
-				needsMath = true
-			}
-			if methodNameLower == "repeat" {
-				needsStrings = true
-			}
-		}
-	}
-
-	// Find cross-namespace imports needed by method signatures
-	nsImports := make(map[string]bool)
-	for _, iface := range idl.Interfaces {
-		for _, method := range iface.Methods {
-			for _, param := range method.Parameters {
-				findTestServerImports(param.Type, structMap, enumMap, primaryNs, nsImports)
-			}
-			if method.ReturnType != nil {
-				findTestServerImports(method.ReturnType, structMap, enumMap, primaryNs, nsImports)
-			}
-		}
-	}
-
 	sb.WriteString("import (\n")
-	if needsMath {
-		sb.WriteString("	\"math\"\n")
-	}
-	if needsStrings {
-		sb.WriteString("	\"strings\"\n")
-	}
-	// Import the generated package using full import path
-	fmt.Fprintf(&sb, "	. \"%s\"\n", primaryImportPath)
-	// Add cross-namespace imports
-	for ns := range nsImports {
-		importPath := packageImportPath + "/" + ns
-		fmt.Fprintf(&sb, "	. \"%s\"\n", importPath)
-	}
+	sb.WriteString("	\"encoding/json\"\n")
+	sb.WriteString("	\"fmt\"\n")
+	sb.WriteString("	\"math\"\n")
+	sb.WriteString("	\"net/http\"\n")
+	sb.WriteString("	\"strings\"\n")
+	sb.WriteString(")\n\n")
+	fmt.Fprintf(&sb, "import (\n")
+	fmt.Fprintf(&sb, "\t. \"%s\"\n", primaryImportPath)
+	fmt.Fprintf(&sb, "\t. \"%s/inc\"\n", packageImportPath)
 	sb.WriteString(")\n\n")
 
 	// Generate implementation structs for each interface
@@ -1446,15 +1378,56 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 
 	// Generate main function
 	sb.WriteString("func main() {\n")
-	fmt.Fprintf(&sb, "	server := NewPulseRPCServer(\"0.0.0.0\", 8080)\n")
+	sb.WriteString("	port := 8080\n")
+	sb.WriteString("	server := NewPulseRPCServer(\"0.0.0.0\", port)\n\n")
 	for _, iface := range idl.Interfaces {
 		implName := iface.Name + "Impl"
-		fmt.Fprintf(&sb, "	server.Register(\"%s\", &%s{})\n", iface.Name, implName)
+		fmt.Fprintf(&sb, "\tserver.Register(\"%s\", &%s{})\n", iface.Name, implName)
 	}
-	sb.WriteString("	if err := server.ServeForever(); err != nil {\n")
-	sb.WriteString("		panic(err)\n")
-	sb.WriteString("	}\n")
-	sb.WriteString("}\n")
+	sb.WriteString("\n")
+	sb.WriteString("\tmux := http.NewServeMux()\n")
+	sb.WriteString("\tmux.HandleFunc(\"/\", func(w http.ResponseWriter, r *http.Request) {\n")
+	sb.WriteString("\t\tif r.Method != http.MethodPost {\n")
+	sb.WriteString("\t\t\tw.WriteHeader(http.StatusMethodNotAllowed)\n")
+	sb.WriteString("\t\t\treturn\n")
+	sb.WriteString("\t\t}\n\n")
+	sb.WriteString("\t\tvar req map[string]interface{}\n")
+	sb.WriteString("\t\tif err := json.NewDecoder(r.Body).Decode(&req); err != nil {\n")
+	sb.WriteString("\t\t\tsendError(w, nil, -32700, \"Parse error\", err.Error())\n")
+	sb.WriteString("\t\t\treturn\n")
+	sb.WriteString("\t\t}\n\n")
+	sb.WriteString("\t\tresp := server.Call(req)\n")
+	sb.WriteString("\t\tif resp == nil {\n")
+	sb.WriteString("\t\t\tw.WriteHeader(http.StatusNoContent)\n")
+	sb.WriteString("\t\t\treturn\n")
+	sb.WriteString("\t\t}\n")
+	sb.WriteString("\t\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
+	sb.WriteString("\t\tjson.NewEncoder(w).Encode(resp)\n")
+	sb.WriteString("\t})\n\n")
+	sb.WriteString("\tmux.HandleFunc(\"/idl.json\", func(w http.ResponseWriter, r *http.Request) {\n")
+	sb.WriteString("\t\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
+	sb.WriteString("\t\tdata, _ := json.Marshal(IDL_JSON)\n")
+	sb.WriteString("\t\tw.Write(data)\n")
+	sb.WriteString("\t})\n\n")
+	sb.WriteString("\taddr := fmt.Sprintf(\"0.0.0.0:%d\", port)\n")
+	sb.WriteString("\tfmt.Printf(\"Test server listening on http://%s\\n\", addr)\n")
+	sb.WriteString("\tif err := http.ListenAndServe(addr, mux); err != nil {\n")
+	sb.WriteString("\t\tfmt.Printf(\"Server error: %v\\n\", err)\n")
+	sb.WriteString("\t}\n")
+	sb.WriteString("}\n\n")
+	sb.WriteString("func sendError(w http.ResponseWriter, id interface{}, code int, message string, data string) {\n")
+	sb.WriteString("\terrResp := map[string]interface{}{\n")
+	sb.WriteString("\t\t\"jsonrpc\": \"2.0\",\n")
+	sb.WriteString("\t\t\"error\": map[string]interface{}{\n")
+	sb.WriteString("\t\t\t\"code\":    code,\n")
+	sb.WriteString("\t\t\t\"message\": message,\n")
+	sb.WriteString("\t\t\t\"data\":    data,\n")
+	sb.WriteString("\t\t},\n")
+	sb.WriteString("\t\t\"id\": id,\n")
+	sb.WriteString("\t}\n")
+	sb.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
+	sb.WriteString("\tjson.NewEncoder(w).Encode(errResp)\n")
+	sb.WriteString("}\n\n")
 
 	return sb.String()
 }

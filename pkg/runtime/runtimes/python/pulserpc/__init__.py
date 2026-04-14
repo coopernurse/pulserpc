@@ -20,6 +20,7 @@ from .types import (
     find_struct,
     find_enum,
     get_struct_fields,
+    extract_checksum,
 )
 from .server import Server
 from .client import Client
@@ -40,6 +41,7 @@ __all__ = [
     "find_struct",
     "find_enum",
     "get_struct_fields",
+    "extract_checksum",
     "Server",
     "Client",
     "Contract",

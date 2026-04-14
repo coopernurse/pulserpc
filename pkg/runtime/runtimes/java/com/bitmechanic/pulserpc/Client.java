@@ -221,8 +221,8 @@ public class Client {
 
         VerificationResult result = new VerificationResult(
             compatible,
-            serverIDL != null ? DiffEngine.computeChecksum(serverIDL) : "",
-            clientIDL != null ? DiffEngine.computeChecksum(clientIDL) : "",
+            serverIDL != null ? extractChecksum(serverIDL) : "",
+            clientIDL != null ? extractChecksum(clientIDL) : "",
             deltas,
             System.currentTimeMillis()
         );
@@ -234,8 +234,18 @@ public class Client {
         return result;
     }
 
-    public Client setLocalIDL(String idlJson) {
-        JsonParser parser = new JacksonJsonParser();
+    private static String extractChecksum(Object idl) {
+        if (idl instanceof Map) {
+            Map dict = (Map) idl;
+            Object checksum = dict.get("checksum");
+            if (checksum instanceof String) {
+                return (String) checksum;
+            }
+        }
+        return "";
+    }
+
+    public Client setLocalIDL(String idlJson, JsonParser parser) {
         this.localIDL = parser.fromJson(idlJson, Object.class);
         return this;
     }

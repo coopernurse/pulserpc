@@ -82,27 +82,6 @@ public class DiffEngineTest {
     }
 
     @Test
-    public void testComputeChecksum_SameIDL_ReturnsSameChecksum() throws Exception {
-        Object idl = mapper.readValue("{\"test\":\"data\"}", Object.class);
-
-        String checksum1 = DiffEngine.computeChecksum(idl);
-        String checksum2 = DiffEngine.computeChecksum(idl);
-
-        Assert.assertEquals(checksum1, checksum2);
-    }
-
-    @Test
-    public void testComputeChecksum_DifferentIDL_ReturnsDifferentChecksum() throws Exception {
-        Object idl1 = mapper.readValue("{\"test\":\"data1\"}", Object.class);
-        Object idl2 = mapper.readValue("{\"test\":\"data2\"}", Object.class);
-
-        String checksum1 = DiffEngine.computeChecksum(idl1);
-        String checksum2 = DiffEngine.computeChecksum(idl2);
-
-        Assert.assertNotEquals(checksum1, checksum2);
-    }
-
-    @Test
     public void testDiffIDL_StructRemovedFromServer_ReturnsErrorSeverity() throws Exception {
         Object clientIDL = mapper.readValue("{\"structs\":[{\"name\":\"TestStruct\",\"fields\":[{\"name\":\"field1\",\"type\":\"string\"}]}]}", Object.class);
         Object serverIDL = mapper.readValue("{\"structs\":[]}", Object.class);

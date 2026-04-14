@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 
 namespace PulseRPC
@@ -764,11 +762,5 @@ namespace PulseRPC
 
         private static Severity SeverityInfo => Severity.Info;
 
-        public static string ComputeChecksum(object idl)
-        {
-            var json = JsonSerializer.Serialize(idl);
-            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(json));
-            return Convert.ToHexString(bytes).ToLowerInvariant();
-        }
     }
 }
