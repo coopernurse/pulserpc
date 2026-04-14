@@ -1,9 +1,18 @@
 """Client class for making JSON-RPC 2.0 requests"""
 
-from typing import Any, Dict, List, Optional
+import json
+from datetime import datetime
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from .transport import Transport
 from .rpc import RPCError
 from .contract import Contract
+from .diff import diff_idl
+from .types import (
+    ContractDelta, VerificationResult, extract_checksum
+)
+
+if TYPE_CHECKING:
+    from .contract import ContractAuditor
 
 
 class InterfaceClientProxy:
@@ -67,22 +76,34 @@ class Client:
     """
 
     def __init__(self, transport: Transport, validate_request: bool = False,
-                 validate_response: bool = False):
+                 validate_response: bool = False, options: Optional[Dict[str, Any]] = None):
         """Initialize Client
 
         Args:
             transport: Transport implementation (HttpTransport, InProcTransport, etc.)
             validate_request: Validate request parameters against IDL before sending
             validate_response: Validate response values against IDL after receiving
+            options: Optional dict with 'auditor' and 'verify_on_bootstrap' keys
         """
         self.transport = transport
         self.validate_request = validate_request
         self.validate_response = validate_response
         self._request_id = 0
         self.contract: Optional[Contract] = None
+        self._options = options or {}
+        self._auditor: Optional[ContractAuditor] = self._options.get('auditor')
+        self._verify_on_bootstrap: bool = self._options.get('verify_on_bootstrap', False)
+        self._local_idl: Optional[Dict[str, Any]] = None
+
+        # Try to auto-load IDL from idl.json
+        self._find_idl_json()
 
         # Bootstrap: fetch IDL from server
         self._bootstrap()
+
+        # Run verify_on_bootstrap if enabled
+        if self._verify_on_bootstrap:
+            self.verify_compatibility()
 
     def _bootstrap(self) -> None:
         """Fetch IDL from server and create interface proxies
@@ -243,3 +264,76 @@ class Client:
             positional_params.append(named_params.get(param_name))
 
         return positional_params
+
+    def _find_idl_json(self) -> None:
+        """Try to find and load idl.json by walking up from this module's location"""
+        import os
+        from pathlib import Path
+        
+        # Get the directory containing this file (the pulserpc package)
+        module_dir = Path(__file__).parent
+        
+        # Walk up the directory tree looking for idl.json
+        current_dir = module_dir
+        for _ in range(10):  # Max 10 levels up
+            idl_path = current_dir / 'idl.json'
+            if idl_path.exists():
+                try:
+                    with open(idl_path, 'r') as f:
+                        self._local_idl = json.load(f)
+                    return
+                except (json.JSONDecodeError, IOError):
+                    pass
+            parent = current_dir.parent
+            if parent == current_dir:
+                break
+            current_dir = parent
+
+    def set_local_idl(self, idl_json: str) -> None:
+        """Set the local IDL for verification
+        
+        Args:
+            idl_json: JSON string containing the local IDL
+        """
+        self._local_idl = json.loads(idl_json)
+
+    def verify_compatibility(self) -> VerificationResult:
+        """Verify compatibility between local and server IDL
+        
+        Returns:
+            VerificationResult with deltas and compatibility status
+        """
+        # Get server IDL from contract
+        if not self.contract or not self.contract.idl_parsed:
+            raise RuntimeError("No server IDL available - client not bootstrapped")
+        
+        server_idl = self.contract.idl_parsed
+        client_idl = self._local_idl
+        
+        if not client_idl:
+            raise RuntimeError("No local IDL available - call set_local_idl() or ensure idl.json exists")
+        
+        # Compute diff
+        deltas = diff_idl(client_idl, server_idl)
+        
+        # Determine compatibility (has Error-level deltas)
+        has_error = any(d.severity.value == 'Error' for d in deltas)
+        compatible = not has_error
+        
+        # Get checksums
+        server_checksum = extract_checksum(server_idl)
+        client_checksum = extract_checksum(client_idl)
+        
+        result = VerificationResult(
+            compatible=compatible,
+            server_checksum=server_checksum,
+            client_checksum=client_checksum,
+            deltas=deltas,
+            timestamp=datetime.utcnow()
+        )
+        
+        # Invoke auditor if configured
+        if self._auditor:
+            self._auditor.audit(result)
+        
+        return result

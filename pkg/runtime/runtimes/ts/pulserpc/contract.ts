@@ -5,8 +5,58 @@
  * and provides validation for requests and responses.
  */
 
-import { TypeDef, StructMap, EnumMap } from "./types.js";
+import { TypeDef, StructMap, EnumMap, VerificationResult, ContractDelta, Severity } from "./types.js";
 import { validateType } from "./validation.js";
+
+export type { VerificationResult, ContractDelta };
+
+export interface ContractAuditor {
+  audit(result: VerificationResult): void;
+  name(): string;
+}
+
+export class NoOpAuditor implements ContractAuditor {
+  audit(_result: VerificationResult): void {}
+  name(): string {
+    return "NoOp";
+  }
+}
+
+export class LoggingAuditor implements ContractAuditor {
+  audit(result: VerificationResult): void {
+    if (!result.compatible) {
+      console.error(`Contract incompatibility detected: ${result.deltas.length} deltas found`);
+    }
+    for (const delta of result.deltas) {
+      if (delta.severity === Severity.Error) {
+        console.error(`${delta.entityType}: ${delta.description}`);
+      } else if (delta.severity === Severity.Warning) {
+        console.warn(`${delta.entityType}: ${delta.description}`);
+      } else if (delta.severity === Severity.Info) {
+        console.info(`${delta.entityType}: ${delta.description}`);
+      }
+    }
+    if (result.compatible && result.deltas.length === 0) {
+      console.info("Contract compatibility verified: client and server IDLs are identical");
+    }
+  }
+  name(): string {
+    return "Logging";
+  }
+}
+
+export class FailFastAuditor implements ContractAuditor {
+  audit(result: VerificationResult): void {
+    if (!result.compatible) {
+      const errorDeltas = result.deltas.filter((d) => d.severity === Severity.Error);
+      const messages = errorDeltas.map((d) => `${d.entityType}: ${d.description}`).join("; ");
+      throw new Error(`Contract compatibility verification failed: ${messages}`);
+    }
+  }
+  name(): string {
+    return "FailFast";
+  }
+}
 
 export interface FunctionDef {
   name: string;

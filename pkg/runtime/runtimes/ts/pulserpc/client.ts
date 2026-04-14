@@ -5,9 +5,19 @@
  * dynamic interface proxies for convenient RPC calls.
  */
 
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+import { existsSync, readFileSync } from "fs";
 import { RPCError } from "./rpc.js";
-import { Contract, Interface } from "./contract.js";
+import { Contract, Interface, ContractAuditor } from "./contract.js";
 import { Transport, JsonRpcRequest } from "./transport.js";
+import { diffIDL, extractChecksum } from "./diff.js";
+import { ContractDelta, VerificationResult } from "./types.js";
+
+export interface ClientOptions {
+  auditor?: ContractAuditor;
+  verifyOnBootstrap?: boolean;
+}
 
 /**
  * Proxy for an interface that provides callable methods
@@ -70,18 +80,27 @@ export class Client {
   private requestId: number = 0;
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
+  private _auditor: ContractAuditor | undefined;
+  private _verifyOnBootstrap: boolean = false;
+  private _localIDL: Record<string, any> | null = null;
 
   constructor(
     transport: Transport,
     validateRequest: boolean = false,
-    validateResponse: boolean = false
+    validateResponse: boolean = false,
+    options?: ClientOptions
   ) {
     this.transport = transport;
     this.validateRequest = validateRequest;
     this.validateResponse = validateResponse;
 
+    if (options) {
+      this._auditor = options.auditor;
+      this._verifyOnBootstrap = options.verifyOnBootstrap || false;
+    }
+
     // Bootstrap: fetch IDL from server asynchronously
-    this.initPromise = this.bootstrap();
+    this.initPromise = this.bootstrapWithVerification();
   }
 
   /**
@@ -98,6 +117,13 @@ export class Client {
     }
   }
 
+  private async bootstrapWithVerification(): Promise<void> {
+    await this.bootstrap();
+    if (this._verifyOnBootstrap) {
+      await this.verifyCompatibility();
+    }
+  }
+
   /**
    * Fetch IDL from server and create interface proxies
    *
@@ -105,7 +131,6 @@ export class Client {
    * then creates Contract and interface proxies.
    */
   private async bootstrap(): Promise<void> {
-    // Make request to get IDL
     const req: JsonRpcRequest = {
       jsonrpc: "2.0",
       method: "pulserpc-idl",
@@ -125,10 +150,8 @@ export class Client {
       throw new Error("Server returned empty IDL");
     }
 
-    // Create contract
     this.contract = new Contract(idlJson);
 
-    // Create interface proxies as attributes
     if (this.contract.interfaces) {
       for (const [ifaceName, iface] of this.contract.interfaces.entries()) {
         (this as any)[ifaceName] = new InterfaceClientProxy(this, iface);
@@ -136,6 +159,69 @@ export class Client {
     }
 
     this.initialized = true;
+  }
+
+  private _findIDLJson(): void {
+    try {
+      const currentFile = fileURLToPath(import.meta.url);
+      let currentDir = dirname(currentFile);
+
+      for (let i = 0; i < 10; i++) {
+        const idlPath = join(currentDir, 'idl.json');
+        try {
+          if (existsSync(idlPath)) {
+            const content = readFileSync(idlPath, 'utf-8');
+            this._localIDL = JSON.parse(content);
+            return;
+          }
+        } catch (e) {
+          // File doesn't exist or can't be read, try parent directory
+        }
+        const parentDir = dirname(currentDir);
+        if (parentDir === currentDir) break;
+        currentDir = parentDir;
+      }
+    } catch (e) {
+      // import.meta.url not available or other error - local IDL must be set explicitly
+    }
+  }
+
+  setLocalIDL(idlJson: string): void {
+    this._localIDL = JSON.parse(idlJson);
+  }
+
+  async verifyCompatibility(): Promise<VerificationResult> {
+    if (!this.contract || !this.contract.idlParsed) {
+      throw new Error("No server IDL available - client not bootstrapped");
+    }
+
+    const serverIDL = this.contract.idlParsed;
+    const clientIDL = this._localIDL;
+
+    if (!clientIDL) {
+      throw new Error("No local IDL available - call setLocalIDL() first");
+    }
+
+    const deltas = diffIDL(clientIDL, serverIDL);
+    const hasError = deltas.some(d => d.severity === "Error");
+    const compatible = !hasError;
+
+    const serverChecksum = extractChecksum(serverIDL);
+    const clientChecksum = extractChecksum(clientIDL);
+
+    const result: VerificationResult = {
+      compatible,
+      serverChecksum,
+      clientChecksum,
+      deltas,
+      timestamp: new Date(),
+    };
+
+    if (this._auditor) {
+      this._auditor.audit(result);
+    }
+
+    return result;
   }
 
   /**

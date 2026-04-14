@@ -1,6 +1,56 @@
 """Helper functions for working with type definitions"""
 
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
+
+
+class EntityType(str, Enum):
+    INTERFACE = "Interface"
+    METHOD = "Method"
+    STRUCT = "Struct"
+    FIELD = "Field"
+    ENUM = "Enum"
+    ERROR = "Error"
+
+
+class ChangeType(str, Enum):
+    ADDED = "Added"
+    REMOVED = "Removed"
+    MODIFIED = "Modified"
+
+
+class Direction(str, Enum):
+    CLIENT_HAS_MORE = "ClientHasMore"
+    CLIENT_HAS_LESS = "ClientHasLess"
+    MISMATCH = "Mismatch"
+
+
+class Severity(str, Enum):
+    ERROR = "Error"
+    WARNING = "Warning"
+    INFO = "Info"
+
+
+@dataclass
+class ContractDelta:
+    entity_type: EntityType
+    entity_name: str
+    member_name: str
+    change_type: ChangeType
+    direction: Direction
+    severity: Severity
+    description: str
+
+
+@dataclass
+class VerificationResult:
+    compatible: bool
+    server_checksum: str
+    client_checksum: str
+    deltas: List[ContractDelta]
+    timestamp: datetime
 
 
 def find_struct(struct_name: str, all_structs: Dict[str, Any]) -> Optional[Dict[str, Any]]:

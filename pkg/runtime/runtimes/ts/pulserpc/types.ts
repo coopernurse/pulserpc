@@ -2,6 +2,51 @@
  * Helper functions for working with type definitions
  */
 
+export enum EntityType {
+  Interface = "Interface",
+  Method = "Method",
+  Struct = "Struct",
+  Field = "Field",
+  Enum = "Enum",
+  Error = "Error",
+}
+
+export enum ChangeType {
+  Added = "Added",
+  Removed = "Removed",
+  Modified = "Modified",
+}
+
+export enum Direction {
+  ClientHasMore = "ClientHasMore",
+  ClientHasLess = "ClientHasLess",
+  Mismatch = "Mismatch",
+}
+
+export enum Severity {
+  Error = "Error",
+  Warning = "Warning",
+  Info = "Info",
+}
+
+export interface ContractDelta {
+  entityType: EntityType;
+  entityName: string;
+  memberName: string;
+  changeType: ChangeType;
+  direction: Direction;
+  severity: Severity;
+  description: string;
+}
+
+export interface VerificationResult {
+  compatible: boolean;
+  serverChecksum: string;
+  clientChecksum: string;
+  deltas: ContractDelta[];
+  timestamp: Date;
+}
+
 export interface TypeDef {
   builtIn?: string;
   array?: TypeDef;

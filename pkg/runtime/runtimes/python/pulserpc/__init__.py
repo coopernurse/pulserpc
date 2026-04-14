@@ -21,6 +21,19 @@ from .types import (
     find_enum,
     get_struct_fields,
     extract_checksum,
+    EntityType,
+    ChangeType,
+    Direction,
+    Severity,
+    ContractDelta,
+    VerificationResult,
+)
+from .diff import diff_idl
+from .contract import (
+    ContractAuditor,
+    NoOpAuditor,
+    LoggingAuditor,
+    FailFastAuditor,
 )
 from .server import Server
 from .client import Client
@@ -42,6 +55,17 @@ __all__ = [
     "find_enum",
     "get_struct_fields",
     "extract_checksum",
+    "EntityType",
+    "ChangeType",
+    "Direction",
+    "Severity",
+    "ContractDelta",
+    "VerificationResult",
+    "diff_idl",
+    "ContractAuditor",
+    "NoOpAuditor",
+    "LoggingAuditor",
+    "FailFastAuditor",
     "Server",
     "Client",
     "Contract",

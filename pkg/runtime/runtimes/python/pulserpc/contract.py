@@ -4,8 +4,77 @@ This module provides the Contract class which parses IDL metadata
 and provides validation for requests and responses.
 """
 
+import logging
+from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from .validation import validate_type
+from .types import VerificationResult, ContractDelta, Severity
+
+
+class ContractAuditor(ABC):
+    """Abstract base class for contract auditors"""
+
+    @abstractmethod
+    def audit(self, result: VerificationResult) -> None:
+        """Audit a verification result
+        
+        Args:
+            result: The verification result to audit
+        """
+        pass
+
+    @abstractmethod
+    def name(self) -> str:
+        """Return the auditor's name
+        
+        Returns:
+            String name of the auditor
+        """
+        pass
+
+
+class NoOpAuditor(ContractAuditor):
+    """Auditor that performs no action"""
+
+    def audit(self, result: VerificationResult) -> None:
+        pass
+
+    def name(self) -> str:
+        return "NoOp"
+
+
+class LoggingAuditor(ContractAuditor):
+    """Auditor that logs verification results"""
+
+    def audit(self, result: VerificationResult) -> None:
+        if not result.compatible:
+            logging.error(f"Contract incompatibility detected: {len(result.deltas)} deltas found")
+        for delta in result.deltas:
+            if delta.severity == Severity.ERROR:
+                logging.error(f"{delta.entity_type}: {delta.description}")
+            elif delta.severity == Severity.WARNING:
+                logging.warning(f"{delta.entity_type}: {delta.description}")
+            elif delta.severity == Severity.INFO:
+                logging.info(f"{delta.entity_type}: {delta.description}")
+        if result.compatible and not result.deltas:
+            logging.info("Contract compatibility verified: client and server IDLs are identical")
+
+    def name(self) -> str:
+        return "Logging"
+
+
+class FailFastAuditor(ContractAuditor):
+    """Auditor that raises an exception on incompatible contracts"""
+
+    def audit(self, result: VerificationResult) -> None:
+        if not result.compatible:
+            error_deltas = [d for d in result.deltas if d.severity == Severity.ERROR]
+            messages = "; ".join(f"{d.entity_type}: {d.description}" for d in error_deltas)
+            raise RuntimeError(f"Contract compatibility verification failed: {messages}")
+
+    def name(self) -> str:
+        return "FailFast"
 
 
 class Interface:
