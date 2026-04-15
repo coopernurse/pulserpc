@@ -2,29 +2,41 @@
   "name": "pulserpc",
   "displayName": "PulseRPC Syntax Highlighting",
   "description": "Syntax highlighting for Pulse IDL files",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "JamesCooper",
   "engines": {
     "vscode": "^1.80.0",
     "cursor": ">=0.10.0"
   },
-  "categories": ["Programming Languages"],
+  "categories": [
+    "Programming Languages"
+  ],
   "activationEvents": [
     "onLanguage:pulse"
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "languages": [{
-      "id": "pulse",
-      "aliases": ["Pulse IDL", "pulse", "pulserpc"],
-      "extensions": [".pulse"],
-      "configuration": "./language-configuration.json"
-    }],
-    "grammars": [{
-      "language": "pulse",
-      "scopeName": "source.pulse",
-      "path": "./syntaxes/pulse.tmGrammar.json"
-    }]
+    "languages": [
+      {
+        "id": "pulse",
+        "aliases": [
+          "Pulse IDL",
+          "pulse",
+          "pulserpc"
+        ],
+        "extensions": [
+          ".pulse"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "pulse",
+        "scopeName": "source.pulse",
+        "path": "./syntaxes/pulse.tmGrammar.json"
+      }
+    ]
   },
   "scripts": {
     "build": "tsc",
