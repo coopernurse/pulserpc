@@ -1174,3 +1174,200 @@ func bytesEqual(a, b []byte) bool {
 	}
 	return true
 }
+
+func TestTsMultiLineFieldComment(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Structs: []*parser.Struct{
+				{
+					Name: "User",
+					Fields: []*parser.Field{
+						{
+							Name:    "id",
+							Type:    &parser.Type{BuiltIn: "string"},
+							Comment: "The user's unique identifier\n spanning multiple lines",
+						},
+						{
+							Name:    "name",
+							Type:    &parser.Type{BuiltIn: "string"},
+							Comment: "First line\nSecond line\nThird line",
+						},
+					},
+				},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		content, err := os.ReadFile(filepath.Join(outputDir, "types.ts"))
+		if err != nil {
+			t.Fatalf("failed to read types.ts: %v", err)
+		}
+		tsContent := string(content)
+
+		if !strings.Contains(tsContent, "  // The user's unique identifier\n  //  spanning multiple lines") {
+			t.Error("expected multi-line field comment to be split across multiple // lines")
+		}
+		if !strings.Contains(tsContent, "  // First line\n  // Second line\n  // Third line") {
+			t.Error("expected three-line field comment to be split across three // lines")
+		}
+	})
+}
+
+func TestTsMultiLineEnumValueComment(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Enums: []*parser.Enum{
+				{
+					Name: "Status",
+					Values: []*parser.EnumValue{
+						{
+							Name:    "ACTIVE",
+							Comment: "The item is active\nand should be processed",
+						},
+						{
+							Name:    "INACTIVE",
+							Comment: "Line one\nLine two",
+						},
+					},
+				},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		content, err := os.ReadFile(filepath.Join(outputDir, "types.ts"))
+		if err != nil {
+			t.Fatalf("failed to read types.ts: %v", err)
+		}
+		tsContent := string(content)
+
+		if !strings.Contains(tsContent, "  // The item is active\n  // and should be processed") {
+			t.Error("expected multi-line enum value comment to be split across multiple // lines")
+		}
+		if !strings.Contains(tsContent, "  // Line one\n  // Line two") {
+			t.Error("expected two-line enum value comment to be split across two // lines")
+		}
+	})
+}
+
+func TestTsMultiLineFieldCommentNamespace(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Structs: []*parser.Struct{
+				{
+					Name:      "Category",
+					Namespace: "common",
+					Fields: []*parser.Field{
+						{
+							Name:    "id",
+							Type:    &parser.Type{BuiltIn: "string"},
+							Comment: "First line\nSecond line",
+						},
+					},
+				},
+				{
+					Name:      "Book",
+					Namespace: "book",
+					Fields: []*parser.Field{
+						{Name: "title", Type: &parser.Type{BuiltIn: "string"}},
+					},
+				},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		content, err := os.ReadFile(filepath.Join(outputDir, "common/types.ts"))
+		if err != nil {
+			t.Fatalf("failed to read common/types.ts: %v", err)
+		}
+		tsContent := string(content)
+
+		if !strings.Contains(tsContent, "  // First line\n  // Second line") {
+			t.Error("expected multi-line field comment in namespace to be split across multiple // lines")
+		}
+	})
+}
+
+func TestTsMultiLineEnumValueCommentNamespace(t *testing.T) {
+	withTempOutputDir(t, func(outputDir string) {
+		idl := &parser.IDL{
+			Enums: []*parser.Enum{
+				{
+					Name:      "Status",
+					Namespace: "common",
+					Values: []*parser.EnumValue{
+						{
+							Name:    "ACTIVE",
+							Comment: "Multi-line\ncomment here",
+						},
+					},
+				},
+			},
+			Structs: []*parser.Struct{
+				{
+					Name:      "Book",
+					Namespace: "book",
+					Fields:    []*parser.Field{{Name: "title", Type: &parser.Type{BuiltIn: "string"}}},
+				},
+			},
+		}
+
+		gen := NewTSClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		gen.RegisterFlags(fs)
+		if err := fs.Set("dir", outputDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+
+		err := gen.Generate(idl, fs)
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		content, err := os.ReadFile(filepath.Join(outputDir, "common/types.ts"))
+		if err != nil {
+			t.Fatalf("failed to read common/types.ts: %v", err)
+		}
+		tsContent := string(content)
+
+		if !strings.Contains(tsContent, "  // Multi-line\n  // comment here") {
+			t.Error("expected multi-line enum value comment in namespace to be split across multiple // lines")
+		}
+	})
+}

@@ -698,7 +698,10 @@ func generateTypesTs(structMap map[string]*parser.Struct, enumMap map[string]*pa
 		for i, val := range enum.Values {
 			valComment := strings.TrimSpace(val.Comment)
 			if valComment != "" {
-				fmt.Fprintf(&sb, "  // %s\n", valComment)
+				lines := strings.Split(valComment, "\n")
+				for _, line := range lines {
+					fmt.Fprintf(&sb, "  // %s\n", line)
+				}
 			}
 			fmt.Fprintf(&sb, "  %s = \"%s\"", val.Name, val.Name)
 			if i < len(enum.Values)-1 {
@@ -739,7 +742,10 @@ func generateTypesTs(structMap map[string]*parser.Struct, enumMap map[string]*pa
 		for _, field := range structDef.Fields {
 			fieldComment := strings.TrimSpace(field.Comment)
 			if fieldComment != "" {
-				fmt.Fprintf(&sb, "  // %s\n", fieldComment)
+				lines := strings.Split(fieldComment, "\n")
+				for _, line := range lines {
+					fmt.Fprintf(&sb, "  // %s\n", line)
+				}
 			}
 			tsType := getTypeScriptType(field.Type, structMap, enumMap, false)
 			optionalMarker := ""
@@ -800,7 +806,10 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, stru
 		for i, val := range enum.Values {
 			valComment := strings.TrimSpace(val.Comment)
 			if valComment != "" {
-				fmt.Fprintf(&sb, "  // %s\n", valComment)
+				lines := strings.Split(valComment, "\n")
+				for _, line := range lines {
+					fmt.Fprintf(&sb, "  // %s\n", line)
+				}
 			}
 			fmt.Fprintf(&sb, "  %s = \"%s\"", val.Name, val.Name)
 			if i < len(enum.Values)-1 {
@@ -837,7 +846,10 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, stru
 		for _, field := range structDef.Fields {
 			fieldComment := strings.TrimSpace(field.Comment)
 			if fieldComment != "" {
-				fmt.Fprintf(&sb, "  // %s\n", fieldComment)
+				lines := strings.Split(fieldComment, "\n")
+				for _, line := range lines {
+					fmt.Fprintf(&sb, "  // %s\n", line)
+				}
 			}
 			tsType := getTypeScriptTypeForNamespace(field.Type, structMap, enumMap, false, inNamespaceSubdir, allNamespaceMap)
 			optionalMarker := ""
