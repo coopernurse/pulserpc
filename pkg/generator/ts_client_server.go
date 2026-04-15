@@ -1029,7 +1029,7 @@ func writeClientMethodTs(sb *strings.Builder, iface *parser.Interface, method *p
 	}
 
 	// Build request
-	fmt.Fprintf(sb, "    const req = {\n")
+	fmt.Fprintf(sb, "    const _req = {\n")
 	sb.WriteString("      jsonrpc: \"2.0\" as const,\n")
 	fmt.Fprintf(sb, "      method: \"%s.%s\",\n", iface.Name, method.Name)
 	if len(method.Parameters) > 0 {
@@ -1044,18 +1044,18 @@ func writeClientMethodTs(sb *strings.Builder, iface *parser.Interface, method *p
 	}
 	sb.WriteString("    };\n")
 
-	sb.WriteString("    const resp = await this.transport.request(req as any);\n")
-	sb.WriteString("    if (resp.error) {\n")
-	sb.WriteString("      throw new RPCError(resp.error.code, resp.error.message, resp.error.data);\n")
+	sb.WriteString("    const _resp = await this.transport.request(_req as any);\n")
+	sb.WriteString("    if (_resp.error) {\n")
+	sb.WriteString("      throw new RPCError(_resp.error.code, _resp.error.message, _resp.error.data);\n")
 	sb.WriteString("    }\n")
 
 	if method.ReturnType != nil {
 		if method.ReturnOptional {
-			sb.WriteString("    return resp.result as ")
+			sb.WriteString("    return _resp.result as ")
 			returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, ns != "", allNamespaceMap)
 			fmt.Fprintf(sb, "%s | null;\n", returnType)
 		} else {
-			sb.WriteString("    return resp.result as ")
+			sb.WriteString("    return _resp.result as ")
 			returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, ns != "", allNamespaceMap)
 			fmt.Fprintf(sb, "%s;\n", returnType)
 		}
