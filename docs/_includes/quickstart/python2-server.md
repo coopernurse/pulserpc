@@ -168,4 +168,4 @@ if __name__ == "__main__":
     httpd = HTTPServer(("0.0.0.0", port), PulseRPCHandler)
     print "Server running at http://localhost:%d" % port
     httpd.serve_forever()
-{% highlight python %}
+{% endblock %}
