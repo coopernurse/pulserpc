@@ -1,7 +1,7 @@
 {
   "name": "checkout-service",
   "version": "1.0.0",
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
     "build": "tsc",
     "start": "node dist/my_server.js"

@@ -39,6 +39,8 @@
       children:
         - title: "Quickstart"
           url: /languages/python/quickstart
+        - title: "Python 2 Server Guide"
+          url: /languages/python/python2
         - title: "Reference"
           url: /languages/python/reference
     - title: "TypeScript"
