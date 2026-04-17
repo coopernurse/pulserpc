@@ -105,41 +105,23 @@ class Server:
         # Get params
         params = req.get('params')
 
-        # Normalize params to dict if it's a list
-        if isinstance(params, list):
-            # Validate request using positional params
-            if self.validate_requests:
-                try:
-                    self.contract.validate_request(iface_name, func_name, params)
-                except (TypeError, ValueError) as e:
-                    return self._error_response(req_id, -32602, "Invalid params", str(e))
+        if params is None:
+            params = []
 
-            # Convert positional params to named params using IDL signature
-            try:
-                params = self._positional_to_named_params(iface_name, func_name, params)
-            except ValueError as e:
-                return self._error_response(req_id, -32602, "Invalid params", str(e))
-        elif params is None:
-            params = {}
-
-        if not isinstance(params, dict):
+        if not isinstance(params, list):
             return self._error_response(req_id, -32602, "Invalid params",
-                                      "Parameters must be an object or array")
+                                      "Parameters must be an array")
 
-        # Validate request if using named params (dict)
-        if self.validate_requests and isinstance(req.get('params'), dict):
-            # Convert dict to list for validation
-            param_list = self._named_to_positional_params(iface_name, func_name, params)
-            if param_list is not None:
-                try:
-                    self.contract.validate_request(iface_name, func_name, param_list)
-                except (TypeError, ValueError) as e:
-                    return self._error_response(req_id, -32602, "Invalid params", str(e))
+        if self.validate_requests:
+            try:
+                self.contract.validate_request(iface_name, func_name, params)
+            except (TypeError, ValueError) as e:
+                return self._error_response(req_id, -32602, "Invalid params", str(e))
 
         # Invoke handler method
         try:
-            # Call handler function with params as kwargs
-            result = func(**params)
+            # Call handler function with positional params
+            result = func(*params)
         except TypeError as e:
             return self._error_response(req_id, -32602, "Invalid params",
                                       f"Parameter mismatch: {e}")
@@ -200,81 +182,3 @@ class Server:
             response['id'] = req_id
 
         return response
-
-    def _positional_to_named_params(self, iface_name: str, func_name: str,
-                                     positional_params: List[Any]) -> Dict[str, Any]:
-        """Convert positional parameters to named parameters using IDL signature
-
-        Args:
-            iface_name: Interface name
-            func_name: Function name
-            positional_params: List of positional parameter values
-
-        Returns:
-            Dict mapping parameter names to values
-
-        Raises:
-            ValueError: If parameter count doesn't match or interface not found
-        """
-        interface = self.contract.get_interface(iface_name)
-        if not interface:
-            # Without contract, can't map positional to named
-            return {str(i): v for i, v in enumerate(positional_params)}
-
-        func = interface.get_function(func_name)
-        if not func:
-            return {str(i): v for i, v in enumerate(positional_params)}
-
-        # Get parameter names from IDL
-        param_defs = func.get('parameters', [])
-
-        # Check parameter count
-        if len(positional_params) != len(param_defs):
-            # Allow fewer params if trailing ones are optional
-            # But require at least the required params
-            required_count = sum(1 for p in param_defs if not p.get('optional', False))
-            if len(positional_params) < required_count or len(positional_params) > len(param_defs):
-                raise ValueError(f"Parameter count mismatch: expected {len(param_defs)}, got {len(positional_params)}")
-
-        # Map positional params to names
-        named_params = {}
-        for i, param_value in enumerate(positional_params):
-            if i < len(param_defs):
-                param_name = param_defs[i]['name']
-                named_params[param_name] = param_value
-            else:
-                # Fallback for extra params (shouldn't happen with validation)
-                named_params[str(i)] = param_value
-
-        return named_params
-
-    def _named_to_positional_params(self, iface_name: str, func_name: str,
-                                     named_params: Dict[str, Any]) -> Optional[List[Any]]:
-        """Convert named parameters to positional parameters using IDL signature
-
-        Args:
-            iface_name: Interface name
-            func_name: Function name
-            named_params: Dict mapping parameter names to values
-
-        Returns:
-            List of parameter values in IDL order, or None if interface not found
-        """
-        interface = self.contract.get_interface(iface_name)
-        if not interface:
-            return None
-
-        func = interface.get_function(func_name)
-        if not func:
-            return None
-
-        # Get parameter names from IDL
-        param_defs = func.get('parameters', [])
-
-        # Build positional list in IDL order
-        positional_params = []
-        for param_def in param_defs:
-            param_name = param_def['name']
-            positional_params.append(named_params.get(param_name))
-
-        return positional_params

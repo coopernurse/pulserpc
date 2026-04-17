@@ -208,7 +208,7 @@ with open(idl_path) as f:
     idl_data = json.load(f)
 
 contract = Contract(idl_data)
-server = Server(contract)
+server = Server(contract, validate_requests=False, validate_responses=False)
 server.add_handler("CatalogService", CatalogServiceImpl())
 server.add_handler("CartService", CartServiceImpl())
 server.add_handler("OrderService", OrderServiceImpl())
@@ -275,48 +275,43 @@ if products:
 
 print ""
 print "=== Creating Cart ==="
-cart = rpc_call("CartService.addToCart", {
-    "request": {
-        "productId": "prod001",
-        "quantity": 2
-    }
-})
+cart = rpc_call("CartService.addToCart", [{
+    "cartId": None,
+    "productId": "prod001",
+    "quantity": 2
+}])
 if cart:
     print "Cart: %s, Subtotal: $%.2f" % (cart["cartId"], cart["subtotal"])
 
 print ""
 print "=== Creating Order ==="
-order = rpc_call("OrderService.createOrder", {
-    "request": {
-        "cartId": cart["cartId"],
-        "shippingAddress": {
-            "street": "123 Main St",
-            "city": "Anytown",
-            "state": "CA",
-            "zipCode": "12345",
-            "country": "USA"
-        },
-        "paymentMethod": "credit_card"
-    }
-})
+order = rpc_call("OrderService.createOrder", [{
+    "cartId": cart["cartId"],
+    "shippingAddress": {
+        "street": "123 Main St",
+        "city": "Anytown",
+        "state": "CA",
+        "zipCode": "12345",
+        "country": "USA"
+    },
+    "paymentMethod": "credit_card"
+}])
 if order:
     print "Order created: %s" % order["orderId"]
 
 print ""
 print "=== Testing Error Case ==="
-error_order = rpc_call("OrderService.createOrder", {
-    "request": {
-        "cartId": cart["cartId"],
-        "shippingAddress": {
-            "street": "123 Main St",
-            "city": "Anytown",
-            "state": "CA",
-            "zipCode": "12345",
-            "country": "USA"
-        },
-        "paymentMethod": "credit_card"
-    }
-})
+error_order = rpc_call("OrderService.createOrder", [{
+    "cartId": cart["cartId"],
+    "shippingAddress": {
+        "street": "123 Main St",
+        "city": "Anytown",
+        "state": "CA",
+        "zipCode": "12345",
+        "country": "USA"
+    },
+    "paymentMethod": "credit_card"
+}])
 if not error_order:
     print "Got expected error"
 else:

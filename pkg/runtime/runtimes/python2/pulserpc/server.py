@@ -67,34 +67,21 @@ class Server(object):
 
         params = req.get('params')
 
-        if isinstance(params, list):
-            if self.validate_requests:
-                try:
-                    self.contract.validate_request(iface_name, func_name, params)
-                except (TypeError, ValueError) as e:
-                    return self._error_response(req_id, -32602, "Invalid params", str(e))
+        if params is None:
+            params = []
 
-            try:
-                params = self._positional_to_named_params(iface_name, func_name, params)
-            except ValueError as e:
-                return self._error_response(req_id, -32602, "Invalid params", str(e))
-        elif params is None:
-            params = {}
-
-        if not isinstance(params, dict):
+        if not isinstance(params, list):
             return self._error_response(req_id, -32602, "Invalid params",
-                                      "Parameters must be an object or array")
+                                      "Parameters must be an array")
 
-        if self.validate_requests and isinstance(req.get('params'), dict):
-            param_list = self._named_to_positional_params(iface_name, func_name, params)
-            if param_list is not None:
-                try:
-                    self.contract.validate_request(iface_name, func_name, param_list)
-                except (TypeError, ValueError) as e:
-                    return self._error_response(req_id, -32602, "Invalid params", str(e))
+        if self.validate_requests:
+            try:
+                self.contract.validate_request(iface_name, func_name, params)
+            except (TypeError, ValueError) as e:
+                return self._error_response(req_id, -32602, "Invalid params", str(e))
 
         try:
-            result = func(**params)
+            result = func(*params)
         except TypeError as e:
             return self._error_response(req_id, -32602, "Invalid params",
                                       "Parameter mismatch: %s" % e)
@@ -141,48 +128,4 @@ class Server(object):
 
         return response
 
-    def _positional_to_named_params(self, iface_name, func_name, positional_params):
-        """Convert positional parameters to named parameters using IDL signature"""
-        interface = self.contract.get_interface(iface_name)
-        if not interface:
-            return dict((str(i), v) for i, v in enumerate(positional_params))
-
-        func = interface.get_function(func_name)
-        if not func:
-            return dict((str(i), v) for i, v in enumerate(positional_params))
-
-        param_defs = func.get('parameters', [])
-
-        if len(positional_params) != len(param_defs):
-            required_count = sum(1 for p in param_defs if not p.get('optional', False))
-            if len(positional_params) < required_count or len(positional_params) > len(param_defs):
-                raise ValueError("Parameter count mismatch: expected %d, got %d" % (len(param_defs), len(positional_params)))
-
-        named_params = {}
-        for i, param_value in enumerate(positional_params):
-            if i < len(param_defs):
-                param_name = param_defs[i]['name']
-                named_params[param_name] = param_value
-            else:
-                named_params[str(i)] = param_value
-
-        return named_params
-
-    def _named_to_positional_params(self, iface_name, func_name, named_params):
-        """Convert named parameters to positional parameters using IDL signature"""
-        interface = self.contract.get_interface(iface_name)
-        if not interface:
-            return None
-
-        func = interface.get_function(func_name)
-        if not func:
-            return None
-
-        param_defs = func.get('parameters', [])
-
-        positional_params = []
-        for param_def in param_defs:
-            param_name = param_def['name']
-            positional_params.append(named_params.get(param_name))
-
-        return positional_params
+    
