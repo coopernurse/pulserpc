@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from .validation import validate_type
-from .types import VerificationResult, ContractDelta, Severity
+from .rpctypes import VerificationResult, ContractDelta, Severity
 
 
 class ContractAuditor(ABC):

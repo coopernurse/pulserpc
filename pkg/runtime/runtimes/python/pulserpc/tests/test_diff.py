@@ -3,7 +3,7 @@
 import unittest
 from datetime import datetime
 from pulserpc.diff import diff_idl
-from pulserpc.types import (
+from pulserpc.rpctypes import (
     EntityType, ChangeType, Direction, Severity, ContractDelta, VerificationResult
 )
 

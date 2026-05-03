@@ -21,7 +21,7 @@ pulserpc -plugin python-client-server -python-version 2 -dir ./output checkout.p
 ```
 
 This creates:
-- `output/idl.json` - IDL metadata
+- `output/checkout/idl.json` - IDL metadata (in the namespace directory)
 - `output/pulserpc/` - Runtime library (RPCError, validation, types)
 
 Note: Python 2 generates only metadata + runtime. No stub classes are generated (Python 2 uses plain dicts and strings for structs and enums).

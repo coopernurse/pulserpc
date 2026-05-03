@@ -1,7 +1,7 @@
 """IDL diff functionality for contract verification"""
 
 from typing import Any, Dict, List, Tuple
-from .types import (
+from .rpctypes import (
     ContractDelta, EntityType, ChangeType, Direction, Severity
 )
 

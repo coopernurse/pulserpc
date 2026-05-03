@@ -694,7 +694,7 @@ func TestPythonGeneratorFilePlacementStructure(t *testing.T) {
 	}
 
 	// pulserpc runtime dir should have its files
-	runtimeFiles := []string{"__init__.py", "rpc.py", "server.py", "client.py", "transport.py", "types.py"}
+	runtimeFiles := []string{"__init__.py", "rpc.py", "server.py", "client.py", "transport.py", "rpctypes.py"}
 	for _, filename := range runtimeFiles {
 		path := filepath.Join(tmpDir, "myapp", "lib", "rpc", "pulserpc", filename)
 		if _, err := os.Stat(path); err != nil {
@@ -1097,10 +1097,11 @@ func TestPython2Generator_GeneratesIDLOnly(t *testing.T) {
 	tmpDir := newPythonTestTempDir(t, "pulserpc-python2-gen-")
 
 	idl := &parser.IDL{
+		RootNamespace: "testns",
 		Interfaces: []*parser.Interface{
 			{
 				Name:      "A",
-				Namespace: "",
+				Namespace: "testns",
 				Methods: []*parser.Method{
 					{
 						Name:       "add",
@@ -1127,7 +1128,7 @@ func TestPython2Generator_GeneratesIDLOnly(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	assertFilesExist(t, tmpDir, "idl.json")
+	assertFileExists(t, filepath.Join(tmpDir, "testns", "idl.json"))
 	assertDirExists(t, filepath.Join(tmpDir, "pulserpc"))
 }
 
@@ -1161,7 +1162,7 @@ func TestPython2Generator_CopiesPython2Runtime(t *testing.T) {
 	pulserpcDir := filepath.Join(tmpDir, "pulserpc")
 	assertDirExists(t, pulserpcDir)
 
-	expectedFiles := []string{"__init__.py", "rpc.py", "types.py", "validation.py", "contract.py", "server.py", "transport.py", "client.py"}
+	expectedFiles := []string{"__init__.py", "rpc.py", "rpctypes.py", "validation.py", "contract.py", "server.py", "transport.py", "client.py"}
 	assertFilesExist(t, pulserpcDir, expectedFiles...)
 }
 
@@ -1304,10 +1305,11 @@ func TestPython2Generator_PackageFlag(t *testing.T) {
 	tmpDir := newPythonTestTempDir(t, "pulserpc-py2-pkg-")
 
 	idl := &parser.IDL{
+		RootNamespace: "checkout",
 		Interfaces: []*parser.Interface{
 			{
 				Name:      "A",
-				Namespace: "",
+				Namespace: "checkout",
 				Methods: []*parser.Method{
 					{
 						Name:       "add",
@@ -1339,5 +1341,5 @@ func TestPython2Generator_PackageFlag(t *testing.T) {
 	}
 
 	assertDirExists(t, filepath.Join(tmpDir, "myapp", "lib", "rpc", "pulserpc"))
-	assertFileExists(t, filepath.Join(tmpDir, "myapp", "lib", "rpc", "idl.json"))
+	assertFileExists(t, filepath.Join(tmpDir, "myapp", "lib", "rpc", "checkout", "idl.json"))
 }

@@ -143,6 +143,9 @@ func CopyRuntimeFilesToPackage(lang string, outputDir string, packageName string
 
 	// Copy all files
 	for filename, data := range files {
+		if lang == "python2" && IsPythonTestFile(filename) {
+			continue
+		}
 		dstPath := filepath.Join(runtimeDir, filename)
 		if err := os.WriteFile(dstPath, data, 0644); err != nil {
 			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)
@@ -154,6 +157,11 @@ func CopyRuntimeFilesToPackage(lang string, outputDir string, packageName string
 	}
 
 	return nil
+}
+
+// IsPythonTestFile returns true if the filename is a Python test file
+func IsPythonTestFile(filename string) bool {
+	return strings.HasPrefix(filename, "test_") || strings.HasSuffix(filename, "_test.py")
 }
 
 // getRuntimePackageName returns the package/module name for the runtime library

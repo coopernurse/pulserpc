@@ -1,6 +1,6 @@
 """Validation functions for PulseRPC types"""
 
-from types import find_struct, find_enum, get_struct_fields
+from rpctypes import find_struct, find_enum, get_struct_fields
 
 
 def validate_string(value):

@@ -16,7 +16,7 @@ from .validation import (
     validate_enum,
     validate_struct,
 )
-from .types import (
+from .rpctypes import (
     find_struct,
     find_enum,
     get_struct_fields,

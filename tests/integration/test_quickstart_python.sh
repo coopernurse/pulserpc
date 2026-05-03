@@ -55,6 +55,15 @@ mkdir -p "$OUTPUT_DIR"
 "$PULSERPC" -plugin python-client-server -dir "$OUTPUT_DIR" \
     "$QUICKSTART_DIR/checkout.pulse"
 
+# Verify idl.json is in checkout namespace directory
+if [ ! -f "$OUTPUT_DIR/checkout/idl.json" ]; then
+    echo -e "${RED}ERROR: checkout/idl.json not generated${NC}"
+    exit 1
+fi
+
+# Copy idl.json to root for backwards compatibility with quickstart servers
+cp "$OUTPUT_DIR/checkout/idl.json" "$OUTPUT_DIR/idl.json"
+
 # 1b. Test generation with -package flag
 echo -e "${YELLOW}Testing generation with -package flag...${NC}"
 PKG_OUTPUT_DIR="$OUTPUT_DIR/pkg_test"

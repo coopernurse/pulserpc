@@ -94,19 +94,22 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
-	// Write IDL JSON file
-	// Multi-namespace mode: write to each namespace directory
-	// Package mode (with -package flag): write to namespace directory even for single namespace
-	// Single-namespace flat mode without package: write to root
-	multiNsMode := len(namespaceMap) > 1
-	hasPackage := p.packageBase != ""
-	useNamespaceDirs := multiNsMode || hasPackage
-
-	if useNamespaceDirs {
+	// Write IDL JSON file to entry-point namespace directory only
+	// The entry-point is the namespace of the root file being parsed
+	entryPointNs := idl.RootNamespace
+	if entryPointNs == "" {
 		for ns := range namespaceMap {
-			if err := writeIDLJSON(idl, paths.ResolveNamespaceDir(ns), fs); err != nil {
-				return fmt.Errorf("failed to write idl.json: %w", err)
-			}
+			entryPointNs = ns
+			break
+		}
+	}
+	if entryPointNs != "" {
+		if _, err := paths.EnsureNamespaceDir(entryPointNs); err != nil {
+			return fmt.Errorf("failed to create entry-point namespace directory: %w", err)
+		}
+		entryPointDir := paths.ResolveNamespaceDir(entryPointNs)
+		if err := writeIDLJSON(idl, entryPointDir, fs); err != nil {
+			return fmt.Errorf("failed to write idl.json: %w", err)
 		}
 	} else {
 		if err := writeIDLJSON(idl, outputDir, fs); err != nil {
@@ -246,6 +249,9 @@ func (p *PythonClientServer) copyRuntimeFiles(paths PythonNamespacePaths, silent
 	}
 
 	for filename, data := range files {
+		if runtimeName == "python2" && runtime.IsPythonTestFile(filename) {
+			continue
+		}
 		dstPath := filepath.Join(runtimeDir, filename)
 		if err := os.WriteFile(dstPath, data, 0644); err != nil {
 			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)

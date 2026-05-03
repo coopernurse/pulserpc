@@ -133,7 +133,8 @@ class OrderServiceImpl(object):
 
 port = int(os.environ.get("SERVER_PORT", "8080"))
 
-idl_path = os.path.join(os.path.dirname(__file__), "idl.json")
+# Find idl.json - it's placed in the namespace directory
+idl_path = os.path.join(os.path.dirname(__file__), "checkout", "idl.json")
 with open(idl_path) as f:
     idl_data = json.load(f)
 

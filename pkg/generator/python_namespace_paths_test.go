@@ -119,20 +119,20 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 		expected    string
 	}{
 		{
-			name:        "types.py in empty namespace",
+			name:        "rpctypes.py in empty namespace",
 			baseDir:     "/output",
 			packageBase: "",
 			namespace:   "",
-			filename:    "types.py",
-			expected:    "/output/types.py",
+			filename:    "rpctypes.py",
+			expected:    "/output/rpctypes.py",
 		},
 		{
-			name:        "types.py in common namespace",
+			name:        "rpctypes.py in common namespace",
 			baseDir:     "/output",
 			packageBase: "",
 			namespace:   "common",
-			filename:    "types.py",
-			expected:    "/output/common/types.py",
+			filename:    "rpctypes.py",
+			expected:    "/output/common/rpctypes.py",
 		},
 		{
 			name:        "server.py in book namespace",
@@ -143,20 +143,20 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 			expected:    "/output/book/server.py",
 		},
 		{
-			name:        "types.py in common namespace with simple package",
+			name:        "rpctypes.py in common namespace with simple package",
 			baseDir:     "/output",
 			packageBase: "myapp",
 			namespace:   "common",
-			filename:    "types.py",
-			expected:    "/output/myapp/common/types.py",
+			filename:    "rpctypes.py",
+			expected:    "/output/myapp/common/rpctypes.py",
 		},
 		{
-			name:        "types.py in book namespace with nested package",
+			name:        "rpctypes.py in book namespace with nested package",
 			baseDir:     "/output",
 			packageBase: "myapp.lib.rpc",
 			namespace:   "book",
-			filename:    "types.py",
-			expected:    "/output/myapp/lib/rpc/book/types.py",
+			filename:    "rpctypes.py",
+			expected:    "/output/myapp/lib/rpc/book/rpctypes.py",
 		},
 	}
 
@@ -463,7 +463,7 @@ func TestPythonNamespacePathsMultipleNamespaces(t *testing.T) {
 		}
 
 		// Verify output paths for standard files
-		for _, filename := range []string{"types.py", "server.py", "client.py"} {
+		for _, filename := range []string{"rpctypes.py", "server.py", "client.py"} {
 			outputPath := paths.ResolveOutputPath(ns, filename)
 			expectedOutput := filepath.Join(expectedPath, filename)
 			assertPathEqual(t, outputPath, expectedOutput)

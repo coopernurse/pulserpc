@@ -47,10 +47,13 @@ mkdir -p "$OUTPUT_DIR"
 "$PULSERPC" -plugin python-client-server -python-version 2 -dir "$OUTPUT_DIR" \
     "$QUICKSTART_DIR/checkout.pulse"
 
-if [ ! -f "$OUTPUT_DIR/idl.json" ]; then
-    echo -e "${RED}ERROR: idl.json not generated${NC}"
+if [ ! -f "$OUTPUT_DIR/checkout/idl.json" ]; then
+    echo -e "${RED}ERROR: checkout/idl.json not generated${NC}"
     exit 1
 fi
+
+# Copy idl.json to root for backwards compatibility with quickstart servers
+cp "$OUTPUT_DIR/checkout/idl.json" "$OUTPUT_DIR/idl.json"
 
 if [ ! -d "$OUTPUT_DIR/pulserpc" ]; then
     echo -e "${RED}ERROR: pulserpc runtime not generated${NC}"

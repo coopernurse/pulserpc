@@ -7,7 +7,7 @@ from .transport import Transport
 from .rpc import RPCError
 from .contract import Contract
 from .diff import diff_idl
-from .types import (
+from .rpctypes import (
     ContractDelta, VerificationResult, extract_checksum
 )
 
