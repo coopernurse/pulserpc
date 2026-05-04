@@ -70,6 +70,22 @@ if product.get("imageUrl"):
     print(product["imageUrl"])
 ```
 
+## Transport Context (ctx)
+
+All handler methods receive an optional `ctx` parameter containing transport-level metadata (headers, auth tokens, etc.). This is passed automatically by the runtime as a keyword argument.
+
+```python
+def listProducts(self, ctx=None):
+    # ctx is a dict with transport metadata (may be None)
+    if ctx and 'headers' in ctx:
+        auth = ctx['headers'].get('Authorization')
+    return products_db
+```
+
+The `ctx` parameter is passed as: `func(*params, ctx=ctx)` (Python 3) or as the last positional argument (Python 2).
+
+---
+
 ## Error Handling
 
 Throw `RPCError` with custom codes:
@@ -95,20 +111,22 @@ Common error codes:
 
 ## Server Implementation
 
-Extend generated service classes:
+Extend generated service classes. All handler methods receive an optional `ctx=None` parameter for transport-level metadata:
 
 ```python
 from server import PulseRPCServer, CatalogService
 
 class CatalogServiceImpl(CatalogService):
-    def listProducts(self):
+    def listProducts(self, ctx=None):
+        # ctx is for transport-level metadata (headers, auth)
         # Return list of Product dicts
         return [
             {"productId": "p1", "name": "Item 1", "price": 10.0, "stock": 5},
             {"productId": "p2", "name": "Item 2", "price": 20.0, "stock": 3}
         ]
 
-    def getProduct(self, productId):
+    def getProduct(self, productId, ctx=None):
+        # ctx is for transport-level metadata (headers, auth)
         # Return None for optional return type
         for p in products:
             if p["productId"] == productId:

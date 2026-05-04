@@ -34,17 +34,20 @@ carts_db = {}
 orders_db = {}
 
 class CatalogServiceImpl(object):
-    def listProducts(self):
+    def listProducts(self, ctx):
+        # ctx: transport metadata dict (may be None)
         return products_db
 
-    def getProduct(self, productId):
+    def getProduct(self, productId, ctx):
+        # ctx: transport metadata dict (may be None)
         for p in products_db:
             if p["productId"] == productId:
                 return p
         return None
 
 class CartServiceImpl(object):
-    def addToCart(self, request):
+    def addToCart(self, request, ctx):
+        # ctx: transport metadata dict (may be None)
         cart_id = request.get("cartId") or "cart_%d" % random.randint(1000, 9999)
 
         if cart_id not in carts_db:
@@ -75,10 +78,12 @@ class CartServiceImpl(object):
         cart["subtotal"] = sum(item["price"] * item["quantity"] for item in cart["items"])
         return cart
 
-    def getCart(self, cartId):
+    def getCart(self, cartId, ctx):
+        # ctx: transport metadata dict (may be None)
         return carts_db.get(cartId)
 
-    def clearCart(self, cartId):
+    def clearCart(self, cartId, ctx):
+        # ctx: transport metadata dict (may be None)
         if cartId in carts_db:
             carts_db[cartId]["items"] = []
             carts_db[cartId]["subtotal"] = 0.0
@@ -86,7 +91,8 @@ class CartServiceImpl(object):
         return False
 
 class OrderServiceImpl(object):
-    def createOrder(self, request):
+    def createOrder(self, request, ctx):
+        # ctx: transport metadata dict (may be None)
         if request.get("cartId") not in carts_db:
             raise RPCError(1001, "CartNotFound: Cart does not exist")
 
@@ -128,7 +134,8 @@ class OrderServiceImpl(object):
 
         return {"orderId": order_id, "message": "Order created successfully"}
 
-    def getOrder(self, orderId):
+    def getOrder(self, orderId, ctx):
+        # ctx: transport metadata dict (may be None)
         return orders_db.get(orderId)
 
 port = int(os.environ.get("SERVER_PORT", "8080"))

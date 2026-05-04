@@ -30,11 +30,29 @@ Note: Python 2 generates only metadata + runtime. No stub classes are generated 
 
 The Python 2 runtime provides:
 
-- **PulseRPCServer** - Main server class
-- **CatalogService**, **CartService**, **OrderService** - Base classes for handlers
+- **Server** - Main server class (from `pulserpc`)
+- **Contract** - IDL validation
 - **RPCError** - For returning structured errors
 
-Handlers inherit from generated base classes and override interface methods.
+Handlers are plain classes (no generated base classes in Python 2). All handler methods receive `ctx` as the **last positional argument** for transport-level metadata.
+
+## Transport Context (ctx)
+
+All handler methods receive a `ctx` parameter as the last positional argument. This contains transport-level metadata (headers, auth tokens, etc.) passed automatically by the runtime.
+
+**Important**: Python 2 runtime passes `ctx` as a positional argument (not keyword), so it must be the last parameter in your method signature. See `pkg/runtime/runtimes/python2/pulserpc/server.py` for implementation details.
+
+```python
+class CatalogServiceImpl(object):
+    def listProducts(self, ctx):
+        # ctx may be None if no transport context is provided
+        # ctx is a dict with transport metadata (e.g., headers)
+        return products_db
+
+    def getProduct(self, productId, ctx):
+        # ctx is passed as last positional argument
+        return None
+```
 
 ## 3. Implement the Server
 
@@ -55,15 +73,18 @@ class PulseRPCHandler(BaseHTTPRequestHandler):
         # Read request body
         content_length = int(self.headers.get('Content-Length', 0))
         request_body = self.rfile.read(content_length)
-        
-        # Process via PulseRPC server
-        response = server.call(request_body.decode('utf-8'))
-        
+        request_data = json.loads(request_body)
+
+        # Process via PulseRPC server (ctx is passed automatically)
+        # The runtime passes transport metadata as ctx positional arg
+        response = server.call(request_data)
+
         # Send response
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
-        self.wfile.write(response.encode('utf-8'))
+        if response:
+            self.wfile.write(json.dumps(response))
 ```
 
 Start the server:
