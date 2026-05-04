@@ -62,7 +62,7 @@ Create `my_server.py`:
 
 ## 4. Integrate with BaseHTTPServer
 
-The server integrates with Python 2's `BaseHTTPServer`:
+The server integrates with Python 2's `BaseHTTPServer`. Build a `ctx` dict from request headers and pass it to `server.call()`:
 
 ```python
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
@@ -71,13 +71,22 @@ from pulserpc import RPCError
 class PulseRPCHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         # Read request body
-        content_length = int(self.headers.get('Content-Length', 0))
+        content_length = int(self.headers.getheader('Content-Length', 0))
         request_body = self.rfile.read(content_length)
         request_data = json.loads(request_body)
 
-        # Process via PulseRPC server (ctx is passed automatically)
-        # The runtime passes transport metadata as ctx positional arg
-        response = server.call(request_data)
+        # Build context dict from request headers
+        ctx = {
+            'headers': dict(self.headers),
+            'remote_addr': self.client_address[0],
+        }
+        # Example: extract auth token
+        auth_header = self.headers.getheader('Authorization')
+        if auth_header:
+            ctx['auth'] = auth_header
+
+        # Pass ctx to server.call() - forwarded to all handler methods
+        response = server.call(request_data, ctx)
 
         # Send response
         self.send_response(200)
@@ -85,6 +94,17 @@ class PulseRPCHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if response:
             self.wfile.write(json.dumps(response))
+```
+
+Handler methods receive `ctx` as the last positional argument:
+
+```python
+class OrderServiceImpl(object):
+    def createOrder(self, request, ctx):
+        # ctx contains transport metadata (headers, auth, remote_addr)
+        if ctx and ctx.get('auth'):
+            print("Authenticated request:", ctx['auth'])
+        # ... rest of handler logic
 ```
 
 Start the server:

@@ -160,7 +160,19 @@ class PulseRPCHandler(BaseHTTPRequestHandler):
 
         request_body = self.rfile.read(content_length)
         request_data = json.loads(request_body)
-        response = server.call(request_data)
+
+        # Build context dict from request headers
+        ctx = {
+            'headers': dict(self.headers),
+            'remote_addr': self.client_address[0] if hasattr(self, 'client_address') else None,
+        }
+        # Example: extract auth token from Authorization header
+        auth_header = self.headers.getheader('Authorization')
+        if auth_header:
+            ctx['auth'] = auth_header
+
+        # Pass ctx to server.call() - it will be forwarded to handler methods
+        response = server.call(request_data, ctx)
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
