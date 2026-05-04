@@ -2,4 +2,4 @@ package main
 
 // Version is the current version of PulseRPC
 // This is updated automatically by scripts/tag_release.sh
-const Version = "v0.3.1"
+const Version = "v0.3.2"
