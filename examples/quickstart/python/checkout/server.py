@@ -10,37 +10,44 @@ from .types import Product, CartItem, Cart, Address, Order, AddToCartRequest, Cr
 class CatalogService(abc.ABC):
 
     @abc.abstractmethod
-    def listProducts(self):
+    def listProducts(self, ctx=None):
+        # ctx is for transport-level metadata (headers, auth) not suitable for request body
         pass
 
     @abc.abstractmethod
-    def getProduct(self, productId):
+    def getProduct(self, productId, ctx=None):
+        # ctx is for transport-level metadata (headers, auth) not suitable for request body
         pass
 
 
 class CartService(abc.ABC):
 
     @abc.abstractmethod
-    def addToCart(self, request):
+    def addToCart(self, request, ctx=None):
+        # ctx is for transport-level metadata (headers, auth) not suitable for request body
         pass
 
     @abc.abstractmethod
-    def getCart(self, cartId):
+    def getCart(self, cartId, ctx=None):
+        # ctx is for transport-level metadata (headers, auth) not suitable for request body
         pass
 
     @abc.abstractmethod
-    def clearCart(self, cartId):
+    def clearCart(self, cartId, ctx=None):
+        # ctx is for transport-level metadata (headers, auth) not suitable for request body
         pass
 
 
 class OrderService(abc.ABC):
 
     @abc.abstractmethod
-    def createOrder(self, request):
+    def createOrder(self, request, ctx=None):
+        # ctx is for transport-level metadata (headers, auth) not suitable for request body
         pass
 
     @abc.abstractmethod
-    def getOrder(self, orderId):
+    def getOrder(self, orderId, ctx=None):
+        # ctx is for transport-level metadata (headers, auth) not suitable for request body
         pass
 
 

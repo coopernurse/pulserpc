@@ -924,7 +924,7 @@ func writeInterfaceStub(sb *strings.Builder, iface *parser.Interface) {
 		for _, param := range method.Parameters {
 			fmt.Fprintf(sb, ", %s", param.Name)
 		}
-		sb.WriteString("):\n")
+		sb.WriteString(", ctx=None):\n")
 		sb.WriteString("        pass\n\n")
 	}
 	sb.WriteString("\n")
@@ -1078,7 +1078,7 @@ func writeTestMethodImpl(sb *strings.Builder, iface *parser.Interface, method *p
 	for _, param := range method.Parameters {
 		fmt.Fprintf(sb, ", %s", param.Name)
 	}
-	sb.WriteString("):\n")
+	sb.WriteString(", ctx=None):\n")
 
 	// Special handling for known test cases
 	if iface.Name == "B" && method.Name == "echo" {

@@ -57,5 +57,6 @@ class InProcTransport(Transport):
 
     def request(self, req):
         """Send request directly to Server instance"""
-        response = self.server.call(req)
+        ctx = req.get('ctx')
+        response = self.server.call(req, ctx)
         return response if response is not None else {}

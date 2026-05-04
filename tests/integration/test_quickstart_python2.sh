@@ -107,17 +107,17 @@ carts_db = {}
 orders_db = {}
 
 class CatalogServiceImpl(object):
-    def listProducts(self):
+    def listProducts(self, ctx=None):
         return products_db
 
-    def getProduct(self, productId):
+    def getProduct(self, productId, ctx=None):
         for p in products_db:
             if p["productId"] == productId:
                 return p
         return None
 
 class CartServiceImpl(object):
-    def addToCart(self, request):
+    def addToCart(self, request, ctx=None):
         cart_id = request.get("cartId") or "cart_%d" % random.randint(1000, 9999)
 
         if cart_id not in carts_db:
@@ -148,10 +148,10 @@ class CartServiceImpl(object):
         cart["subtotal"] = sum(item["price"] * item["quantity"] for item in cart["items"])
         return cart
 
-    def getCart(self, cartId):
+    def getCart(self, cartId, ctx=None):
         return carts_db.get(cartId)
 
-    def clearCart(self, cartId):
+    def clearCart(self, cartId, ctx=None):
         if cartId in carts_db:
             carts_db[cartId]["items"] = []
             carts_db[cartId]["subtotal"] = 0.0
@@ -159,7 +159,7 @@ class CartServiceImpl(object):
         return False
 
 class OrderServiceImpl(object):
-    def createOrder(self, request):
+    def createOrder(self, request, ctx=None):
         if request.get("cartId") not in carts_db:
             raise RPCError(1001, "CartNotFound: Cart does not exist")
 
@@ -201,7 +201,7 @@ class OrderServiceImpl(object):
 
         return {"orderId": order_id, "message": "Order created successfully"}
 
-    def getOrder(self, orderId):
+    def getOrder(self, orderId, ctx=None):
         return orders_db.get(orderId)
 
 port = int(os.environ.get("SERVER_PORT", "8080"))
@@ -225,7 +225,9 @@ class PulseRPCHandler(BaseHTTPRequestHandler):
 
         request_body = self.rfile.read(content_length)
         request_data = json.loads(request_body)
-        response = server.call(request_data)
+        # Pass ctx if available in request
+        ctx = request_data.pop('ctx', None)
+        response = server.call(request_data, ctx)
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

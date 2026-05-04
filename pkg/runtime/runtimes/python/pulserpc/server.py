@@ -35,11 +35,13 @@ class Server:
         """
         self.handlers[iface_name] = handler
 
-    def call(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def call(self, req: Dict[str, Any], ctx: Any = None) -> Optional[Dict[str, Any]]:
         """Process a single JSON-RPC request
 
         Args:
             req: JSON-RPC request dict with 'jsonrpc', 'method', 'params', 'id'
+            ctx: Optional context dict for transport-level metadata (headers, auth, etc.)
+                Passed as the last positional argument to handler methods.
 
         Returns:
             JSON-RPC response dict, or None for notification (requests without 'id')
@@ -120,8 +122,8 @@ class Server:
 
         # Invoke handler method
         try:
-            # Call handler function with positional params
-            result = func(*params)
+            # Call handler function with positional params and ctx as keyword arg
+            result = func(*params, ctx=ctx)
         except TypeError as e:
             return self._error_response(req_id, -32602, "Invalid params",
                                       f"Parameter mismatch: {e}")

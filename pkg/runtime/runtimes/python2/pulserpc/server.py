@@ -22,8 +22,14 @@ class Server(object):
         """Register a handler instance for an interface"""
         self.handlers[iface_name] = handler
 
-    def call(self, req):
-        """Process a single JSON-RPC request"""
+    def call(self, req, ctx=None):
+        """Process a single JSON-RPC request
+
+        Args:
+            req: JSON-RPC request dict with 'jsonrpc', 'method', 'params', 'id'
+            ctx: Optional context dict for transport-level metadata (headers, auth, etc.)
+                Passed as the last positional argument to handler methods.
+        """
         if not isinstance(req, dict):
             return self._error_response(None, -32600, "Invalid Request", "Request must be an object")
 
@@ -81,7 +87,9 @@ class Server(object):
                 return self._error_response(req_id, -32602, "Invalid params", str(e))
 
         try:
-            result = func(*params)
+            # Python 2 doesn't support *params, ctx syntax, so build args manually
+            args = list(params) + [ctx]
+            result = func(*args)
         except TypeError as e:
             return self._error_response(req_id, -32602, "Invalid params",
                                       "Parameter mismatch: %s" % e)

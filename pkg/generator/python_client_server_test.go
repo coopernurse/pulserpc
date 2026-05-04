@@ -1343,3 +1343,175 @@ func TestPython2Generator_PackageFlag(t *testing.T) {
 	assertDirExists(t, filepath.Join(tmpDir, "myapp", "lib", "rpc", "pulserpc"))
 	assertFileExists(t, filepath.Join(tmpDir, "myapp", "lib", "rpc", "checkout", "idl.json"))
 }
+
+func TestPythonGeneratorCtxInServerPy(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-ctx-server-")
+
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "A",
+				Namespace: "",
+				Methods: []*parser.Method{
+					{
+						Name:       "add",
+						Parameters: []*parser.Parameter{{Name: "a", Type: &parser.Type{BuiltIn: "int"}}, {Name: "b", Type: &parser.Type{BuiltIn: "int"}}},
+						ReturnType: &parser.Type{BuiltIn: "int"},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	serverPath := filepath.Join(tmpDir, "server.py")
+	content, err := os.ReadFile(serverPath)
+	if err != nil {
+		t.Fatalf("failed to read server.py: %v", err)
+	}
+	serverContent := string(content)
+
+	// Verify abstract method stub contains ctx=None
+	if !strings.Contains(serverContent, "def add(self, a, b, ctx=None):") {
+		t.Errorf("server.py should contain 'def add(self, a, b, ctx=None):', got:\n%s", serverContent)
+	}
+}
+
+func TestPythonGeneratorCtxInTestServerPy(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-ctx-testserver-")
+
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "A",
+				Namespace: "",
+				Methods: []*parser.Method{
+					{
+						Name:       "add",
+						Parameters: []*parser.Parameter{{Name: "a", Type: &parser.Type{BuiltIn: "int"}}, {Name: "b", Type: &parser.Type{BuiltIn: "int"}}},
+						ReturnType: &parser.Type{BuiltIn: "int"},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	fs.Bool("generate-test-files", false, "generate test files")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("generate-test-files", "true"); err != nil {
+		t.Fatalf("failed to set generate-test-files flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	testServerPath := filepath.Join(tmpDir, "test_server.py")
+	content, err := os.ReadFile(testServerPath)
+	if err != nil {
+		t.Fatalf("failed to read test_server.py: %v", err)
+	}
+	testServerContent := string(content)
+
+	// Verify test implementation contains ctx=None
+	if !strings.Contains(testServerContent, "def add(self, a, b, ctx=None):") {
+		t.Errorf("test_server.py should contain 'def add(self, a, b, ctx=None):', got:\n%s", testServerContent)
+	}
+}
+
+func TestPythonGeneratorCtxPropagatesToOutput(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-ctx-propagate-")
+
+	// Create a more complex IDL with multiple methods
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{
+			{
+				Name:      "User",
+				Namespace: "",
+				Fields:    []*parser.Field{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+			},
+		},
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "UserService",
+				Namespace: "",
+				Methods: []*parser.Method{
+					{
+						Name:       "getUser",
+						Parameters: []*parser.Parameter{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "User"},
+					},
+					{
+						Name:       "createUser",
+						Parameters: []*parser.Parameter{{Name: "user", Type: &parser.Type{UserDefined: "User"}}},
+						ReturnType: &parser.Type{BuiltIn: "bool"},
+					},
+				},
+			},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	fs.Bool("generate-test-files", false, "generate test files")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("generate-test-files", "true"); err != nil {
+		t.Fatalf("failed to set generate-test-files flag: %v", err)
+	}
+
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Check server.py (interface stubs)
+	serverPath := filepath.Join(tmpDir, "server.py")
+	serverContent, err := os.ReadFile(serverPath)
+	if err != nil {
+		t.Fatalf("failed to read server.py: %v", err)
+	}
+	serverStr := string(serverContent)
+
+	// Verify all methods have ctx=None
+	if !strings.Contains(serverStr, "def getUser(self, id, ctx=None):") {
+		t.Errorf("server.py should contain getUser with ctx=None")
+	}
+	if !strings.Contains(serverStr, "def createUser(self, user, ctx=None):") {
+		t.Errorf("server.py should contain createUser with ctx=None")
+	}
+
+	// Check test_server.py (test implementations)
+	testServerPath := filepath.Join(tmpDir, "test_server.py")
+	testServerContent, err := os.ReadFile(testServerPath)
+	if err != nil {
+		t.Fatalf("failed to read test_server.py: %v", err)
+	}
+	testServerStr := string(testServerContent)
+
+	if !strings.Contains(testServerStr, "def getUser(self, id, ctx=None):") {
+		t.Errorf("test_server.py should contain getUser with ctx=None")
+	}
+	if !strings.Contains(testServerStr, "def createUser(self, user, ctx=None):") {
+		t.Errorf("test_server.py should contain createUser with ctx=None")
+	}
+}
