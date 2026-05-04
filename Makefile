@@ -101,11 +101,12 @@ test-runtime-python:
 	@cd pkg/runtime/runtimes/python && $(MAKE) test
 
 # Test Python 2 runtime
-test-runtime-python2:
+test-runtime-python2: build
 	@echo "Testing Python 2 runtime..."
 	@mkdir -p /tmp/pulserpc_py2_test
 	@echo "Generating Python 2 code..."
 	@$(TARGET_DIR)/$(BINARY_NAME) -plugin python-client-server -python-version 2 -dir /tmp/pulserpc_py2_test $(shell find examples -name "*.pulse" | head -1)
+	@cp pkg/runtime/runtimes/python2/pulserpc/test_validation.py /tmp/pulserpc_py2_test/pulserpc/
 	@echo "Running Python 2 tests in Docker..."
 	@docker run --rm -v /tmp/pulserpc_py2_test:/workspace moxel/python2 sh -c "cd /workspace && python -m pulserpc.test_validation"
 	@rm -rf /tmp/pulserpc_py2_test
