@@ -1,10 +1,5 @@
 """Helper functions for working with type definitions"""
 
-try:
-    unicode
-except NameError:
-    unicode = str
-
 
 def find_struct(struct_name, all_structs):
     """Find a struct definition by name"""

@@ -2,10 +2,12 @@
 
 from rpctypes import find_struct, find_enum, get_struct_fields
 
+_string_types = (str, type(u""))
+
 
 def validate_string(value):
     """Validate that value is a string"""
-    if not isinstance(value, basestring):
+    if not isinstance(value, _string_types):
         raise TypeError("Expected string, got %s" % type(value).__name__)
 
 
@@ -46,7 +48,7 @@ def validate_map(value, value_validator):
     if not isinstance(value, dict):
         raise TypeError("Expected dict, got %s" % type(value).__name__)
     for key, val in value.items():
-        if not isinstance(key, basestring):
+        if not isinstance(key, _string_types):
             raise TypeError("Map key must be string, got %s" % type(key).__name__)
         try:
             value_validator(val)
@@ -56,7 +58,7 @@ def validate_map(value, value_validator):
 
 def validate_enum(value, enum_name, allowed_values):
     """Validate that value is a string and matches one of the allowed enum values"""
-    if not isinstance(value, basestring):
+    if not isinstance(value, _string_types):
         raise TypeError("Expected string for enum %s, got %s" % (enum_name, type(value).__name__))
     if value not in allowed_values:
         raise ValueError("Invalid value for enum %s: '%s'. Allowed values: %s" % (enum_name, value, allowed_values))

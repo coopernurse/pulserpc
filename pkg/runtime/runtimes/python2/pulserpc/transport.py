@@ -1,8 +1,15 @@
 """Transport abstraction for PulseRPC clients"""
 
 import json
-import urllib
-import urllib2
+
+try:
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError
+except ImportError:
+    _u2 = __import__('urllib2')
+    Request = _u2.Request
+    urlopen = _u2.urlopen
+    HTTPError = _u2.HTTPError
 
 
 class Transport(object):
@@ -29,17 +36,17 @@ class HttpTransport(Transport):
         headers = {'Content-Type': 'application/json'}
         headers.update(self.headers)
 
-        http_req = urllib2.Request(self.url, data=body, headers=headers)
+        http_req = Request(self.url, data=body, headers=headers)
 
         try:
-            response = urllib2.urlopen(http_req, timeout=self.timeout)
+            response = urlopen(http_req, timeout=self.timeout)
             response_body = response.read().decode('utf-8')
 
             if not response_body:
                 return {}
 
             return json.loads(response_body)
-        except urllib2.HTTPError as e:
+        except HTTPError as e:
             response_body = e.read().decode('utf-8')
             if response_body:
                 return json.loads(response_body)

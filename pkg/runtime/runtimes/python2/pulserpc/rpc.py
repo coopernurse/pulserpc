@@ -1,10 +1,5 @@
 """RPC error handling for JSON-RPC 2.0"""
 
-try:
-    unicode
-except NameError:
-    unicode = str
-
 
 class RPCError(Exception):
     """Exception class for JSON-RPC errors"""

@@ -3,6 +3,8 @@
 from rpc import RPCError
 from contract import Contract
 
+_string_types = (str, type(u""))
+
 
 class Server(object):
     """JSON-RPC 2.0 server with handler registration and optional validation
@@ -38,7 +40,7 @@ class Server(object):
                                       "jsonrpc version must be '2.0'")
 
         method = req.get('method')
-        if not method or not isinstance(method, basestring):
+        if not method or not isinstance(method, _string_types):
             return self._error_response(req.get('id'), -32600, "Invalid Request",
                                       "Method must be a string")
 
@@ -94,7 +96,7 @@ class Server(object):
                                       "Parameter mismatch: %s" % e)
         except Exception as e:
             if isinstance(e, RPCError):
-                return self._error_response(req_id, e.code, e.message, e.data)
+                return self._error_response(req_id, e.code, getattr(e, 'message'), e.data)
             else:
                 import traceback
                 traceback.print_exc()
