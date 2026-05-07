@@ -160,9 +160,9 @@ export class Server {
 
     // Invoke handler method
     try {
-      // Call handler function with positional params (spread the object values)
+      // Call handler function with ctx first, then positional params (spread the object values)
       const args = Object.values(params);
-      const result = await func(...args, ctx);
+      const result = await func(ctx, ...args);
       return {
         jsonrpc: "2.0",
         result,

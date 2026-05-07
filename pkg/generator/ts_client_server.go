@@ -531,7 +531,11 @@ func writeInterfaceStubTs(sb *strings.Builder, iface *parser.Interface, structMa
 			continue
 		}
 		fmt.Fprintf(sb, "  abstract %s(", method.Name)
+		fmt.Fprintf(sb, "ctx: Record<string, any>")
 		hasParams := len(method.Parameters) > 0
+		if hasParams {
+			sb.WriteString(", ")
+		}
 		for i, param := range method.Parameters {
 			if i > 0 {
 				sb.WriteString(", ")
@@ -539,10 +543,6 @@ func writeInterfaceStubTs(sb *strings.Builder, iface *parser.Interface, structMa
 			tsType := getTypeScriptType(param.Type, structMap, enumMap, true)
 			fmt.Fprintf(sb, "%s: %s", param.Name, tsType)
 		}
-		if hasParams {
-			sb.WriteString(", ")
-		}
-		fmt.Fprintf(sb, "ctx: Record<string, any>")
 		returnType := getTypeScriptType(method.ReturnType, structMap, enumMap, true)
 		if method.ReturnOptional {
 			returnType = returnType + " | null"
@@ -583,7 +583,11 @@ func writeInterfaceStubTsForNamespace(sb *strings.Builder, iface *parser.Interfa
 			continue
 		}
 		fmt.Fprintf(sb, "  abstract %s(", method.Name)
+		fmt.Fprintf(sb, "ctx: Record<string, any>")
 		hasParams := len(method.Parameters) > 0
+		if hasParams {
+			sb.WriteString(", ")
+		}
 		for i, param := range method.Parameters {
 			if i > 0 {
 				sb.WriteString(", ")
@@ -591,10 +595,6 @@ func writeInterfaceStubTsForNamespace(sb *strings.Builder, iface *parser.Interfa
 			tsType := getTypeScriptTypeForNamespace(param.Type, structMap, enumMap, true, true, allNamespaceMap)
 			fmt.Fprintf(sb, "%s: %s", param.Name, tsType)
 		}
-		if hasParams {
-			sb.WriteString(", ")
-		}
-		fmt.Fprintf(sb, "ctx: Record<string, any>")
 		returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, true, allNamespaceMap)
 		if method.ReturnOptional {
 			returnType = returnType + " | null"
@@ -1219,17 +1219,17 @@ func writeTestInterfaceImplTs(sb *strings.Builder, iface *parser.Interface, stru
 func writeTestMethodImplTs(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
 	// Method signature
 	fmt.Fprintf(sb, "  %s(", method.Name)
+	fmt.Fprintf(sb, "ctx: any")
 	hasParams := len(method.Parameters) > 0
+	if hasParams {
+		sb.WriteString(", ")
+	}
 	for i, param := range method.Parameters {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
 		fmt.Fprintf(sb, "%s: any", param.Name)
 	}
-	if hasParams {
-		sb.WriteString(", ")
-	}
-	fmt.Fprintf(sb, "ctx: any")
 	sb.WriteString("): any {\n")
 
 	// Special handling for known test cases

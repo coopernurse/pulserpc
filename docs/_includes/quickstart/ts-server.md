@@ -28,17 +28,17 @@ const carts = new Map<string, any>();
 const orders = new Map<string, any>();
 
 class CatalogServiceImpl extends CatalogService {
-  listProducts(): any[] {
+  listProducts(_ctx: Record<string, any>): any[] {
     return products;
   }
 
-  getProduct(productId: string): any | null {
+  getProduct(_ctx: Record<string, any>, productId: string): any | null {
     return products.find((p: any) => p.productId === productId) || null;
   }
 }
 
 class CartServiceImpl extends CartService {
-  addToCart(request: any): any {
+  addToCart(_ctx: Record<string, any>, request: any): any {
     let cartId = request.cartId || `cart_${Math.floor(Math.random() * 9000 + 1000)}`;
 
     let cart = carts.get(cartId);
@@ -66,11 +66,11 @@ class CartServiceImpl extends CartService {
     return cart;
   }
 
-  getCart(cartId: string): any | null {
+  getCart(_ctx: Record<string, any>, cartId: string): any | null {
     return carts.get(cartId) || null;
   }
 
-  clearCart(cartId: string): boolean {
+  clearCart(_ctx: Record<string, any>, cartId: string): boolean {
     const cart = carts.get(cartId);
     if (cart) {
       cart.items = [];
@@ -82,7 +82,7 @@ class CartServiceImpl extends CartService {
 }
 
 class OrderServiceImpl extends OrderService {
-  createOrder(request: any): any {
+  createOrder(_ctx: Record<string, any>, request: any): any {
     const cart = carts.get(request.cartId);
     if (!cart) {
       throw new RPCError(1001, 'CartNotFound: Cart does not exist');
@@ -107,7 +107,7 @@ class OrderServiceImpl extends OrderService {
     return { orderId, message: 'Order created successfully' };
   }
 
-  getOrder(orderId: string): any | null {
+  getOrder(_ctx: Record<string, any>, orderId: string): any | null {
     return orders.get(orderId) || null;
   }
 }

@@ -1,7 +1,7 @@
 import { HttpTransport, Client } from './pulserpc/index.js';
 
 const port = parseInt(process.env.SERVER_PORT || '8080', 10);
-const transport = new HttpTransport(`http://localhost:${port}`);
+const transport = new HttpTransport(`http://127.0.0.1:${port}`);
 const client = new Client(transport);
 
 async function main() {
