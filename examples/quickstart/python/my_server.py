@@ -37,12 +37,10 @@ carts_db = {}  # cart_id -> Cart
 orders_db = {}  # order_id -> Order
 
 class CatalogServiceImpl(CatalogService):
-    def listProducts(self, ctx=None):
-        # ctx is for transport-level metadata (headers, auth) not suitable for request body
+    def listProducts(self, ctx):
         return products_db
 
-    def getProduct(self, productId, ctx=None):
-        # ctx is for transport-level metadata (headers, auth) not suitable for request body
+    def getProduct(self, ctx, productId):
         for p in products_db:
             if p["productId"] == productId:
                 return p
@@ -50,8 +48,7 @@ class CatalogServiceImpl(CatalogService):
 
 
 class CartServiceImpl(CartService):
-    def addToCart(self, request, ctx=None):
-        # ctx is for transport-level metadata (headers, auth) not suitable for request body
+    def addToCart(self, ctx, request):
         # Use a counter instead of random for deterministic cart IDs
         global _call_count
         _call_count += 1
@@ -92,12 +89,10 @@ class CartServiceImpl(CartService):
         )
         return cart
 
-    def getCart(self, cartId, ctx=None):
-        # ctx is for transport-level metadata (headers, auth) not suitable for request body
+    def getCart(self, ctx, cartId):
         return carts_db.get(cartId)
 
-    def clearCart(self, cartId, ctx=None):
-        # ctx is for transport-level metadata (headers, auth) not suitable for request body
+    def clearCart(self, ctx, cartId):
         if cartId in carts_db:
             carts_db[cartId]["items"] = []
             carts_db[cartId]["subtotal"] = 0.0
@@ -106,8 +101,7 @@ class CartServiceImpl(CartService):
 
 
 class OrderServiceImpl(OrderService):
-    def createOrder(self, request, ctx=None):
-        # ctx is for transport-level metadata (headers, auth) not suitable for request body
+    def createOrder(self, ctx, request):
         # Validate cart exists
         if request.get("cartId") not in carts_db:
             raise RPCError(Err.CartNotFound, "CartNotFound: Cart does not exist")
@@ -155,8 +149,7 @@ class OrderServiceImpl(OrderService):
 
         return {"orderId": order_id, "message": "Order created successfully"}
 
-    def getOrder(self, orderId, ctx=None):
-        # ctx is for transport-level metadata (headers, auth) not suitable for request body
+    def getOrder(self, ctx, orderId):
         return orders_db.get(orderId)
 
 # Create JSON-RPC handler

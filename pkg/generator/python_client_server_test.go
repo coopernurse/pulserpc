@@ -1382,9 +1382,9 @@ func TestPythonGeneratorCtxInServerPy(t *testing.T) {
 	}
 	serverContent := string(content)
 
-	// Verify abstract method stub contains ctx=None
-	if !strings.Contains(serverContent, "def add(self, a, b, ctx=None):") {
-		t.Errorf("server.py should contain 'def add(self, a, b, ctx=None):', got:\n%s", serverContent)
+	// Verify abstract method stub has ctx first
+	if !strings.Contains(serverContent, "def add(self, ctx, a, b):") {
+		t.Errorf("server.py should contain 'def add(self, ctx, a, b):', got:\n%s", serverContent)
 	}
 }
 
@@ -1430,9 +1430,9 @@ func TestPythonGeneratorCtxInTestServerPy(t *testing.T) {
 	}
 	testServerContent := string(content)
 
-	// Verify test implementation contains ctx=None
-	if !strings.Contains(testServerContent, "def add(self, a, b, ctx=None):") {
-		t.Errorf("test_server.py should contain 'def add(self, a, b, ctx=None):', got:\n%s", testServerContent)
+	// Verify test implementation has ctx first
+	if !strings.Contains(testServerContent, "def add(self, ctx, a, b):") {
+		t.Errorf("test_server.py should contain 'def add(self, ctx, a, b):', got:\n%s", testServerContent)
 	}
 }
 
@@ -1492,12 +1492,12 @@ func TestPythonGeneratorCtxPropagatesToOutput(t *testing.T) {
 	}
 	serverStr := string(serverContent)
 
-	// Verify all methods have ctx=None
-	if !strings.Contains(serverStr, "def getUser(self, id, ctx=None):") {
-		t.Errorf("server.py should contain getUser with ctx=None")
+	// Verify all methods have ctx first
+	if !strings.Contains(serverStr, "def getUser(self, ctx, id):") {
+		t.Errorf("server.py should contain getUser with ctx first")
 	}
-	if !strings.Contains(serverStr, "def createUser(self, user, ctx=None):") {
-		t.Errorf("server.py should contain createUser with ctx=None")
+	if !strings.Contains(serverStr, "def createUser(self, ctx, user):") {
+		t.Errorf("server.py should contain createUser with ctx first")
 	}
 
 	// Check test_server.py (test implementations)
@@ -1508,10 +1508,10 @@ func TestPythonGeneratorCtxPropagatesToOutput(t *testing.T) {
 	}
 	testServerStr := string(testServerContent)
 
-	if !strings.Contains(testServerStr, "def getUser(self, id, ctx=None):") {
-		t.Errorf("test_server.py should contain getUser with ctx=None")
+	if !strings.Contains(testServerStr, "def getUser(self, ctx, id):") {
+		t.Errorf("test_server.py should contain getUser with ctx first")
 	}
-	if !strings.Contains(testServerStr, "def createUser(self, user, ctx=None):") {
-		t.Errorf("test_server.py should contain createUser with ctx=None")
+	if !strings.Contains(testServerStr, "def createUser(self, ctx, user):") {
+		t.Errorf("test_server.py should contain createUser with ctx first")
 	}
 }

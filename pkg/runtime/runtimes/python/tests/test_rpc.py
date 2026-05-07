@@ -33,7 +33,7 @@ class MockHandler:
     def __init__(self):
         self.last_ctx = None
 
-    def test_method(self, ctx=None):
+    def test_method(self, ctx):
         self.last_ctx = ctx
         return "test_value"
 

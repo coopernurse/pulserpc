@@ -87,8 +87,7 @@ class Server(object):
                 return self._error_response(req_id, -32602, "Invalid params", str(e))
 
         try:
-            # Python 2 doesn't support *params, ctx syntax, so build args manually
-            args = list(params) + [ctx]
+            args = [ctx] + list(params)
             result = func(*args)
         except TypeError as e:
             return self._error_response(req_id, -32602, "Invalid params",

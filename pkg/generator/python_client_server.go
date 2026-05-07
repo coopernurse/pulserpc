@@ -920,11 +920,11 @@ func writeInterfaceStub(sb *strings.Builder, iface *parser.Interface) {
 
 	for _, method := range iface.Methods {
 		sb.WriteString("    @abc.abstractmethod\n")
-		fmt.Fprintf(sb, "    def %s(self", method.Name)
+		fmt.Fprintf(sb, "    def %s(self, ctx", method.Name)
 		for _, param := range method.Parameters {
 			fmt.Fprintf(sb, ", %s", param.Name)
 		}
-		sb.WriteString(", ctx=None):\n")
+		sb.WriteString("):\n")
 		sb.WriteString("        pass\n\n")
 	}
 	sb.WriteString("\n")
@@ -1074,11 +1074,11 @@ func writeTestInterfaceImpl(sb *strings.Builder, iface *parser.Interface, struct
 // writeTestMethodImpl generates a test implementation for a method
 func writeTestMethodImpl(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
 	// Method signature
-	fmt.Fprintf(sb, "    def %s(self", method.Name)
+	fmt.Fprintf(sb, "    def %s(self, ctx", method.Name)
 	for _, param := range method.Parameters {
 		fmt.Fprintf(sb, ", %s", param.Name)
 	}
-	sb.WriteString(", ctx=None):\n")
+	sb.WriteString("):\n")
 
 	// Special handling for known test cases
 	if iface.Name == "B" && method.Name == "echo" {

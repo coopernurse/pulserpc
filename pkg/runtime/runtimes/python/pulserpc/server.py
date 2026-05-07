@@ -122,8 +122,7 @@ class Server:
 
         # Invoke handler method
         try:
-            # Call handler function with positional params and ctx as keyword arg
-            result = func(*params, ctx=ctx)
+            result = func(ctx, *params)
         except TypeError as e:
             return self._error_response(req_id, -32602, "Invalid params",
                                       f"Parameter mismatch: {e}")

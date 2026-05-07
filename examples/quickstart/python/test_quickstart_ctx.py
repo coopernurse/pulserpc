@@ -17,11 +17,11 @@ class MockCatalogService(CatalogService):
     def __init__(self):
         self.last_ctx = None
 
-    def listProducts(self, ctx=None):
+    def listProducts(self, ctx):
         self.last_ctx = ctx
         return [{"productId": "prod001", "name": "Test Product"}]
 
-    def getProduct(self, productId, ctx=None):
+    def getProduct(self, ctx, productId):
         self.last_ctx = ctx
         return {"productId": productId, "name": "Test Product"}
 
