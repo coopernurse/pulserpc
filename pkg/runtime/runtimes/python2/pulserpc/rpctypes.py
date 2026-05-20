@@ -16,24 +16,24 @@ def get_struct_fields(struct_name, all_structs):
     struct_def = find_struct(struct_name, all_structs)
     if not struct_def:
         return []
-    
+
     fields = []
-    
-    if struct_def.get('extends'):
-        parent_fields = get_struct_fields(struct_def['extends'], all_structs)
+
+    if struct_def.get("extends"):
+        parent_fields = get_struct_fields(struct_def["extends"], all_structs)
         fields.extend(parent_fields)
-    
+
     field_names = set()
     for f in fields:
-        field_names.add(f['name'])
-    for field in struct_def.get('fields', []):
-        if field['name'] not in field_names:
+        field_names.add(f["name"])
+    for field in struct_def.get("fields", []):
+        if field["name"] not in field_names:
             fields.append(field)
-            field_names.add(field['name'])
+            field_names.add(field["name"])
         else:
             for i, f in enumerate(fields):
-                if f['name'] == field['name']:
+                if f["name"] == field["name"]:
                     fields[i] = field
                     break
-    
+
     return fields

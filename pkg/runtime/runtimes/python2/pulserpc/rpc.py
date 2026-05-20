@@ -3,7 +3,7 @@
 
 class RPCError(Exception):
     """Exception class for JSON-RPC errors"""
-    
+
     def __init__(self, code, message, data=None):
         self.code = code
         self.message = message

@@ -12,10 +12,10 @@ class Interface(object):
 
     def __init__(self, iface_data):
         """Initialize Interface from IDL data"""
-        self.name = iface_data['name']
+        self.name = iface_data["name"]
         self.functions = {}
-        for func in iface_data.get('methods', []):
-            self.functions[func['name']] = func
+        for func in iface_data.get("methods", []):
+            self.functions[func["name"]] = func
 
     def get_function(self, func_name):
         """Get function metadata by name"""
@@ -38,14 +38,14 @@ class Contract(object):
             self.enums = {}
             self.meta = {}
 
-            for iface_data in idl_parsed.get('interfaces', []):
-                self.interfaces[iface_data['name']] = Interface(iface_data)
+            for iface_data in idl_parsed.get("interfaces", []):
+                self.interfaces[iface_data["name"]] = Interface(iface_data)
 
-            for struct_data in idl_parsed.get('structs', []):
-                self.structs[struct_data['name']] = struct_data
+            for struct_data in idl_parsed.get("structs", []):
+                self.structs[struct_data["name"]] = struct_data
 
-            for enum_data in idl_parsed.get('enums', []):
-                self.enums[enum_data['name']] = enum_data
+            for enum_data in idl_parsed.get("enums", []):
+                self.enums[enum_data["name"]] = enum_data
         else:
             self.idl_parsed = idl_parsed
             self.interfaces = {}
@@ -54,16 +54,16 @@ class Contract(object):
             self.meta = {}
 
             for item in idl_parsed:
-                item_type = item.get('type')
-                if item_type == 'struct':
-                    self.structs[item['name']] = item
-                elif item_type == 'enum':
-                    self.enums[item['name']] = item
-                elif item_type == 'interface':
-                    self.interfaces[item['name']] = Interface(item)
-                elif item_type == 'meta':
+                item_type = item.get("type")
+                if item_type == "struct":
+                    self.structs[item["name"]] = item
+                elif item_type == "enum":
+                    self.enums[item["name"]] = item
+                elif item_type == "interface":
+                    self.interfaces[item["name"]] = Interface(item)
+                elif item_type == "meta":
                     for key, value in item.items():
-                        if key != 'type':
+                        if key != "type":
                             self.meta[key] = value
 
     def has_interface(self, iface_name):
@@ -84,27 +84,28 @@ class Contract(object):
         if not func:
             raise ValueError("%s: Unknown function: '%s'" % (iface_name, func_name))
 
-        param_defs = func.get('parameters', [])
+        param_defs = func.get("parameters", [])
 
         if len(params) != len(param_defs):
             raise ValueError(
-                "Function '%s.%s' expects %d param(s). %d given." %
-                (iface_name, func_name, len(param_defs), len(params))
+                "Function '%s.%s' expects %d param(s). %d given."
+                % (iface_name, func_name, len(param_defs), len(params))
             )
 
         for i, param_value in enumerate(params):
             param_def = param_defs[i]
-            param_name = param_def['name']
-            param_type = param_def['type']
-            is_optional = param_def.get('optional', False)
+            param_name = param_def["name"]
+            param_type = param_def["type"]
+            is_optional = param_def.get("optional", False)
 
             try:
-                validate_type(param_value, param_type, self.structs,
-                            self.enums, is_optional)
+                validate_type(
+                    param_value, param_type, self.structs, self.enums, is_optional
+                )
             except (TypeError, ValueError) as e:
                 raise ValueError(
-                    "Function '%s.%s' invalid param '%s'. %s" %
-                    (iface_name, func_name, param_name, e)
+                    "Function '%s.%s' invalid param '%s'. %s"
+                    % (iface_name, func_name, param_name, e)
                 )
 
     def validate_response(self, iface_name, func_name, result):
@@ -117,21 +118,20 @@ class Contract(object):
         if not func:
             raise ValueError("%s: Unknown function: '%s'" % (iface_name, func_name))
 
-        return_type = func.get('returnType')
+        return_type = func.get("returnType")
         if not return_type:
             if result is not None:
                 raise ValueError(
-                    "Function '%s.%s' invalid response: '%s'. Expected None" %
-                    (iface_name, func_name, result)
+                    "Function '%s.%s' invalid response: '%s'. Expected None"
+                    % (iface_name, func_name, result)
                 )
             return
 
-        is_optional = func.get('returnOptional', False)
+        is_optional = func.get("returnOptional", False)
         try:
-            validate_type(result, return_type, self.structs,
-                        self.enums, is_optional)
+            validate_type(result, return_type, self.structs, self.enums, is_optional)
         except (TypeError, ValueError) as e:
             raise ValueError(
-                "Function '%s.%s' invalid response: '%s'. %s" %
-                (iface_name, func_name, result, e)
+                "Function '%s.%s' invalid response: '%s'. %s"
+                % (iface_name, func_name, result, e)
             )

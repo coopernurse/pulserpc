@@ -3,6 +3,9 @@
 from rpctypes import find_struct, find_enum, get_struct_fields
 
 _string_types = (str, type(u""))
+# In Python 2, 2**100 is `long`; in Python 3 it's `int`. Avoids naming `long` directly.
+_large_int = 2 ** 100
+_int_types = (int,) if isinstance(_large_int, int) else (int, type(_large_int))
 
 
 def validate_string(value):
@@ -13,7 +16,7 @@ def validate_string(value):
 
 def validate_int(value):
     """Validate that value is an int"""
-    if isinstance(value, int):
+    if isinstance(value, _int_types):
         return
     if isinstance(value, float) and value == int(value):
         return
@@ -22,7 +25,7 @@ def validate_int(value):
 
 def validate_float(value):
     """Validate that value is a float or int"""
-    if not isinstance(value, (int, float)):
+    if not isinstance(value, _int_types + (float,)):
         raise TypeError("Expected float, got %s" % type(value).__name__)
 
 
@@ -59,38 +62,58 @@ def validate_map(value, value_validator):
 def validate_enum(value, enum_name, allowed_values):
     """Validate that value is a string and matches one of the allowed enum values"""
     if not isinstance(value, _string_types):
-        raise TypeError("Expected string for enum %s, got %s" % (enum_name, type(value).__name__))
+        raise TypeError(
+            "Expected string for enum %s, got %s" % (enum_name, type(value).__name__)
+        )
     if value not in allowed_values:
-        raise ValueError("Invalid value for enum %s: '%s'. Allowed values: %s" % (enum_name, value, allowed_values))
+        raise ValueError(
+            "Invalid value for enum %s: '%s'. Allowed values: %s"
+            % (enum_name, value, allowed_values)
+        )
 
 
 def validate_struct(value, struct_name, struct_def, all_structs, all_enums):
     """Validate that value is a dict matching the struct definition"""
     if not isinstance(value, dict):
-        raise TypeError("Expected dict for struct %s, got %s" % (struct_name, type(value).__name__))
-    
+        raise TypeError(
+            "Expected dict for struct %s, got %s" % (struct_name, type(value).__name__)
+        )
+
     fields = get_struct_fields(struct_name, all_structs)
-    
+
     for field in fields:
-        field_name = field['name']
-        field_type = field['type']
-        is_optional = field.get('optional', False)
-        
+        field_name = field["name"]
+        field_type = field["type"]
+        is_optional = field.get("optional", False)
+
         if field_name not in value:
             if not is_optional:
-                raise ValueError("Missing required field '%s' in struct %s" % (field_name, struct_name))
+                raise ValueError(
+                    "Missing required field '%s' in struct %s"
+                    % (field_name, struct_name)
+                )
         else:
             field_value = value[field_name]
             if field_value is None:
                 if not is_optional:
-                    raise ValueError("Field '%s' in struct %s cannot be None" % (field_name, struct_name))
+                    raise ValueError(
+                        "Field '%s' in struct %s cannot be None"
+                        % (field_name, struct_name)
+                    )
             else:
+
                 def make_validator(ft, als, ale, io):
                     return lambda x: validate_type(x, ft, als, ale, io)
+
                 try:
-                    make_validator(field_type, all_structs, all_enums, is_optional)(field_value)
+                    make_validator(field_type, all_structs, all_enums, is_optional)(
+                        field_value
+                    )
                 except Exception as e:
-                    raise ValueError("Field '%s' in struct %s validation failed: %s" % (field_name, struct_name, e))
+                    raise ValueError(
+                        "Field '%s' in struct %s validation failed: %s"
+                        % (field_name, struct_name, e)
+                    )
 
 
 def validate_type(value, type_def, all_structs, all_enums, is_optional=False):
@@ -100,31 +123,37 @@ def validate_type(value, type_def, all_structs, all_enums, is_optional=False):
             return
         else:
             raise ValueError("Value cannot be None for non-optional type")
-    
-    if type_def.get('builtIn') == 'string':
+
+    if type_def.get("builtIn") == "string":
         validate_string(value)
-    elif type_def.get('builtIn') == 'int':
+    elif type_def.get("builtIn") == "int":
         validate_int(value)
-    elif type_def.get('builtIn') == 'float':
+    elif type_def.get("builtIn") == "float":
         validate_float(value)
-    elif type_def.get('builtIn') == 'bool':
+    elif type_def.get("builtIn") == "bool":
         validate_bool(value)
-    elif type_def.get('array'):
-        element_type = type_def['array']
+    elif type_def.get("array"):
+        element_type = type_def["array"]
+
         def make_element_validator(et, als, ale):
             return lambda x: validate_type(x, et, als, ale, False)
-        validate_array(value, make_element_validator(element_type, all_structs, all_enums))
-    elif type_def.get('mapValue'):
-        value_type = type_def['mapValue']
+
+        validate_array(
+            value, make_element_validator(element_type, all_structs, all_enums)
+        )
+    elif type_def.get("mapValue"):
+        value_type = type_def["mapValue"]
+
         def make_value_validator(vt, als, ale):
             return lambda x: validate_type(x, vt, als, ale, False)
+
         validate_map(value, make_value_validator(value_type, all_structs, all_enums))
-    elif type_def.get('userDefined'):
-        user_type = type_def['userDefined']
+    elif type_def.get("userDefined"):
+        user_type = type_def["userDefined"]
         struct_def = find_struct(user_type, all_structs)
-        if not struct_def and '.' not in user_type:
+        if not struct_def and "." not in user_type:
             for qualified_key in all_structs:
-                if qualified_key.endswith('.' + user_type):
+                if qualified_key.endswith("." + user_type):
                     struct_def = all_structs[qualified_key]
                     user_type = qualified_key
                     break
@@ -132,13 +161,13 @@ def validate_type(value, type_def, all_structs, all_enums, is_optional=False):
             validate_struct(value, user_type, struct_def, all_structs, all_enums)
         else:
             enum_def = find_enum(user_type, all_enums)
-            if not enum_def and '.' not in user_type:
+            if not enum_def and "." not in user_type:
                 for qualified_key in all_enums:
-                    if qualified_key.endswith('.' + user_type):
+                    if qualified_key.endswith("." + user_type):
                         enum_def = all_enums[qualified_key]
                         break
             if enum_def:
-                allowed_values = [v['name'] for v in enum_def.get('values', [])]
+                allowed_values = [v["name"] for v in enum_def.get("values", [])]
                 validate_enum(value, user_type, allowed_values)
             else:
                 raise ValueError("Unknown user-defined type: %s" % user_type)

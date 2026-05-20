@@ -19,17 +19,18 @@ class InterfaceClientProxy(object):
 
     def _create_methodcaller(self, func_name):
         """Create a method that calls the RPC function"""
+
         def methodcaller(*params, **kwargs):
             if kwargs:
                 return self._client.call(
-                    "%s.%s" % (self._iface_name, func_name),
-                    kwargs if kwargs else None
+                    "%s.%s" % (self._iface_name, func_name), kwargs if kwargs else None
                 )
             else:
                 return self._client.call(
                     "%s.%s" % (self._iface_name, func_name),
-                    list(params) if params else None
+                    list(params) if params else None,
                 )
+
         return methodcaller
 
 
@@ -48,19 +49,18 @@ class Client(object):
 
     def _bootstrap(self):
         """Fetch IDL from server and create interface proxies"""
-        req = {
-            'jsonrpc': '2.0',
-            'method': 'pulserpc-idl',
-            'id': 'bootstrap'
-        }
+        req = {"jsonrpc": "2.0", "method": "pulserpc-idl", "id": "bootstrap"}
 
         resp = self.transport.request(req)
 
-        if 'error' in resp:
-            error = resp['error']
-            raise RuntimeError("Failed to fetch IDL from server: %s" % error.get('message', 'Unknown error'))
+        if "error" in resp:
+            error = resp["error"]
+            raise RuntimeError(
+                "Failed to fetch IDL from server: %s"
+                % error.get("message", "Unknown error")
+            )
 
-        idl_json = resp.get('result')
+        idl_json = resp.get("result")
         if not idl_json:
             raise RuntimeError("Server returned empty IDL")
 
@@ -72,7 +72,7 @@ class Client(object):
     def call(self, method, params=None, expect_response=True):
         """Make a JSON-RPC call"""
         try:
-            iface_name, func_name = method.rsplit('.', 1)
+            iface_name, func_name = method.rsplit(".", 1)
         except ValueError:
             raise ValueError("Invalid method name format: %s" % method)
 
@@ -93,28 +93,28 @@ class Client(object):
         req_id = self._request_id if expect_response else None
 
         req = {
-            'jsonrpc': '2.0',
-            'method': method,
+            "jsonrpc": "2.0",
+            "method": method,
         }
         if params is not None:
-            req['params'] = params
+            req["params"] = params
         if req_id is not None:
-            req['id'] = req_id
+            req["id"] = req_id
 
         response = self.transport.request(req)
 
         if not expect_response:
             return None
 
-        if 'error' in response:
-            error = response['error']
+        if "error" in response:
+            error = response["error"]
             raise RPCError(
-                code=error.get('code', -32603),
-                message=error.get('message', 'Unknown error'),
-                data=error.get('data')
+                code=error.get("code", -32603),
+                message=error.get("message", "Unknown error"),
+                data=error.get("data"),
             )
 
-        result = response.get('result')
+        result = response.get("result")
 
         if self.validate_response and self.contract and result is not None:
             try:
@@ -141,11 +141,11 @@ class Client(object):
         if not func:
             return None
 
-        param_defs = func.get('parameters', [])
+        param_defs = func.get("parameters", [])
 
         positional_params = []
         for param_def in param_defs:
-            param_name = param_def['name']
+            param_name = param_def["name"]
             positional_params.append(named_params.get(param_name))
 
         return positional_params

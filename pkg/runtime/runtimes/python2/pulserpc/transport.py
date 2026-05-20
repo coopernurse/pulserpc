@@ -6,7 +6,7 @@ try:
     from urllib.request import Request, urlopen
     from urllib.error import HTTPError
 except ImportError:
-    _u2 = __import__('urllib2')
+    _u2 = __import__("urllib2")
     Request = _u2.Request
     urlopen = _u2.urlopen
     HTTPError = _u2.HTTPError
@@ -31,23 +31,23 @@ class HttpTransport(Transport):
 
     def request(self, req):
         """Send request via HTTP POST"""
-        body = json.dumps(req).encode('utf-8')
+        body = json.dumps(req).encode("utf-8")
 
-        headers = {'Content-Type': 'application/json'}
+        headers = {"Content-Type": "application/json"}
         headers.update(self.headers)
 
         http_req = Request(self.url, data=body, headers=headers)
 
         try:
             response = urlopen(http_req, timeout=self.timeout)
-            response_body = response.read().decode('utf-8')
+            response_body = response.read().decode("utf-8")
 
             if not response_body:
                 return {}
 
             return json.loads(response_body)
         except HTTPError as e:
-            response_body = e.read().decode('utf-8')
+            response_body = e.read().decode("utf-8")
             if response_body:
                 return json.loads(response_body)
             return {}
@@ -64,6 +64,6 @@ class InProcTransport(Transport):
 
     def request(self, req):
         """Send request directly to Server instance"""
-        ctx = req.get('ctx')
+        ctx = req.get("ctx")
         response = self.server.call(req, ctx)
         return response if response is not None else {}
