@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,9 +14,36 @@ import (
 	"github.com/coopernurse/pulserpc/pkg/runtime"
 )
 
-// TSClientServer is a plugin that generates TypeScript HTTP server and client code from IDL
+// stderrWriter is the destination for module-style resolution warnings.
+// It is a package-level variable so tests can capture and assert on the
+// emitted warnings by swapping in a buffer.
+var stderrWriter io.Writer = os.Stderr
+
+// tsWalkUpMaxDepth caps how far resolveEffectiveModuleStyle walks up the
+// directory tree looking for tsconfig.json and package.json. The plan's
+// invariants require that the walk never goes past 10 ancestors and never
+// outside the outputDir's ancestors.
+const tsWalkUpMaxDepth = 10
+
+// TSClientServer is a plugin that generates TypeScript HTTP server and client code from IDL.
+//
+// Three module styles are supported (see the -ts-module flag and the
+// resolveModuleStyle helper):
+//   - "esm-node" (default) — Node-flavored ESM with explicit ".js" import
+//     suffixes and a runtime tree at pkg/runtime/runtimes/ts-node/.
+//   - "esm-bundler" — ESM without ".js" import suffixes, suitable for
+//     Vite/webpack/Next; uses the same runtime tree as esm-node, with the
+//     generator applying a post-process transform to strip the suffix.
+//   - "cjs" — CommonJS, using pkg/runtime/runtimes/ts-cjs/ and a transform
+//     that converts ESM imports/exports to require/module.exports.
 type TSClientServer struct {
-	packageBase string
+	packageBase    string
+	moduleStyle    string
+	genPackage     bool
+	genTSConfig    bool
+	noDetect       bool
+	packageJSONType string
+	tsconfigModule  string
 }
 
 // NewTSClientServer creates a new TSClientServer plugin instance
@@ -33,6 +61,276 @@ func (p *TSClientServer) RegisterFlags(fs *flag.FlagSet) {
 	if fs.Lookup("package") == nil {
 		fs.String("package", "", "Base module path for generated imports (e.g., @myapp/lib/rpc). Creates single directory level under -dir.")
 	}
+	if fs.Lookup("ts-module") == nil {
+		fs.String("ts-module", "esm-node", "Module style for generated TypeScript code: esm-node (default), esm-bundler, or cjs. Aliases: esm, node, bundler, commonjs. Precedence when unset: tsconfig.json module > package.json type > esm-node.")
+	}
+	if fs.Lookup("ts-gen-package-json") == nil {
+		fs.Bool("ts-gen-package-json", false, "Generate a package.json at -dir matching the resolved module style (errors if one already exists).")
+	}
+	if fs.Lookup("ts-gen-tsconfig") == nil {
+		fs.Bool("ts-gen-tsconfig", false, "Generate a tsconfig.json at -dir matching the resolved module style (errors if one already exists).")
+	}
+	if fs.Lookup("ts-no-detect") == nil {
+		fs.Bool("ts-no-detect", false, "Disable auto-detection of module style from tsconfig.json/package.json. With this flag set, the default is always esm-node unless -ts-module is also set.")
+	}
+}
+
+// tsImportPath returns the final import-path string for a relative target,
+// appending the appropriate extension for the given module style. This is
+// the single source of truth for the .js-suffix decision in generated
+// TypeScript files.
+//
+//   - "esm-node" / "esm-bundler": returns "<target>.js". The bundler
+//     post-process transform in step 7 strips the .js suffix, but the
+//     generator still emits it here so default-style output is byte-equal
+//     across both ESM variants.
+//   - "cjs": returns "<target>" (CommonJS resolves extensions implicitly).
+//   - any other value: treated as ESM (defensive default).
+//
+// Callers pass a bare relative path with no extension
+// (e.g., "./pulserpc/rpc", "../common/types", "./server").
+func tsImportPath(moduleStyle, target string) string {
+	if moduleStyle == "cjs" {
+		return target
+	}
+	return target + ".js"
+}
+
+// importPath is the method form of tsImportPath, used by call sites that
+// already hold a *TSClientServer receiver.
+func (p *TSClientServer) importPath(target string) string {
+	return tsImportPath(p.moduleStyle, target)
+}
+
+// resolveModuleStyle normalizes a user-supplied -ts-module value to one of
+// the canonical names: "esm-node", "esm-bundler", or "cjs". Recognized
+// aliases: "" → "esm-node", "esm" → "esm-node", "node" → "esm-node",
+// "bundler" → "esm-bundler", "commonjs" → "cjs". Unknown values return an
+// error that lists the valid values and aliases.
+func (p *TSClientServer) resolveModuleStyle(raw string) (string, error) {
+	switch raw {
+	case "", "esm-node", "node", "esm":
+		return "esm-node", nil
+	case "esm-bundler", "bundler":
+		return "esm-bundler", nil
+	case "cjs", "commonjs":
+		return "cjs", nil
+	default:
+		return "", fmt.Errorf("invalid module style %q (valid: esm-node, esm-bundler, cjs; aliases: esm, node, bundler, commonjs)", raw)
+	}
+}
+
+// tsconfigModuleToStyle maps a tsconfig.json compilerOptions.module value to
+// the canonical module style. Returns "" if the value is not recognized
+// (caller should fall through to package.json detection).
+func tsconfigModuleToStyle(module string) string {
+	switch module {
+	case "Node16", "NodeNext", "ES2022", "ES2020", "ESNext":
+		return "esm-node"
+	case "Bundler", "Preserve":
+		return "esm-bundler"
+	case "CommonJS", "Node10":
+		return "cjs"
+	default:
+		return ""
+	}
+}
+
+// packageJSONTypeToStyle maps a package.json "type" field to the canonical
+// module style. The empty string and "module" both map to esm-node; "commonjs"
+// maps to cjs. Unknown values are rejected by the caller (treated as no
+// detection result).
+func packageJSONTypeToStyle(pkgType string) (string, bool) {
+	switch pkgType {
+	case "", "module":
+		return "esm-node", true
+	case "commonjs":
+		return "cjs", true
+	default:
+		return "", false
+	}
+}
+
+// walkUpDirs walks up from start, returning each directory from start
+// up to (and including) the filesystem root, but no more than maxDepth
+// entries. Returned paths are cleaned (filepath.Clean). The first entry is
+// always start. The function does not follow symlinks; it just walks the
+// lexical parent chain.
+func walkUpDirs(start string, maxDepth int) []string {
+	dirs := make([]string, 0, maxDepth+1)
+	cur := start
+	for i := 0; i <= maxDepth; i++ {
+		dirs = append(dirs, filepath.Clean(cur))
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		cur = parent
+	}
+	return dirs
+}
+
+// readTsconfigModule walks up from outputDir looking for tsconfig.json. If
+// found, it parses just the compilerOptions.module field and returns it.
+// Returns "" (not an error) when no tsconfig.json is found or it has no
+// module field. Errors are returned only for malformed JSON in a found file.
+func readTsconfigModule(outputDir string) (string, string, error) {
+	for _, dir := range walkUpDirs(outputDir, tsWalkUpMaxDepth) {
+		path := filepath.Join(dir, "tsconfig.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			CompilerOptions struct {
+				Module            string `json:"module"`
+				ModuleResolution  string `json:"moduleResolution"`
+			} `json:"compilerOptions"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return "", path, fmt.Errorf("failed to parse %s: %w", path, err)
+		}
+		// Prefer compilerOptions.moduleResolution="Bundler" hint, then
+		// module. This catches the "module=ESNext with moduleResolution=Bundler"
+		// pattern from the plan's mapping table.
+		module := doc.CompilerOptions.Module
+		if doc.CompilerOptions.ModuleResolution == "Bundler" {
+			module = "Bundler"
+		}
+		return module, path, nil
+	}
+	return "", "", nil
+}
+
+// readPackageJSONType walks up from outputDir looking for package.json. If
+// found, returns the "type" field. Returns "" when no package.json is found.
+// Errors are returned only for malformed JSON in a found file.
+func readPackageJSONType(outputDir string) (string, string, error) {
+	for _, dir := range walkUpDirs(outputDir, tsWalkUpMaxDepth) {
+		path := filepath.Join(dir, "package.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return "", path, fmt.Errorf("failed to parse %s: %w", path, err)
+		}
+		return doc.Type, path, nil
+	}
+	return "", "", nil
+}
+
+// resolveEffectiveModuleStyle determines the effective module style for this
+// generation run, following the precedence defined in step 5 of the plan:
+//   1. Explicit -ts-module flag (canonicalized via resolveModuleStyle).
+//   2. Detected tsconfig.json compilerOptions.module.
+//   3. Detected package.json "type".
+//   4. Default "esm-node".
+//
+// The -ts-no-detect flag disables steps 2 and 3 entirely.
+//
+// It emits a one-line "warning:" to stderrWriter when the explicit flag
+// disagrees with a detected source, or when tsconfig.json and package.json
+// disagree with each other. Warnings are advisory and do not return errors.
+//
+// The resolved canonical style is stored in p.moduleStyle. p.packageJSONType
+// and p.tsconfigModule are populated for diagnostics.
+func (p *TSClientServer) resolveEffectiveModuleStyle(fs *flag.FlagSet, outputDir string) error {
+	// 1. Read explicit flag.
+	var explicitRaw string
+	if f := fs.Lookup("ts-module"); f != nil {
+		explicitRaw = f.Value.String()
+	}
+	explicit, err := p.resolveModuleStyle(explicitRaw)
+	if err != nil {
+		return err
+	}
+
+	// Read the no-detect flag.
+	p.noDetect = false
+	if f := fs.Lookup("ts-no-detect"); f != nil && f.Value.String() == "true" {
+		p.noDetect = true
+	}
+
+	// 2 & 3. Auto-detect (unless disabled).
+	p.tsconfigModule = ""
+	p.packageJSONType = ""
+	var tsconfigStyle, packageStyle string
+	var tsconfigPath, packagePath string
+
+	if !p.noDetect && outputDir != "" {
+		module, path, err := readTsconfigModule(outputDir)
+		if err != nil {
+			return err
+		}
+		if path != "" {
+			p.tsconfigModule = module
+			tsconfigPath = path
+			tsconfigStyle = tsconfigModuleToStyle(module)
+		}
+
+		pkgType, path, err := readPackageJSONType(outputDir)
+		if err != nil {
+			return err
+		}
+		if path != "" {
+			p.packageJSONType = pkgType
+			packagePath = path
+			if style, ok := packageJSONTypeToStyle(pkgType); ok {
+				packageStyle = style
+			}
+		}
+	}
+
+	// 4. Pick the effective style.
+	resolved := explicit
+	var detectedSource, detectedValue string
+	switch {
+	case explicit != "" && explicit != "esm-node":
+		// Explicit non-default wins, but warn if it disagrees with detection.
+		if tsconfigStyle != "" && tsconfigStyle != explicit {
+			detectedSource, detectedValue = "tsconfig.json module", tsconfigPath
+		} else if packageStyle != "" && packageStyle != explicit {
+			detectedSource, detectedValue = "package.json type", packagePath
+		}
+	case explicit == "esm-node" && (tsconfigStyle != "" || packageStyle != ""):
+		// No explicit override (or it's the default) — use the highest-precedence detection.
+		if tsconfigStyle != "" {
+			resolved = tsconfigStyle
+		} else if packageStyle != "" {
+			resolved = packageStyle
+		}
+	}
+
+	// Warn when tsconfig and package.json disagree with each other.
+	if tsconfigStyle != "" && packageStyle != "" && tsconfigStyle != packageStyle {
+		fmt.Fprintf(stderrWriter,
+			"warning: tsconfig.json module=%s disagrees with package.json type=%s; using tsconfig.json module=%s\n",
+			p.tsconfigModule, p.packageJSONType, p.tsconfigModule)
+	}
+
+	// Warn when explicit disagrees with detection.
+	if detectedSource != "" {
+		fmt.Fprintf(stderrWriter,
+			"warning: -ts-module=%s overrides detected %s=%s at %s\n",
+			explicit, detectedSource, detectedValue, detectedPath(detectedValue))
+	}
+
+	p.moduleStyle = resolved
+	return nil
+}
+
+// detectedPath returns the basename of a detected source path for use in
+// warning messages. It is split out so future iterations can swap in a
+// different format without changing the warning text logic.
+func detectedPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	return p
 }
 
 // Generate generates TypeScript HTTP server and client code from the parsed IDL
@@ -57,6 +355,12 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		packagePrefix = packageFlag.Value.String()
 	}
 	p.packageBase = packagePrefix
+
+	// Resolve the effective module style (explicit flag + auto-detection).
+	// Must run before any code-emit or runtime-copy code reads p.moduleStyle.
+	if err := p.resolveEffectiveModuleStyle(fs, outputDir); err != nil {
+		return fmt.Errorf("failed to resolve module style: %w", err)
+	}
 
 	// Build type registries
 	structMap := make(map[string]*parser.Struct)
@@ -153,7 +457,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			}
 
 			// Generate types.ts for this namespace
-			typesCode := generateTypesTsForNamespace(nsTypes, ns, nsStructMap, nsEnumMap, true, namespaceMap)
+			typesCode := generateTypesTsForNamespace(nsTypes, ns, nsStructMap, nsEnumMap, true, namespaceMap, p.moduleStyle)
 			typesPath := filepath.Join(nsDir, "types.ts")
 			if err := os.WriteFile(typesPath, []byte(typesCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s/types.ts: %w", ns, err)
@@ -161,7 +465,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			PrintFileCreated(typesPath, fs)
 
 			// Generate server.ts for this namespace
-			serverCode := generateServerTsForNamespace(nsTypes, nsStructMap, nsEnumMap, nsInterfaceMap, packagePrefix, true, namespaceMap)
+			serverCode := generateServerTsForNamespace(nsTypes, nsStructMap, nsEnumMap, nsInterfaceMap, packagePrefix, true, namespaceMap, p.moduleStyle)
 			serverPath := filepath.Join(nsDir, "server.ts")
 			if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s/server.ts: %w", ns, err)
@@ -169,7 +473,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			PrintFileCreated(serverPath, fs)
 
 			// Generate client.ts for this namespace
-			clientCode := generateClientTsForNamespace(nsTypes, nsStructMap, nsEnumMap, packagePrefix, true, namespaceMap)
+			clientCode := generateClientTsForNamespace(nsTypes, nsStructMap, nsEnumMap, packagePrefix, true, namespaceMap, p.moduleStyle)
 			clientPath := filepath.Join(nsDir, "client.ts")
 			if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
 				return fmt.Errorf("failed to write %s/client.ts: %w", ns, err)
@@ -177,7 +481,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			PrintFileCreated(clientPath, fs)
 
 			// Generate index.ts for this namespace (re-exports from types, server, client)
-			if err := generateNamespaceIndexTs(paths, ns); err != nil {
+			if err := generateNamespaceIndexTs(paths, ns, p.moduleStyle); err != nil {
 				return fmt.Errorf("failed to write %s/index.ts: %w", ns, err)
 			}
 			indexPath := filepath.Join(nsDir, "index.ts")
@@ -192,14 +496,14 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		}
 		PrintFileCreated(typesPath, fs)
 
-		serverCode := generateServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap)
+		serverCode := generateServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, p.moduleStyle)
 		serverPath := filepath.Join(outputDir, "server.ts")
 		if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
 			return fmt.Errorf("failed to write server.ts: %w", err)
 		}
 		PrintFileCreated(serverPath, fs)
 
-		clientCode := generateClientTs(idl, structMap, enumMap, packagePrefix, namespaceMap)
+		clientCode := generateClientTs(idl, structMap, enumMap, packagePrefix, namespaceMap, p.moduleStyle)
 		clientPath := filepath.Join(outputDir, "client.ts")
 		if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
 			return fmt.Errorf("failed to write client.ts: %w", err)
@@ -220,7 +524,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		}
 
 		// Generate test_server.ts
-		testServerCode := generateTestServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, entryPointNs)
+		testServerCode := generateTestServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, entryPointNs, p.moduleStyle)
 		testServerPath := filepath.Join(testDir, "test_server.ts")
 		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_server.ts: %w", err)
@@ -228,7 +532,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		PrintFileCreated(testServerPath, fs)
 
 		// Generate test_client.ts
-		testClientCode := generateTestClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, entryPointNs)
+		testClientCode := generateTestClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, entryPointNs, p.moduleStyle)
 		testClientPath := filepath.Join(testDir, "test_client.ts")
 		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
 			return fmt.Errorf("failed to write test_client.ts: %w", err)
@@ -239,15 +543,21 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	return nil
 }
 
-// copyRuntimeFiles copies the TypeScript runtime library files to the output directory
-// Uses embedded runtime files from the binary
+// copyRuntimeFiles copies the TypeScript runtime library files to the output directory.
+// The runtime tree is selected from p.moduleStyle: "esm-node" and "esm-bundler"
+// share the ts-node tree (and the bundler transform in step 7 will rewrite
+// imports in the written files); "cjs" pulls from the ts-cjs tree.
 func (p *TSClientServer) copyRuntimeFiles(paths TSNamespacePaths, silent bool) error {
 	runtimeDir := paths.ResolveRuntimeDir()
 	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
 		return fmt.Errorf("failed to create runtime directory: %w", err)
 	}
 
-	files, err := runtime.GetRuntimeFiles("ts")
+	style := p.moduleStyle
+	if style == "" {
+		style = "esm-node"
+	}
+	files, err := runtime.GetRuntimeFilesForStyle("ts", style)
 	if err != nil {
 		return err
 	}
@@ -473,14 +783,14 @@ func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.
 // has been removed as no existing test or quickstart used it with a non-empty value.
 
 // generateServerTs generates the server.ts file with abstract interface classes only
-func generateServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes) string {
+func generateServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, moduleStyle string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
 	sb.WriteString("// Abstract service classes\n")
 	sb.WriteString("// Implement these classes to create your service\n\n")
-	sb.WriteString("import { RPCError } from './pulserpc/rpc.js';\n")
-	sb.WriteString("import * as types from './types.js';\n\n")
+	fmt.Fprintf(&sb, "import { RPCError } from '%s';\n", tsImportPath(moduleStyle, "./pulserpc/rpc"))
+	fmt.Fprintf(&sb, "import * as types from '%s';\n\n", tsImportPath(moduleStyle, "./types"))
 
 	// Generate interface stub abstract classes
 	ifaceNames := make([]string, 0, len(idl.Interfaces))
@@ -763,7 +1073,7 @@ func generateTypesTs(structMap map[string]*parser.Struct, enumMap map[string]*pa
 // generateTypesTsForNamespace generates a types.ts file with TypeScript interfaces for structs and enums
 // belonging to a single namespace. Used in multi-namespace mode.
 // When inNamespaceSubdir is true, cross-namespace type references use '../{namespace}' imports.
-func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes) string {
+func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes, moduleStyle string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
@@ -781,7 +1091,7 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, stru
 		// Sort for deterministic output
 		sort.Strings(importedNs)
 		for _, ns := range importedNs {
-			importPath := tsCrossNamespaceImportPath("", ns)
+			importPath := tsImportPath(moduleStyle, tsCrossNamespaceImportPath("", ns))
 			fmt.Fprintf(&sb, "import * as %s from '%s';\n", ns, importPath)
 		}
 		sb.WriteString("\n")
@@ -866,15 +1176,15 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, stru
 
 // generateServerTsForNamespace generates the server.ts file with abstract interface classes
 // for a single namespace. Used in multi-namespace mode.
-func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes) string {
+func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes, moduleStyle string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
 	sb.WriteString("// Abstract service classes\n")
 	sb.WriteString("// Implement these classes to create your service\n\n")
 	runtimeImport := tsRuntimeImportPath(inNamespaceSubdir)
-	sb.WriteString(fmt.Sprintf("import { RPCError } from '%s/rpc.js';\n", runtimeImport))
-	sb.WriteString("import * as types from './types.js';\n\n")
+	fmt.Fprintf(&sb, "import { RPCError } from '%s';\n", tsImportPath(moduleStyle, runtimeImport+"/rpc"))
+	fmt.Fprintf(&sb, "import * as types from '%s';\n\n", tsImportPath(moduleStyle, "./types"))
 
 	currentNs := ""
 	for ns := range allNamespaceMap {
@@ -886,7 +1196,7 @@ func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 
 	crossNsImports := collectCrossNamespaceImports(nsTypes, currentNs, allNamespaceMap)
 	for crossNs := range crossNsImports {
-		sb.WriteString(fmt.Sprintf("import * as %s from '../%s/types.js';\n", crossNs, crossNs))
+		fmt.Fprintf(&sb, "import * as %s from '%s';\n", crossNs, tsImportPath(moduleStyle, "../"+crossNs+"/types"))
 	}
 	if len(crossNsImports) > 0 {
 		sb.WriteString("\n")
@@ -915,7 +1225,7 @@ func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 
 // generateClientTsForNamespace generates the client.ts file with static typed client classes
 // for a single namespace. Used in multi-namespace mode.
-func generateClientTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ string, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes) string {
+func generateClientTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ string, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes, moduleStyle string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
@@ -923,9 +1233,9 @@ func generateClientTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 	sb.WriteString("// Use these for compile-time type safety\n\n")
 
 	runtimeImport := tsRuntimeImportPath(inNamespaceSubdir)
-	fmt.Fprintf(&sb, "import { Transport, HttpTransport } from '%s/transport.js';\n", runtimeImport)
-	fmt.Fprintf(&sb, "import { RPCError } from '%s/rpc.js';\n", runtimeImport)
-	sb.WriteString("import * as types from './types.js';\n\n")
+	fmt.Fprintf(&sb, "import { Transport, HttpTransport } from '%s';\n", tsImportPath(moduleStyle, runtimeImport+"/transport"))
+	fmt.Fprintf(&sb, "import { RPCError } from '%s';\n", tsImportPath(moduleStyle, runtimeImport+"/rpc"))
+	fmt.Fprintf(&sb, "import * as types from '%s';\n\n", tsImportPath(moduleStyle, "./types"))
 
 	currentNs := ""
 	for ns := range allNamespaceMap {
@@ -937,7 +1247,7 @@ func generateClientTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 
 	crossNsImports := collectCrossNamespaceImports(nsTypes, currentNs, allNamespaceMap)
 	for crossNs := range crossNsImports {
-		sb.WriteString(fmt.Sprintf("import * as %s from '../%s/types.js';\n", crossNs, crossNs))
+		fmt.Fprintf(&sb, "import * as %s from '%s';\n", crossNs, tsImportPath(moduleStyle, "../"+crossNs+"/types"))
 	}
 	if len(crossNsImports) > 0 {
 		sb.WriteString("\n")
@@ -967,16 +1277,16 @@ func generateClientTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 }
 
 // generateClientTs generates the client.ts file with static typed client classes
-func generateClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ string, _ map[string]*NamespaceTypes) string {
+func generateClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ string, _ map[string]*NamespaceTypes, moduleStyle string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
 	sb.WriteString("// Static typed client stubs for each interface\n")
 	sb.WriteString("// Use these for compile-time type safety\n\n")
 
-	sb.WriteString("import { Transport, HttpTransport } from './pulserpc/transport.js';\n")
-	sb.WriteString("import { RPCError } from './pulserpc/rpc.js';\n")
-	sb.WriteString("import * as types from './types.js';\n\n")
+	fmt.Fprintf(&sb, "import { Transport, HttpTransport } from '%s';\n", tsImportPath(moduleStyle, "./pulserpc/transport"))
+	fmt.Fprintf(&sb, "import { RPCError } from '%s';\n", tsImportPath(moduleStyle, "./pulserpc/rpc"))
+	fmt.Fprintf(&sb, "import * as types from '%s';\n\n", tsImportPath(moduleStyle, "./types"))
 
 	sb.WriteString("export { Transport, HttpTransport };\n\n")
 
@@ -1088,10 +1398,16 @@ func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, struct
 }
 
 // generateNamespaceIndexTs writes an index.ts file to the namespace subdirectory
-// that re-exports from types.ts, server.ts, and client.ts.
-func generateNamespaceIndexTs(paths TSNamespacePaths, namespace string) error {
+// that re-exports from types.ts, server.ts, and client.ts. The import suffix
+// is style-aware: ".js" for ESM variants, none for CJS.
+func generateNamespaceIndexTs(paths TSNamespacePaths, namespace string, moduleStyle string) error {
 	nsDir := paths.ResolveNamespaceDir(namespace)
-	indexContent := "export * from './types.js';\nexport * from './server.js';\nexport * from './client.js';\n"
+	indexContent := fmt.Sprintf(
+		"export * from '%s';\nexport * from '%s';\nexport * from '%s';\n",
+		tsImportPath(moduleStyle, "./types"),
+		tsImportPath(moduleStyle, "./server"),
+		tsImportPath(moduleStyle, "./client"),
+	)
 	indexPath := filepath.Join(nsDir, "index.ts")
 	if err := os.WriteFile(indexPath, []byte(indexContent), 0644); err != nil {
 		return fmt.Errorf("failed to write %s/index.ts: %w", namespace, err)
@@ -1102,7 +1418,7 @@ func generateNamespaceIndexTs(paths TSNamespacePaths, namespace string) error {
 // generateTestServerTs generates test_server.ts with concrete implementations of all interfaces
 // When entryPointNs is provided, the file will be placed in that namespace subdirectory,
 // so imports are adjusted accordingly.
-func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, entryPointNs string) string {
+func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, entryPointNs string, moduleStyle string) string {
 	var sb strings.Builder
 
 	// Determine if we're generating in a namespace subdirectory
@@ -1123,16 +1439,16 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 		if ns != "" {
 			if inNsSubdir && ns == entryPointNs {
 				// Interface is in the same namespace as where we're placing the test file
-				fmt.Fprintf(&sb, "import { %s } from './server';\n", iface.Name)
+				fmt.Fprintf(&sb, "import { %s } from '%s';\n", iface.Name, tsImportPath(moduleStyle, "./server"))
 			} else if inNsSubdir {
 				// Interface is in a different namespace - go up and into that namespace
-				fmt.Fprintf(&sb, "import { %s } from '../%s/server';\n", iface.Name, ns)
+				fmt.Fprintf(&sb, "import { %s } from '%s';\n", iface.Name, tsImportPath(moduleStyle, "../"+ns+"/server"))
 			} else {
 				// File is at root - standard path
-				fmt.Fprintf(&sb, "import { %s } from './%s/server';\n", iface.Name, ns)
+				fmt.Fprintf(&sb, "import { %s } from '%s';\n", iface.Name, tsImportPath(moduleStyle, "./"+ns+"/server"))
 			}
 		} else {
-			fmt.Fprintf(&sb, "import { %s } from './server';\n", iface.Name)
+			fmt.Fprintf(&sb, "import { %s } from '%s';\n", iface.Name, tsImportPath(moduleStyle, "./server"))
 		}
 	}
 	sb.WriteString("\n")
@@ -1429,7 +1745,7 @@ func writeDefaultTestValueTs(sb *strings.Builder, t *parser.Type, structMap map[
 // generateTestClientTs generates test_client.ts that exercises all client methods
 // When entryPointNs is provided, the file will be placed in that namespace subdirectory,
 // so imports are adjusted accordingly.
-func generateTestClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, entryPointNs string) string {
+func generateTestClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, entryPointNs string, moduleStyle string) string {
 	var sb strings.Builder
 
 	// Determine if we're generating in a namespace subdirectory

@@ -73,11 +73,13 @@ func tsRuntimeImportPath(inNamespaceSubdir bool) string {
 	return "./pulserpc"
 }
 
-// tsCrossNamespaceImportPath returns the relative import path from one namespace to another.
-// Both fromNamespace and toNamespace are namespace names (e.g., "book", "common").
-// Returns "../{toNamespace}/types.js" for use inside a namespace subdirectory.
+// tsCrossNamespaceImportPath returns the bare relative import path from one
+// namespace to another. Both fromNamespace and toNamespace are namespace
+// names (e.g., "book", "common"). Returns "../{toNamespace}/types" without
+// any extension. Callers should apply the TSClientServer.importPath helper
+// to add the correct suffix for the resolved module style.
 func tsCrossNamespaceImportPath(_ string, toNamespace string) string {
-	return "../" + toNamespace + "/types.js"
+	return "../" + toNamespace + "/types"
 }
 
 // ensureTsNamespaceDirs creates the output directories for all given namespaces.

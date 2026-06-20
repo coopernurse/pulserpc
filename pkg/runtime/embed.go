@@ -17,10 +17,15 @@ import (
 //go:embed all:runtimes/python/pulserpc
 var pythonRuntimeFiles embed.FS
 
-// Embed all TypeScript runtime files
+// Embed all TypeScript runtime files (Node ESM variant)
 //
-//go:embed all:runtimes/ts/pulserpc
-var tsRuntimeFiles embed.FS
+//go:embed all:runtimes/ts-node/pulserpc
+var tsNodeRuntimeFiles embed.FS
+
+// Embed all TypeScript runtime files (CommonJS variant)
+//
+//go:embed all:runtimes/ts-cjs/pulserpc
+var tsCjsRuntimeFiles embed.FS
 
 // Embed all C# runtime files
 //
@@ -42,11 +47,15 @@ var goRuntimeFiles embed.FS
 //go:embed all:runtimes/python2/pulserpc
 var python2RuntimeFiles embed.FS
 
-// runtimeMap maps language names to their embedded file systems
+// runtimeMap maps language names to their embedded file systems.
+// "ts" and "ts-node" both point at the Node ESM tree; "ts-cjs" points at the
+// CommonJS tree. Style selection happens in GetRuntimeFilesForStyle.
 var runtimeMap = map[string]embed.FS{
 	"python":  pythonRuntimeFiles,
 	"python2": python2RuntimeFiles,
-	"ts":      tsRuntimeFiles,
+	"ts":      tsNodeRuntimeFiles,
+	"ts-node": tsNodeRuntimeFiles,
+	"ts-cjs":  tsCjsRuntimeFiles,
 	"csharp":  csharpRuntimeFiles,
 	"java":    javaRuntimeFiles,
 	"go":      goRuntimeFiles,
@@ -61,22 +70,55 @@ func ListRuntimes() []string {
 	return runtimes
 }
 
-// GetRuntimeFiles returns a map of filename -> file contents for the specified language runtime
+// GetRuntimeFiles returns a map of filename -> file contents for the specified language runtime.
+// It is equivalent to GetRuntimeFilesForStyle(lang, "") and is kept for backwards
+// compatibility with callers that don't care about TypeScript module style.
 func GetRuntimeFiles(lang string) (map[string][]byte, error) {
-	fs, ok := runtimeMap[lang]
+	return GetRuntimeFilesForStyle(lang, "")
+}
+
+// GetRuntimeFilesForStyle returns runtime files for a given language and module style.
+// For non-TypeScript languages, style must be empty.
+//
+// For lang == "ts", style selects between the runtime trees:
+//   - "" (default), "esm-node", "node", "esm" → ts-node (Node ESM) tree
+//   - "esm-bundler", "bundler"               → ts-node tree; caller must apply
+//                                              the bundler post-process transform
+//                                              to strip the ".js" import suffix
+//   - "cjs", "commonjs"                       → ts-cjs (CommonJS) tree
+//
+// Unknown styles produce an error.
+func GetRuntimeFilesForStyle(lang, style string) (map[string][]byte, error) {
+	effectiveLang := lang
+	if lang == "ts" {
+		switch style {
+		case "", "esm-node", "node", "esm":
+			effectiveLang = "ts-node"
+		case "esm-bundler", "bundler":
+			effectiveLang = "ts-node"
+		case "cjs", "commonjs":
+			effectiveLang = "ts-cjs"
+		default:
+			return nil, fmt.Errorf("invalid module style %q for language %q (valid: esm-node, esm-bundler, cjs; aliases: esm, node, bundler, commonjs)", style, lang)
+		}
+	} else if style != "" {
+		return nil, fmt.Errorf("module style %q is not supported for language %q", style, lang)
+	}
+
+	fs, ok := runtimeMap[effectiveLang]
 	if !ok {
-		return nil, fmt.Errorf("runtime for language %q not found (available: %v)", lang, ListRuntimes())
+		return nil, fmt.Errorf("runtime for language %q not found (available: %v)", effectiveLang, ListRuntimes())
 	}
 
 	files := make(map[string][]byte)
 
 	// The embed path includes the directory structure, so we need to walk it
 	// For Python, files are at: runtimes/python/pulserpc/*.py
-	basePath := getRuntimeEmbedPath(lang)
+	basePath := getRuntimeEmbedPath(effectiveLang)
 
 	entries, err := fs.ReadDir(basePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read embedded runtime directory for %s: %w", lang, err)
+		return nil, fmt.Errorf("failed to read embedded runtime directory for %s: %w", effectiveLang, err)
 	}
 
 	for _, entry := range entries {
@@ -85,19 +127,19 @@ func GetRuntimeFiles(lang string) (map[string][]byte, error) {
 		}
 
 		// Filter files by language-specific extension
-		if (lang == "python" || lang == "python2") && !strings.HasSuffix(entry.Name(), ".py") {
+		if (effectiveLang == "python" || effectiveLang == "python2") && !strings.HasSuffix(entry.Name(), ".py") {
 			continue
 		}
-		if lang == "ts" && !strings.HasSuffix(entry.Name(), ".ts") {
+		if (effectiveLang == "ts" || effectiveLang == "ts-node" || effectiveLang == "ts-cjs") && !strings.HasSuffix(entry.Name(), ".ts") {
 			continue
 		}
-		if lang == "csharp" && !strings.HasSuffix(entry.Name(), ".cs") {
+		if effectiveLang == "csharp" && !strings.HasSuffix(entry.Name(), ".cs") {
 			continue
 		}
-		if lang == "java" && !strings.HasSuffix(entry.Name(), ".java") {
+		if effectiveLang == "java" && !strings.HasSuffix(entry.Name(), ".java") {
 			continue
 		}
-		if lang == "go" && !strings.HasSuffix(entry.Name(), ".go") {
+		if effectiveLang == "go" && !strings.HasSuffix(entry.Name(), ".go") {
 			continue
 		}
 
@@ -168,7 +210,7 @@ func IsPythonTestFile(filename string) bool {
 // This is the directory name where runtime files are placed in the output
 func getRuntimePackageName(lang string) string {
 	switch lang {
-	case "go", "python", "python2", "ts":
+	case "go", "python", "python2", "ts", "ts-node", "ts-cjs":
 		return "pulserpc"
 	case "java":
 		return "com/bitmechanic/pulserpc"
@@ -180,11 +222,16 @@ func getRuntimePackageName(lang string) string {
 }
 
 // getRuntimeEmbedPath returns the embed filesystem path for the runtime library
-// This is the path used in //go:embed directives and must match the actual directory structure
+// This is the path used in //go:embed directives and must match the actual directory structure.
+// "ts" and "ts-node" share the ts-node tree; "ts-cjs" lives in its own tree (wired up in step 3).
 func getRuntimeEmbedPath(lang string) string {
 	switch lang {
-	case "go", "python", "python2", "ts":
+	case "go", "python", "python2":
 		return fmt.Sprintf("runtimes/%s/pulserpc", lang)
+	case "ts", "ts-node":
+		return "runtimes/ts-node/pulserpc"
+	case "ts-cjs":
+		return "runtimes/ts-cjs/pulserpc"
 	case "java":
 		return "runtimes/java/com/bitmechanic/pulserpc"
 	case "csharp":

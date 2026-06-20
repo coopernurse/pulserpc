@@ -1,0 +1,14 @@
+{
+  "name": "pulserpc-ts-cjs-runtime",
+  "version": "1.0.0",
+  "description": "TypeScript CommonJS runtime for PulseRPC (hand-converted; does not go through the post-process transform)",
+  "type": "commonjs",
+  "scripts": {
+    "test": "make test"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.0.0"
+  }
+}
