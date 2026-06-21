@@ -61,10 +61,23 @@ var runtimeMap = map[string]embed.FS{
 	"go":      goRuntimeFiles,
 }
 
-// ListRuntimes returns a list of all available embedded runtimes
+// ListRuntimes returns a list of all available embedded runtime languages.
+// Deprecated aliases (e.g. "ts" in addition to "ts-node") are excluded
+// from the list so callers see only canonical names.
 func ListRuntimes() []string {
-	runtimes := make([]string, 0, len(runtimeMap))
+	seen := make(map[string]bool)
+	var runtimes []string
 	for lang := range runtimeMap {
+		if seen[lang] {
+			continue
+		}
+		// Skip deprecated aliases. "ts-node" and "ts-cjs" are the
+		// canonical TS runtime names; "ts" is a backward-compat alias
+		// for "ts-node".
+		if lang == "ts" {
+			continue
+		}
+		seen[lang] = true
 		runtimes = append(runtimes, lang)
 	}
 	return runtimes

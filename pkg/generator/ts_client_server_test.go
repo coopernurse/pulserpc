@@ -2037,9 +2037,9 @@ func TestTsCjsOutputStripsJsSuffix(t *testing.T) {
 
 		// CJS-style module.exports forms must be present (the §7
 		// post-process transform converts export class → module.exports.X = X).
-		// Import statements are kept as ESM (tsc handles conversion).
-		assertTsFileContains(t, outputDir, "book/server.ts", "from '../pulserpc/rpc'")
-		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport'")
+		// Import statements are converted to require() calls.
+		assertTsFileContains(t, outputDir, "book/server.ts", "require('../pulserpc/rpc')")
+		assertTsFileContains(t, outputDir, "book/client.ts", "require('../pulserpc/transport')")
 		assertTsFileContains(t, outputDir, "book/server.ts", "module.exports.BookService")
 		assertTsFileContains(t, outputDir, "book/client.ts", "module.exports.BookServiceClient")
 		assertTsFileContains(t, outputDir, "book/index.ts", "require('./types')")
@@ -2151,20 +2151,20 @@ func TestTransformCjs(t *testing.T) {
 
 	out := string(gen.transformFileForStyle(in, "cjs"))
 
-	// Import statements are left unchanged (tsc --module CommonJS
-	// --esModuleInterop handles conversion to require() at compile time).
+	// Import statements are converted to require() calls.
 	for _, want := range []string{
-		`import { Foo, Bar as B } from './foo.js';`,
-		`import * as ns from './ns.js';`,
-		`import Default from './default.js';`,
+		`const { Foo, Bar as B } = require('./foo');`,
+		`const ns = require('./ns');`,
+		`const Default = require('./default').default || require('./default');`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cjs transform missing %q in output:\n%s", want, out)
 		}
 	}
 
-	// Interfaces and types are left in place so tsc --noEmit can
-	// resolve type-only references (erased by tsc at compile time).
+	// Interfaces and types are preserved (TypeScript-only constructs that
+	// tsc erases at compile time; downstream tsc --noEmit needs them for
+	// type resolution).
 	if !strings.Contains(out, "interface I") {
 		t.Errorf("cjs transform removed interface, should keep it:\n%s", out)
 	}
@@ -2253,9 +2253,8 @@ func TestBundlerGeneratedOutputNoJsSuffixes(t *testing.T) {
 }
 
 // TestCjsGeneratedOutputRequiresNoMeta asserts the §7.5 invariant: under
-// cjs, NO output file contains `import.meta.url` or `fileURLToPath`.
-// Import/export statements are kept as-is (tsc --module CommonJS handles
-// the conversion at compile time).
+// cjs, NO output file contains `import ` or `export ` as a top-level
+// ESM token, nor `import.meta.url` or `fileURLToPath`.
 func TestCjsGeneratedOutputRequiresNoMeta(t *testing.T) {
 	withTempOutputDir(t, func(outputDir string) {
 		idl := buildMultiNamespaceIDL()
@@ -2295,6 +2294,20 @@ func TestCjsGeneratedOutputRequiresNoMeta(t *testing.T) {
 				}
 				if strings.Contains(line, "fileURLToPath") {
 					t.Errorf("%s contains `fileURLToPath`: %s", path, line)
+				}
+				// CJS output must not contain ESM import/export keywords,
+				// except for TypeScript-only constructs (import type,
+				// export interface, export type) that are erased at
+				// compile time by tsc.
+				// (module.exports is valid CJS and contains "export" as a
+				// substring, but never at the start of a trimmed line.)
+				if strings.HasPrefix(trimmed, "import") && !strings.HasPrefix(trimmed, "import type") {
+					t.Errorf("%s contains ESM `import` statement: %s", path, line)
+				}
+				if strings.HasPrefix(trimmed, "export") &&
+					!strings.HasPrefix(trimmed, "export interface") &&
+					!strings.HasPrefix(trimmed, "export type") {
+					t.Errorf("%s contains ESM `export` statement: %s", path, line)
 				}
 			}
 			return nil
@@ -2930,8 +2943,8 @@ func TestTsStylesParameterized(t *testing.T) {
 			assertTsImportStyle(t, outputDir, "client.ts", style,
 				"from './pulserpc/transport.js'",
 				"from './pulserpc/transport'",
-				"from './pulserpc/transport'")
-			assertTsFileContains(t, outputDir, "server.ts", "from './pulserpc/rpc'")
+				"require('./pulserpc/transport')")
+			assertTsFileContains(t, outputDir, "server.ts", "require('./pulserpc/rpc')")
 		case "esm-bundler":
 			assertTsImportStyle(t, outputDir, "client.ts", style,
 				"from './pulserpc/transport.js'",
@@ -3055,7 +3068,7 @@ func TestTsAliasFlags(t *testing.T) {
 				case "esm-bundler":
 					assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/transport'")
 				case "cjs":
-					assertTsFileContains(t, outputDir, "server.ts", "from './pulserpc/rpc'")
+					assertTsFileContains(t, outputDir, "server.ts", "require('./pulserpc/rpc')")
 				}
 			})
 		})

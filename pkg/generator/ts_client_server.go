@@ -190,11 +190,13 @@ func readTsconfigModule(outputDir string) (string, string, error) {
 		if err := json.Unmarshal(data, &doc); err != nil {
 			return "", path, fmt.Errorf("failed to parse %s: %w", path, err)
 		}
-		// Prefer compilerOptions.moduleResolution="Bundler" hint, then
-		// module. This catches the "module=ESNext with moduleResolution=Bundler"
-		// pattern from the plan's mapping table.
+		// Prefer compilerOptions.moduleResolution="Bundler" hint when the
+		// module field is "ES2020" (the one combination the plan's mapping
+		// table explicitly maps to esm-bundler). Other module values paired
+		// with moduleResolution: Bundler (e.g. CommonJS) are contradictory
+		// and we respect the explicit module field instead.
 		module := doc.CompilerOptions.Module
-		if doc.CompilerOptions.ModuleResolution == "Bundler" {
+		if doc.CompilerOptions.ModuleResolution == "Bundler" && module == "ES2020" {
 			module = "Bundler"
 		}
 		return module, path, nil
@@ -376,8 +378,9 @@ func transformEsmBundler(content []byte) []byte {
 // trimmed line so we don't accidentally match the word `import` inside a
 // string literal or a comment.
 var (
-	cjsImportNamedRE = regexp.MustCompile(`^import\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
-	cjsImportStarRE  = regexp.MustCompile(`^import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsImportTypeRE    = regexp.MustCompile(`^import\s+type\s+`)
+	cjsImportNamedRE   = regexp.MustCompile(`^import\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsImportStarRE    = regexp.MustCompile(`^import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
 	cjsImportDefaultRE = regexp.MustCompile(`^import\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
 	cjsExportStarFromRE = regexp.MustCompile(`^export\s+\*\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
 	cjsExportNamedFromRE = regexp.MustCompile(`^export\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
@@ -389,7 +392,20 @@ var (
 	cjsExportFunctionRE = regexp.MustCompile(`^export\s+(async\s+)?function\s+(\w+)`)
 	cjsExportConstRE = regexp.MustCompile(`^export\s+const\s+(\w+)\s*=`)
 	cjsExportNamedRE = regexp.MustCompile(`^export\s*\{\s*([^}]+?)\s*\}\s*;?\s*$`)
+
+	// Multi-line export patterns: export { on its own line starts a block
+	// that continues until `} from './path'` or `}`.
+	cjsExportOpenBraceRE    = regexp.MustCompile(`^export\s*\{\s*$`)
+	cjsExportCloseBraceFromRE = regexp.MustCompile(`^\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsExportCloseBraceRE   = regexp.MustCompile(`^\s*\}\s*;?\s*$`)
 )
+
+// multiLineExportState tracks an in-progress multi-line
+// `export { ... } from './path'` or `export { ... };` block.
+type multiLineExportState struct {
+	active bool     // true while accumulating a multi-line export block
+	names  []string // accumulated export names
+}
 
 // transformCjs converts ESM TypeScript source to CommonJS-compatible
 // TypeScript. The runtime still expects .ts files (compile with tsc), but
@@ -398,14 +414,18 @@ var (
 //
 // Line-by-line processing keeps the transform predictable: each line is
 // classified by its leading token and rewritten. Multi-line constructs
-// (class/function/enum bodies) are tracked via a per-pending-export
+// (class/function/enum/const bodies) are tracked via a per-pending-export
 // brace counter so the trailing module.exports.X = X line lands at the
 // matching close brace.
 //
-// `export interface` and `export type` declarations are left in place
-// unchanged so that downstream `tsc --noEmit` can resolve type-only
-// references (e.g., `import * as types from './types'; types.RepeatRequest`).
-// Those declarations are erased at compile time by tsc itself.
+// Multi-line `export { ... } from './path'` blocks (common in barrel
+// files) are tracked via multiLineExportState and flushed when the
+// closing } from ... line is reached.
+//
+// `import type` declarations are preserved (they are TypeScript-only
+// constructs erased at compile time, and `tsc --noEmit` needs them for
+// type resolution). `export interface` and `export type` declarations
+// are also preserved for the same reason.
 func transformCjs(content []byte) []byte {
 	var out bytes.Buffer
 	lines := strings.Split(string(content), "\n")
@@ -416,20 +436,63 @@ func transformCjs(content []byte) []byte {
 	// nested class) inside an export body don't accidentally close it.
 	var pending []pendingCjsExport
 
+	// Tracks an in-progress multi-line export { ... } block.
+	var multiLine multiLineExportState
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
+		// If we're inside a multi-line export { ... } block, accumulate
+		// names until the closing } from ... or } line.
+		if multiLine.active {
+			if m := cjsExportCloseBraceFromRE.FindStringSubmatch(trimmed); m != nil {
+				requirePath := strings.TrimSuffix(m[1], ".js")
+				for _, n := range multiLine.names {
+					source, local := splitExportName(n)
+					fmt.Fprintf(&out, "module.exports.%s = require('%s').%s;\n", local, requirePath, source)
+				}
+				multiLine = multiLineExportState{}
+				continue
+			}
+			if cjsExportCloseBraceRE.MatchString(trimmed) {
+				for _, n := range multiLine.names {
+					source, local := splitExportName(n)
+					fmt.Fprintf(&out, "module.exports.%s = %s;\n", local, source)
+				}
+				multiLine = multiLineExportState{}
+				continue
+			}
+			// Accumulate the name on this line (strip trailing comma).
+			name := strings.TrimRight(strings.TrimSpace(trimmed), ",")
+			if name != "" {
+				multiLine.names = append(multiLine.names, name)
+			}
+			continue
+		}
+
 		// Classify and rewrite the line.
 		switch {
-		case cjsImportNamedRE.MatchString(trimmed), cjsImportStarRE.MatchString(trimmed), cjsImportDefaultRE.MatchString(trimmed):
-			// Leave import statements unchanged. The runtime tree for the
-			// CJS module style uses `export class` etc., so these imports
-			// resolve cleanly via `tsc --module CommonJS --esModuleInterop`
-			// (and via tsx at runtime). Converting them to `require()`
-			// here would shadow the runtime's exported types with local
-			// `const` bindings, which breaks `tsc --noEmit`.
+		case cjsExportOpenBraceRE.MatchString(trimmed):
+			// Start of a multi-line export { ... } block.
+			multiLine.active = true
+			multiLine.names = []string{}
+		case cjsImportTypeRE.MatchString(trimmed):
+			// import type is a TypeScript-only construct — preserve it.
+			// tsc erases it at compile time.
 			out.WriteString(line)
 			out.WriteString("\n")
+		case cjsImportNamedRE.MatchString(trimmed):
+			m := cjsImportNamedRE.FindStringSubmatch(trimmed)
+			requirePath := strings.TrimSuffix(m[2], ".js")
+			fmt.Fprintf(&out, "const { %s } = require('%s');\n", m[1], requirePath)
+		case cjsImportStarRE.MatchString(trimmed):
+			m := cjsImportStarRE.FindStringSubmatch(trimmed)
+			requirePath := strings.TrimSuffix(m[2], ".js")
+			fmt.Fprintf(&out, "const %s = require('%s');\n", m[1], requirePath)
+		case cjsImportDefaultRE.MatchString(trimmed):
+			m := cjsImportDefaultRE.FindStringSubmatch(trimmed)
+			requirePath := strings.TrimSuffix(m[2], ".js")
+			fmt.Fprintf(&out, "const %s = require('%s').default || require('%s');\n", m[1], requirePath, requirePath)
 		case cjsExportStarFromRE.MatchString(trimmed):
 			m := cjsExportStarFromRE.FindStringSubmatch(trimmed)
 			requirePath := strings.TrimSuffix(m[1], ".js")
@@ -446,13 +509,9 @@ func transformCjs(content []byte) []byte {
 				fmt.Fprintf(&out, "module.exports.%s = require('%s').%s;\n", local, requirePath, source)
 			}
 		case cjsExportInterfaceRE.MatchString(trimmed), cjsExportTypeRE.MatchString(trimmed):
-			// Leave `export interface` / `export type` declarations in
-			// place. They are type-only constructs that tsc erases at
-			// compile time, and they must remain visible so that
-			// downstream `tsc --noEmit` (and any sibling namespace
-			// imports like `import * as types from './types'`) can
-			// resolve type references. They fall through to the
-			// default branch below.
+			// Preserve export interface/type — they are TypeScript-only
+			// constructs that tsc erases at compile time, and downstream
+			// tsc --noEmit needs them for type resolution.
 			out.WriteString(line)
 			out.WriteString("\n")
 		case cjsExportAbstractClassRE.MatchString(trimmed), cjsExportClassRE.MatchString(trimmed):
@@ -460,9 +519,6 @@ func transformCjs(content []byte) []byte {
 			if m == nil {
 				m = cjsExportClassRE.FindStringSubmatch(trimmed)
 			}
-			// Strip the leading `export ` keyword and emit the plain
-			// `class Foo { ... }` form, matching the CJS runtime's
-			// convention (no top-level `export` in the body).
 			pushPendingExport(&pending, m[1], stripExportPrefix(line), &out)
 		case cjsExportEnumRE.MatchString(trimmed):
 			m := cjsExportEnumRE.FindStringSubmatch(trimmed)
@@ -472,12 +528,19 @@ func transformCjs(content []byte) []byte {
 			pushPendingExport(&pending, m[2], stripExportPrefix(line), &out)
 		case cjsExportConstRE.MatchString(trimmed):
 			m := cjsExportConstRE.FindStringSubmatch(trimmed)
-			// export const is a single statement — emit the line without
-			// the leading `export` keyword, then append the
-			// module.exports assignment immediately.
-			out.WriteString(stripExportPrefix(line))
+			stripped := stripExportPrefix(line)
+			braceDelta := countBraceDelta(stripped)
+			out.WriteString(stripped)
 			out.WriteString("\n")
-			fmt.Fprintf(&out, "module.exports.%s = %s;\n", m[1], m[1])
+			if braceDelta <= 0 {
+				// Single-line (or brace-balanced) const: emit module.exports immediately.
+				fmt.Fprintf(&out, "module.exports.%s = %s;\n", m[1], m[1])
+			} else {
+				// Multi-line const body: track via pending exports so
+				// module.exports is emitted after the closing brace.
+				bodyOpened := strings.Contains(stripped, "{")
+				pending = append(pending, pendingCjsExport{name: m[1], depth: braceDelta, bodyOpened: bodyOpened})
+			}
 		case cjsExportNamedRE.MatchString(trimmed):
 			m := cjsExportNamedRE.FindStringSubmatch(trimmed)
 			for _, n := range strings.Split(m[1], ",") {
@@ -501,18 +564,49 @@ func transformCjs(content []byte) []byte {
 // pendingCjsExport tracks an in-flight export whose module.exports.X = X
 // assignment must be appended when its body closes.
 type pendingCjsExport struct {
-	name  string
-	depth int
+	name       string
+	depth      int
+	bodyOpened bool // true once a { has been seen (prevents premature close for multi-line function signatures)
 }
 
 // pushPendingExport records a new pending export for a class, enum, or
 // function declaration. It writes the source line, computes the opening
 // brace delta, and pushes the entry on the stack.
 func pushPendingExport(stack *[]pendingCjsExport, name, line string, out *bytes.Buffer) {
-	delta := strings.Count(line, "{") - strings.Count(line, "}")
+	delta := countBraceDelta(line)
 	out.WriteString(line)
 	out.WriteString("\n")
-	*stack = append(*stack, pendingCjsExport{name: name, depth: delta})
+	bodyOpened := strings.Contains(line, "{")
+	*stack = append(*stack, pendingCjsExport{name: name, depth: delta, bodyOpened: bodyOpened})
+}
+
+// countBraceDelta returns the net change in brace depth for a line of
+// TypeScript source code, ignoring braces inside string literals (single-
+// and double-quoted) and template literals. This prevents false matches
+// when a class/function body contains a string with a literal { or }.
+func countBraceDelta(s string) int {
+	delta := 0
+	inSingle := false
+	inDouble := false
+	inTemplate := false
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		switch {
+		case ch == '\'' && !inDouble && !inTemplate:
+			inSingle = !inSingle
+		case ch == '"' && !inSingle && !inTemplate:
+			inDouble = !inDouble
+		case ch == '`' && !inSingle && !inDouble:
+			inTemplate = !inTemplate
+		case ch == '\\' && (inSingle || inDouble || inTemplate):
+			i++ // skip escaped character
+		case ch == '{' && !inSingle && !inDouble && !inTemplate:
+			delta++
+		case ch == '}' && !inSingle && !inDouble && !inTemplate:
+			delta--
+		}
+	}
+	return delta
 }
 
 // advancePendingExports walks the pending-export stack and emits
@@ -520,19 +614,24 @@ func pushPendingExport(stack *[]pendingCjsExport, name, line string, out *bytes.
 // this line. Unrelated braces inside an export body are tolerated
 // because each entry has its own depth counter.
 func advancePendingExports(stack *[]pendingCjsExport, line string, out *bytes.Buffer) {
-	delta := strings.Count(line, "{") - strings.Count(line, "}")
+	delta := countBraceDelta(line)
+	hasBrace := strings.Contains(line, "{")
 	// Apply the brace delta to every entry's depth counter.
 	for i := range *stack {
 		(*stack)[i].depth += delta
+		if hasBrace && !(*stack)[i].bodyOpened {
+			(*stack)[i].bodyOpened = true
+		}
 	}
-	// Pop entries whose depth has closed. Process innermost-first so
-	// nested export classes emit their module.exports in the right order.
+	// Pop entries whose body has been opened and depth has closed.
+	// Process innermost-first so nested export classes emit their
+	// module.exports in the right order.
 	for len(*stack) > 0 {
 		top := &(*stack)[len(*stack)-1]
-		if top.depth > 0 {
+		if !top.bodyOpened || top.depth > 0 {
 			return
 		}
-		// depth <= 0: the body has closed on this line (or earlier).
+		// bodyOpened && depth <= 0: the body has closed on this line (or earlier).
 		// Emit the assignment and pop.
 		fmt.Fprintf(out, "module.exports.%s = %s;\n", top.name, top.name)
 		*stack = (*stack)[:len(*stack)-1]
@@ -1065,15 +1164,7 @@ func (p *TSClientServer) copyRuntimeFiles(paths TSNamespacePaths, silent bool) e
 
 	for filename, data := range files {
 		dstPath := filepath.Join(runtimeDir, filename)
-		// For esm-node the transform is a no-op; for esm-bundler it strips
-		// .js suffixes from relative imports. For cjs the embedded runtime
-		// tree is already authored as CJS (require/module.exports), so
-		// running the line-based CJS transform on it would be wasted work
-		// and could mangle content (e.g., trailing-newline drift).
-		transformed := data
-		if style != "cjs" {
-			transformed = p.transformFileForStyle(data, p.moduleStyle)
-		}
+		transformed := p.transformFileForStyle(data, p.moduleStyle)
 		if err := os.WriteFile(dstPath, transformed, 0644); err != nil {
 			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)
 		}
