@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -176,7 +177,7 @@ func tsReadFile(t *testing.T, dir, relPath string) string {
 //
 //	esmStyle: the string expected under esm-node (e.g. "from '../pulserpc/transport.js'")
 //	bundlerStyle: the string expected under esm-bundler (e.g. "from '../pulserpc/transport'")
-//	cjsStyle: the string expected under cjs (e.g. "require('../pulserpc/transport')")
+//	cjsStyle: the string expected under cjs (e.g. "from '../pulserpc/transport'")
 func assertTsImportStyle(t *testing.T, dir, relPath, moduleStyle, esmStyle, bundlerStyle, cjsStyle string) {
 	t.Helper()
 	content := tsReadFile(t, dir, relPath)
@@ -2034,10 +2035,11 @@ func TestTsCjsOutputStripsJsSuffix(t *testing.T) {
 			t.Fatalf("walk: %v", err)
 		}
 
-		// CJS-style require/module.exports forms must be present (the
-		// §7 post-process transform converts imports/exports).
-		assertTsFileContains(t, outputDir, "book/server.ts", "require('../pulserpc/rpc')")
-		assertTsFileContains(t, outputDir, "book/client.ts", "require('../pulserpc/transport')")
+		// CJS-style module.exports forms must be present (the §7
+		// post-process transform converts export class → module.exports.X = X).
+		// Import statements are kept as ESM (tsc handles conversion).
+		assertTsFileContains(t, outputDir, "book/server.ts", "from '../pulserpc/rpc'")
+		assertTsFileContains(t, outputDir, "book/client.ts", "from '../pulserpc/transport'")
 		assertTsFileContains(t, outputDir, "book/server.ts", "module.exports.BookService")
 		assertTsFileContains(t, outputDir, "book/client.ts", "module.exports.BookServiceClient")
 		assertTsFileContains(t, outputDir, "book/index.ts", "require('./types')")
@@ -2149,23 +2151,25 @@ func TestTransformCjs(t *testing.T) {
 
 	out := string(gen.transformFileForStyle(in, "cjs"))
 
-	// Imports must become require() statements without .js suffix.
+	// Import statements are left unchanged (tsc --module CommonJS
+	// --esModuleInterop handles conversion to require() at compile time).
 	for _, want := range []string{
-		`const { Foo, Bar as B } = require('./foo');`,
-		`const ns = require('./ns');`,
-		`const Default = require('./default').default || require('./default');`,
+		`import { Foo, Bar as B } from './foo.js';`,
+		`import * as ns from './ns.js';`,
+		`import Default from './default.js';`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cjs transform missing %q in output:\n%s", want, out)
 		}
 	}
 
-	// Interfaces and types must be dropped entirely.
-	if strings.Contains(out, "interface I") {
-		t.Errorf("cjs transform left interface in output:\n%s", out)
+	// Interfaces and types are left in place so tsc --noEmit can
+	// resolve type-only references (erased by tsc at compile time).
+	if !strings.Contains(out, "interface I") {
+		t.Errorf("cjs transform removed interface, should keep it:\n%s", out)
 	}
-	if strings.Contains(out, "export type T") {
-		t.Errorf("cjs transform left type alias in output:\n%s", out)
+	if !strings.Contains(out, "export type T") {
+		t.Errorf("cjs transform removed type alias, should keep it:\n%s", out)
 	}
 
 	// Class/function/enum declarations must emit a matching
@@ -2196,16 +2200,9 @@ func TestTransformCjs(t *testing.T) {
 		}
 	}
 
-	// import/export tokens must not appear (other than in the rewritten
-	// module.exports lines, which we explicitly want).
-	for _, banned := range []string{
-		"\nimport ",
-		"\nexport ",
-		"import.meta.url",
-	} {
-		if strings.Contains(out, banned) {
-			t.Errorf("cjs transform leaked %q in output:\n%s", banned, out)
-		}
+	// import.meta.url must not appear (it is an ESM-only construct).
+	if strings.Contains(out, "import.meta.url") {
+		t.Errorf("cjs transform leaked import.meta.url in output:\n%s", out)
 	}
 }
 
@@ -2256,8 +2253,9 @@ func TestBundlerGeneratedOutputNoJsSuffixes(t *testing.T) {
 }
 
 // TestCjsGeneratedOutputRequiresNoMeta asserts the §7.5 invariant: under
-// cjs, NO output file (generated OR runtime copy) contains ESM-only tokens
-// like `import `, `export ` (as a statement), or `import.meta.url`.
+// cjs, NO output file contains `import.meta.url` or `fileURLToPath`.
+// Import/export statements are kept as-is (tsc --module CommonJS handles
+// the conversion at compile time).
 func TestCjsGeneratedOutputRequiresNoMeta(t *testing.T) {
 	withTempOutputDir(t, func(outputDir string) {
 		idl := buildMultiNamespaceIDL()
@@ -2292,14 +2290,11 @@ func TestCjsGeneratedOutputRequiresNoMeta(t *testing.T) {
 				if strings.HasPrefix(trimmed, "//") {
 					continue
 				}
-				if strings.HasPrefix(trimmed, "import ") {
-					t.Errorf("%s contains top-level `import`: %s", path, line)
-				}
-				if strings.HasPrefix(trimmed, "export ") {
-					t.Errorf("%s contains top-level `export`: %s", path, line)
-				}
 				if strings.Contains(line, "import.meta.url") {
 					t.Errorf("%s contains `import.meta.url`: %s", path, line)
+				}
+				if strings.Contains(line, "fileURLToPath") {
+					t.Errorf("%s contains `fileURLToPath`: %s", path, line)
 				}
 			}
 			return nil
@@ -2421,9 +2416,6 @@ func TestRegenClearsRuntime(t *testing.T) {
 				if strings.Contains(line, "import.meta.url") {
 					t.Errorf("%s still contains import.meta.url after cjs regeneration: %s", path, line)
 				}
-			}
-			if bytes.Contains(content, []byte("import {")) {
-				t.Errorf("%s still contains ESM `import {` after cjs regeneration", path)
 			}
 		}
 
@@ -2938,13 +2930,13 @@ func TestTsStylesParameterized(t *testing.T) {
 			assertTsImportStyle(t, outputDir, "client.ts", style,
 				"from './pulserpc/transport.js'",
 				"from './pulserpc/transport'",
-				"require('./pulserpc/transport')")
-			assertTsFileContains(t, outputDir, "server.ts", "require('./pulserpc/rpc')")
+				"from './pulserpc/transport'")
+			assertTsFileContains(t, outputDir, "server.ts", "from './pulserpc/rpc'")
 		case "esm-bundler":
 			assertTsImportStyle(t, outputDir, "client.ts", style,
 				"from './pulserpc/transport.js'",
 				"from './pulserpc/transport'",
-				"require('./pulserpc/transport')")
+				"from './pulserpc/transport'")
 		default:
 			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/transport.js'")
 			assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/rpc.js'")
@@ -2952,13 +2944,17 @@ func TestTsStylesParameterized(t *testing.T) {
 	})
 }
 
-// TestTsCjsOutputIsCjsParseable covers step 12.2: CJS output must use
-// require/module.exports and contain no ESM import/export tokens.
+// TestTsCjsOutputIsCjsParseable covers step 12.2: CJS output must not
+// contain ESM-only constructs like import.meta.url. Import/export
+// statements are TypeScript syntax kept as-is (tsc compiles them to CJS).
+// Uses tsx to verify each output file loads without syntax or resolution errors.
 func TestTsCjsOutputIsCjsParseable(t *testing.T) {
 	withTempOutputDir(t, func(outputDir string) {
 		idl := buildMultiNamespaceIDL()
 		runWithStyle(t, "cjs", idl, outputDir)
 
+		// Walk all .ts files and verify they can be loaded by tsx.
+		var tsFiles []string
 		err := filepath.Walk(outputDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -2966,27 +2962,37 @@ func TestTsCjsOutputIsCjsParseable(t *testing.T) {
 			if info.IsDir() || !strings.HasSuffix(path, ".ts") {
 				return nil
 			}
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			for _, line := range strings.Split(string(content), "\n") {
-				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "//") {
-					continue
-				}
-				if strings.HasPrefix(trimmed, "import ") {
-					t.Errorf("%s contains ESM import: %s", path, line)
-				}
-				if strings.HasPrefix(trimmed, "export ") {
-					t.Errorf("%s contains ESM export: %s", path, line)
-				}
-			}
+			tsFiles = append(tsFiles, path)
 			return nil
 		})
 		if err != nil {
 			t.Fatalf("walk: %v", err)
 		}
+
+		// Write a test script that imports each .ts file and reports ok/fail.
+		var sb strings.Builder
+		sb.WriteString("async function check() {\n")
+		sb.WriteString("  let ok = 0, fail = 0;\n")
+		for _, tf := range tsFiles {
+			rel, _ := filepath.Rel(outputDir, tf)
+			sb.WriteString(fmt.Sprintf("  try { await import('./%s'); ok++; } catch(e) { console.error('FAIL %s:', e.message); fail++; }\n", rel, rel))
+		}
+		sb.WriteString("  console.log(`ok=${ok} fail=${fail} total=" + fmt.Sprintf("%d", len(tsFiles)) + "`);\n")
+		sb.WriteString("  if (fail > 0) process.exit(1);\n")
+		sb.WriteString("}\ncheck();\n")
+
+		checkPath := filepath.Join(outputDir, "_check_imports.mjs")
+		if err := os.WriteFile(checkPath, []byte(sb.String()), 0644); err != nil {
+			t.Fatalf("write check script: %v", err)
+		}
+
+		cmd := exec.Command("npx", "tsx", checkPath)
+		cmd.Dir = outputDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("tsx check failed:\n%s", string(out))
+		}
+		t.Logf("tsx check output:\n%s", string(out))
 	})
 }
 
@@ -3001,6 +3007,9 @@ func TestTsCjsRuntimeUsesFilename(t *testing.T) {
 		content := tsReadFile(t, outputDir, "pulserpc/client.ts")
 		if !strings.Contains(content, "__dirname") {
 			t.Error("CJS runtime client.ts must contain __dirname")
+		}
+		if !strings.Contains(content, "this._findIDLJson()") {
+			t.Error("CJS runtime client.ts constructor must call this._findIDLJson()")
 		}
 		// Check non-comment lines only for ESM-only tokens (comments may
 		// document the ESM equivalent).
@@ -3046,7 +3055,7 @@ func TestTsAliasFlags(t *testing.T) {
 				case "esm-bundler":
 					assertTsFileContains(t, outputDir, "client.ts", "from './pulserpc/transport'")
 				case "cjs":
-					assertTsFileContains(t, outputDir, "server.ts", "require('./pulserpc/rpc')")
+					assertTsFileContains(t, outputDir, "server.ts", "from './pulserpc/rpc'")
 				}
 			})
 		})

@@ -1,20 +1,22 @@
 /**
- * Transport abstraction for JSON-RPC requests
+ * Transport abstraction for JSON-RPC requests.
  *
  * Provides abstract Transport base class and concrete implementations:
  * - HttpTransport: HTTP-based transport using fetch
  * - InProcTransport: In-process transport for testing
  */
 
+import type { JsonRpcRequest, JsonRpcResponse } from "./types";
+
 /**
  * Abstract transport base class
  */
-class Transport {
-  async request(_req) {
+export class Transport {
+  async request(_req: JsonRpcRequest): Promise<JsonRpcResponse> {
     throw new Error("Transport.request must be implemented by subclass");
   }
 
-  close() {
+  close(): void {
     // Default implementation does nothing
   }
 }
@@ -22,8 +24,12 @@ class Transport {
 /**
  * HTTP transport implementation using fetch
  */
-class HttpTransport extends Transport {
-  constructor(baseUrl, headers = {}, fetchFn = fetch) {
+export class HttpTransport extends Transport {
+  baseUrl: string;
+  headers: Record<string, string>;
+  fetchFn: typeof fetch;
+
+  constructor(baseUrl: string, headers: Record<string, string> = {}, fetchFn: typeof fetch = fetch) {
     super();
     this.baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
     this.headers = {
@@ -33,7 +39,7 @@ class HttpTransport extends Transport {
     this.fetchFn = fetchFn;
   }
 
-  async request(req) {
+  async request(req: JsonRpcRequest): Promise<JsonRpcResponse> {
     const url = `${this.baseUrl}/`;
 
     const response = await this.fetchFn(url, {
@@ -53,37 +59,33 @@ class HttpTransport extends Transport {
 
     try {
       return JSON.parse(text);
-    } catch (e) {
+    } catch (e: any) {
       throw new Error(`Invalid JSON response: ${e.message}`);
     }
   }
 }
 
 /**
- * In-process transport for testing
+ * In-process transport for testing.
  *
  * This transport calls the server directly without HTTP.
  */
-class InProcTransport extends Transport {
-  constructor(serverCallFn) {
+export class InProcTransport extends Transport {
+  serverCallFn: (req: JsonRpcRequest) => JsonRpcResponse | undefined;
+
+  constructor(serverCallFn: (req: JsonRpcRequest) => JsonRpcResponse | undefined) {
     super();
     this.serverCallFn = serverCallFn;
   }
 
-  async request(req) {
+  async request(req: JsonRpcRequest): Promise<JsonRpcResponse> {
     const response = this.serverCallFn(req);
     if (!response) {
       return {
         jsonrpc: "2.0",
-        id: req.id || null,
+        id: req.id ?? null,
       };
     }
     return response;
   }
 }
-
-module.exports = {
-  Transport,
-  HttpTransport,
-  InProcTransport,
-};

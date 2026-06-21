@@ -1,25 +1,41 @@
 /**
- * Server class for handling JSON-RPC 2.0 requests
+ * Server class for handling JSON-RPC 2.0 requests.
  *
  * Transport-independent server that processes JSON-RPC requests
  * and dispatches to registered handlers.
  */
 
-const { RPCError } = require("./rpc");
+import { RPCError } from "./rpc";
+import { Contract } from "./contract";
+import type { JsonRpcRequest, JsonRpcResponse } from "./types";
 
-class Server {
-  constructor(options) {
+export interface ServerOptions {
+  contract: Contract;
+  validateRequests?: boolean;
+  validateResponses?: boolean;
+}
+
+export type HandlerCtx = Record<string, any>;
+export type Handler = Record<string, (ctx: HandlerCtx, ...args: any[]) => any>;
+
+export class Server {
+  handlers: Map<string, Handler>;
+  contract: Contract;
+  validateRequests: boolean;
+  validateResponses: boolean;
+
+  constructor(options: ServerOptions) {
     this.handlers = new Map();
     this.contract = options.contract;
     this.validateRequests = options.validateRequests ?? true;
     this.validateResponses = options.validateResponses ?? true;
   }
 
-  addHandler(ifaceName, handler) {
+  addHandler(ifaceName: string, handler: Handler): void {
     this.handlers.set(ifaceName, handler);
   }
 
-  async call(req, ctx) {
+  async call(req: any, ctx: HandlerCtx = {}): Promise<JsonRpcResponse> {
     if (typeof req !== "object" || req === null) {
       return this.errorResponse(
         req?.id ?? null,
@@ -70,7 +86,7 @@ class Server {
       return this.errorResponse(reqId, -32601, "Method not found", `Unknown interface: ${ifaceName}`);
     }
 
-    const handler = this.handlers.get(ifaceName);
+    const handler = this.handlers.get(ifaceName)!;
 
     if (typeof handler[funcName] !== "function") {
       return this.errorResponse(reqId, -32601, "Method not found", `Unknown method: ${method}`);
@@ -84,14 +100,14 @@ class Server {
       if (this.validateRequests) {
         try {
           this.contract.validateRequest(ifaceName, funcName, params);
-        } catch (e) {
+        } catch (e: any) {
           return this.errorResponse(reqId, -32602, "Invalid params", e.message);
         }
       }
 
       try {
         params = this.positionalToNamedParams(ifaceName, funcName, params);
-      } catch (e) {
+      } catch (e: any) {
         return this.errorResponse(reqId, -32602, "Invalid params", e.message);
       }
     } else if (params === undefined || params === null) {
@@ -107,7 +123,7 @@ class Server {
       if (paramList !== null) {
         try {
           this.contract.validateRequest(ifaceName, funcName, paramList);
-        } catch (e) {
+        } catch (e: any) {
           return this.errorResponse(reqId, -32602, "Invalid params", e.message);
         }
       }
@@ -121,18 +137,18 @@ class Server {
         result,
         id: reqId ?? null,
       };
-    } catch (e) {
+    } catch (e: any) {
       if (e instanceof RPCError) {
         return this.errorResponse(reqId, e.code, e.message, e.data);
       } else {
         console.error(`Handler exception for ${method}:`, e);
-        return this.errorResponse(reqId, -32603, "Internal error", `Handler exception: ${e.message || String(e)}`);
+        return this.errorResponse(reqId, -32603, "Internal error", `Handler exception: ${e?.message || String(e)}`);
       }
     }
   }
 
-  errorResponse(reqId, code, message, data) {
-    const error = {
+  errorResponse(reqId: any, code: number, message: string, data?: any): JsonRpcResponse {
+    const error: { code: number; message: string; data?: any } = {
       code,
       message,
     };
@@ -140,7 +156,7 @@ class Server {
       error.data = data;
     }
 
-    const response = {
+    const response: JsonRpcResponse = {
       jsonrpc: "2.0",
       error,
     };
@@ -151,10 +167,10 @@ class Server {
     return response;
   }
 
-  positionalToNamedParams(ifaceName, funcName, positionalParams) {
+  positionalToNamedParams(ifaceName: string, funcName: string, positionalParams: any[]): Record<string, any> {
     const iface = this.contract.getInterface(ifaceName);
     if (!iface) {
-      return positionalParams.reduce((acc, v, i) => {
+      return positionalParams.reduce<Record<string, any>>((acc, v, i) => {
         acc[String(i)] = v;
         return acc;
       }, {});
@@ -162,7 +178,7 @@ class Server {
 
     const func = iface.getFunction(funcName);
     if (!func) {
-      return positionalParams.reduce((acc, v, i) => {
+      return positionalParams.reduce<Record<string, any>>((acc, v, i) => {
         acc[String(i)] = v;
         return acc;
       }, {});
@@ -171,7 +187,7 @@ class Server {
     const paramDefs = func.parameters || [];
 
     if (positionalParams.length !== paramDefs.length) {
-      const requiredCount = paramDefs.filter((p) => !p.optional).length;
+      const requiredCount = paramDefs.filter((p: any) => !p.optional).length;
       if (
         positionalParams.length < requiredCount ||
         positionalParams.length > paramDefs.length
@@ -182,7 +198,7 @@ class Server {
       }
     }
 
-    const namedParams = {};
+    const namedParams: Record<string, any> = {};
     for (let i = 0; i < positionalParams.length; i++) {
       if (i < paramDefs.length) {
         const paramName = paramDefs[i].name;
@@ -195,7 +211,7 @@ class Server {
     return namedParams;
   }
 
-  namedToPositionalParams(ifaceName, funcName, namedParams) {
+  namedToPositionalParams(ifaceName: string, funcName: string, namedParams: Record<string, any>): any[] | null {
     const iface = this.contract.getInterface(ifaceName);
     if (!iface) {
       return null;
@@ -208,7 +224,7 @@ class Server {
 
     const paramDefs = func.parameters || [];
 
-    const positionalParams = [];
+    const positionalParams: any[] = [];
     for (const paramDef of paramDefs) {
       positionalParams.push(namedParams[paramDef.name]);
     }
@@ -216,7 +232,3 @@ class Server {
     return positionalParams;
   }
 }
-
-module.exports = {
-  Server,
-};

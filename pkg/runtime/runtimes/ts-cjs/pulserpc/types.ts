@@ -1,49 +1,109 @@
 /**
- * Helper functions for working with type definitions
+ * Type definitions used across the runtime.
  */
 
-const EntityType = {
+export interface JsonRpcRequest {
+  jsonrpc: "2.0";
+  method: string;
+  params?: any;
+  id?: string | number | null;
+}
+
+export interface JsonRpcError {
+  code: number;
+  message: string;
+  data?: any;
+}
+
+export interface JsonRpcResponse {
+  jsonrpc: "2.0";
+  result?: any;
+  error?: JsonRpcError;
+  id?: string | number | null;
+}
+
+export interface FieldDef {
+  name: string;
+  type: any;
+  optional?: boolean;
+}
+
+export interface StructDef {
+  extends?: string;
+  fields: FieldDef[];
+}
+
+export interface EnumDef {
+  values: Array<{ name: string }>;
+}
+
+export type StructMap = { [key: string]: StructDef };
+export type EnumMap = { [key: string]: EnumDef };
+
+export const EntityType = {
   Interface: "Interface",
   Method: "Method",
   Struct: "Struct",
   Field: "Field",
   Enum: "Enum",
   Error: "Error",
-};
+} as const;
+export type EntityType = (typeof EntityType)[keyof typeof EntityType];
 
-const ChangeType = {
+export const ChangeType = {
   Added: "Added",
   Removed: "Removed",
   Modified: "Modified",
-};
+} as const;
+export type ChangeType = (typeof ChangeType)[keyof typeof ChangeType];
 
-const Direction = {
+export const Direction = {
   ClientHasMore: "ClientHasMore",
   ClientHasLess: "ClientHasLess",
   Mismatch: "Mismatch",
-};
+} as const;
+export type Direction = (typeof Direction)[keyof typeof Direction];
 
-const Severity = {
+export const Severity = {
   Error: "Error",
   Warning: "Warning",
   Info: "Info",
-};
+} as const;
+export type Severity = (typeof Severity)[keyof typeof Severity];
 
-function findStruct(structName, allStructs) {
+export interface ContractDelta {
+  entityType: EntityType;
+  entityName: string;
+  memberName: string;
+  changeType: ChangeType;
+  direction: Direction;
+  severity: Severity;
+  description: string;
+}
+
+export interface VerificationResult {
+  compatible: boolean;
+  serverChecksum: string;
+  clientChecksum: string;
+  deltas: ContractDelta[];
+  timestamp: Date;
+}
+
+export function findStruct(structName: string, allStructs: StructMap): StructDef | undefined {
   return allStructs[structName];
 }
 
-function findEnum(enumName, allEnums) {
+export function findEnum(enumName: string, allEnums: EnumMap): EnumDef | undefined {
   return allEnums[enumName];
 }
 
-function getStructFields(structName, allStructs) {
+export function getStructFields(structName: string, allStructs: StructMap): FieldDef[] {
   const structDef = findStruct(structName, allStructs);
   if (!structDef) {
     return [];
   }
 
-  const fields = [];
+  const fields: FieldDef[] = [];
 
   if (structDef.extends) {
     const parentFields = getStructFields(structDef.extends, allStructs);
@@ -66,20 +126,9 @@ function getStructFields(structName, allStructs) {
   return fields;
 }
 
-function extractChecksum(idl) {
-  if (idl && typeof idl === 'object' && 'checksum' in idl) {
+export function extractChecksum(idl: any): string {
+  if (idl && typeof idl === "object" && "checksum" in idl) {
     return String(idl.checksum);
   }
-  return '';
+  return "";
 }
-
-module.exports = {
-  EntityType,
-  ChangeType,
-  Direction,
-  Severity,
-  findStruct,
-  findEnum,
-  getStructFields,
-  extractChecksum,
-};

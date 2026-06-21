@@ -1,32 +1,41 @@
 /**
- * PulseRPC TypeScript Runtime Library (CommonJS variant)
+ * PulseRPC TypeScript Runtime Library (CommonJS variant).
  *
  * This library provides validation and RPC functionality for PulseRPC-generated code.
  */
 
-const { RPCError } = require("./rpc");
-const { Contract, NoOpAuditor, LoggingAuditor, FailFastAuditor } = require("./contract");
-const { Client } = require("./client");
-const { Server } = require("./server");
-const { Transport, HttpTransport, InProcTransport } = require("./transport");
-const types = require("./types");
-const validation = require("./validation");
-const { diffIDL, classifySeverity, extractChecksum } = require("./diff");
-
-module.exports = {
-  RPCError,
+export { RPCError } from "./rpc";
+export {
   Contract,
   NoOpAuditor,
   LoggingAuditor,
   FailFastAuditor,
-  Client,
-  Server,
-  Transport,
-  HttpTransport,
-  InProcTransport,
+  InterfaceImpl,
+  ContractAuditor,
+} from "./contract";
+export { Client, ClientOptions } from "./client";
+export { Server, ServerOptions, HandlerCtx, Handler } from "./server";
+export { Transport, HttpTransport, InProcTransport } from "./transport";
+export { validateType } from "./validation";
+export {
   diffIDL,
   classifySeverity,
   extractChecksum,
-  ...types,
-  ...validation,
-};
+  EntityType,
+  ChangeType,
+  Direction,
+  Severity,
+  ContractDelta,
+  VerificationResult,
+  JsonRpcRequest,
+  JsonRpcResponse,
+  JsonRpcError,
+  FieldDef,
+  StructDef,
+  EnumDef,
+  StructMap,
+  EnumMap,
+  findStruct,
+  findEnum,
+  getStructFields,
+} from "./types";

@@ -100,6 +100,7 @@ export class Client {
     }
 
     // Bootstrap: fetch IDL from server asynchronously
+    this._findIDLJson();
     this.initPromise = this.bootstrapWithVerification();
   }
 

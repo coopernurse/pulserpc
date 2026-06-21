@@ -112,10 +112,15 @@ test-runtime-python2: build
 	@rm -rf /tmp/pulserpc_py2_test
 	@echo "Python 2 runtime tests passed"
 
-# Test TypeScript runtime
+# Test TypeScript runtime (ESM)
 test-runtime-ts:
-	@echo "Testing TypeScript runtime..."
+	@echo "Testing TypeScript ESM runtime..."
 	@cd pkg/runtime/runtimes/ts-node && $(MAKE) test
+
+# Test TypeScript runtime (CJS)
+test-runtime-ts-cjs:
+	@echo "Testing TypeScript CJS runtime..."
+	@cd pkg/runtime/runtimes/ts-cjs && $(MAKE) test
 
 # Test C# runtime
 test-runtime-csharp:
@@ -133,7 +138,7 @@ test-runtime-go:
 	@cd pkg/runtime/runtimes/go && $(MAKE) test
 
 # Test all runtimes
-test-runtimes: test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-csharp test-runtime-java test-runtime-go
+test-runtimes: test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-ts-cjs test-runtime-csharp test-runtime-java test-runtime-go
 	@echo "All runtime tests passed"
 
 # Test Python generator integration

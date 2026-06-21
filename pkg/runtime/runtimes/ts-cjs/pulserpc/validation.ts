@@ -1,16 +1,16 @@
 /**
- * Validation functions for PulseRPC types
+ * Validation functions for PulseRPC types.
  */
 
-const { findStruct, findEnum, getStructFields } = require("./types");
+import { findStruct, findEnum, getStructFields, StructMap, EnumMap, FieldDef } from "./types";
 
-function validateString(value) {
+function validateString(value: any): void {
   if (typeof value !== "string") {
     throw new TypeError(`Expected string, got ${typeof value}`);
   }
 }
 
-function validateInt(value) {
+function validateInt(value: any): void {
   if (typeof value !== "number") {
     throw new TypeError(`Expected number for int, got ${typeof value}`);
   }
@@ -23,34 +23,32 @@ function validateInt(value) {
   throw new TypeError(`Expected integer, got number with fractional component: ${value}`);
 }
 
-function validateFloat(value) {
+function validateFloat(value: any): void {
   if (typeof value !== "number") {
     throw new TypeError(`Expected number for float, got ${typeof value}`);
   }
 }
 
-function validateBool(value) {
+function validateBool(value: any): void {
   if (typeof value !== "boolean") {
     throw new TypeError(`Expected boolean, got ${typeof value}`);
   }
 }
 
-function validateArray(value, elementValidator) {
+function validateArray(value: any, elementValidator: (v: any) => void): void {
   if (!Array.isArray(value)) {
     throw new TypeError(`Expected array, got ${typeof value}`);
   }
   for (let i = 0; i < value.length; i++) {
     try {
       elementValidator(value[i]);
-    } catch (e) {
-      throw new Error(
-        `Array element at index ${i} validation failed: ${e.message}`
-      );
+    } catch (e: any) {
+      throw new Error(`Array element at index ${i} validation failed: ${e.message}`);
     }
   }
 }
 
-function validateMap(value, valueValidator) {
+function validateMap(value: any, valueValidator: (v: any) => void): void {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`Expected object for map, got ${typeof value}`);
   }
@@ -60,19 +58,15 @@ function validateMap(value, valueValidator) {
     }
     try {
       valueValidator(val);
-    } catch (e) {
-      throw new Error(
-        `Map value for key '${key}' validation failed: ${e.message}`
-      );
+    } catch (e: any) {
+      throw new Error(`Map value for key '${key}' validation failed: ${e.message}`);
     }
   }
 }
 
-function validateEnum(value, enumName, allowedValues) {
+function validateEnum(value: any, enumName: string, allowedValues: string[]): void {
   if (typeof value !== "string") {
-    throw new TypeError(
-      `Expected string for enum ${enumName}, got ${typeof value}`
-    );
+    throw new TypeError(`Expected string for enum ${enumName}, got ${typeof value}`);
   }
   if (!allowedValues.includes(value)) {
     throw new Error(
@@ -81,14 +75,18 @@ function validateEnum(value, enumName, allowedValues) {
   }
 }
 
-function validateStruct(value, structName, structDef, allStructs, allEnums) {
+function validateStruct(
+  value: any,
+  structName: string,
+  structDef: any,
+  allStructs: StructMap,
+  allEnums: EnumMap
+): void {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(
-      `Expected object for struct ${structName}, got ${typeof value}`
-    );
+    throw new TypeError(`Expected object for struct ${structName}, got ${typeof value}`);
   }
 
-  const fields = getStructFields(structName, allStructs);
+  const fields: FieldDef[] = getStructFields(structName, allStructs);
 
   for (const field of fields) {
     const fieldName = field.name;
@@ -97,28 +95,22 @@ function validateStruct(value, structName, structDef, allStructs, allEnums) {
 
     if (!(fieldName in value)) {
       if (!isOptional) {
-        throw new Error(
-          `Missing required field '${fieldName}' in struct ${structName}`
-        );
+        throw new Error(`Missing required field '${fieldName}' in struct ${structName}`);
       }
     } else {
       const fieldValue = value[fieldName];
       if (fieldValue === null) {
         if (!isOptional) {
-          throw new Error(
-            `Field '${fieldName}' in struct ${structName} cannot be null`
-          );
+          throw new Error(`Field '${fieldName}' in struct ${structName} cannot be null`);
         }
       } else if (fieldValue === undefined) {
         if (!isOptional) {
-          throw new Error(
-            `Field '${fieldName}' in struct ${structName} cannot be undefined`
-          );
+          throw new Error(`Field '${fieldName}' in struct ${structName} cannot be undefined`);
         }
       } else {
         try {
           validateType(fieldValue, fieldType, allStructs, allEnums, isOptional);
-        } catch (e) {
+        } catch (e: any) {
           throw new Error(
             `Field '${fieldName}' in struct ${structName} validation failed: ${e.message}`
           );
@@ -128,7 +120,13 @@ function validateStruct(value, structName, structDef, allStructs, allEnums) {
   }
 }
 
-function validateType(value, typeDef, allStructs, allEnums, isOptional = false) {
+export function validateType(
+  value: any,
+  typeDef: any,
+  allStructs: StructMap,
+  allEnums: EnumMap,
+  isOptional: boolean = false
+): void {
   if (value === null) {
     if (isOptional) {
       return;
@@ -151,12 +149,12 @@ function validateType(value, typeDef, allStructs, allEnums, isOptional = false) 
     validateBool(value);
   } else if (typeDef.array) {
     const elementType = typeDef.array;
-    const elementValidator = (v) =>
+    const elementValidator = (v: any) =>
       validateType(v, elementType, allStructs, allEnums, false);
     validateArray(value, elementValidator);
   } else if (typeDef.mapValue) {
     const valueType = typeDef.mapValue;
-    const valueValidator = (v) =>
+    const valueValidator = (v: any) =>
       validateType(v, valueType, allStructs, allEnums, false);
     validateMap(value, valueValidator);
   } else if (typeDef.userDefined) {
@@ -167,7 +165,7 @@ function validateType(value, typeDef, allStructs, allEnums, isOptional = false) 
     } else {
       const enumDef = findEnum(userType, allEnums);
       if (enumDef) {
-        const allowedValues = enumDef.values.map((v) => v.name);
+        const allowedValues = enumDef.values.map((v: any) => v.name);
         validateEnum(value, userType, allowedValues);
       } else {
         throw new Error(`Unknown user-defined type: ${userType}`);
@@ -178,7 +176,7 @@ function validateType(value, typeDef, allStructs, allEnums, isOptional = false) 
   }
 }
 
-module.exports = {
+export {
   validateString,
   validateInt,
   validateFloat,
@@ -187,5 +185,4 @@ module.exports = {
   validateMap,
   validateEnum,
   validateStruct,
-  validateType,
 };

@@ -23,6 +23,7 @@ test: install
 	@cd pulserpc && npx tsx tests/test_rpc.js
 	@cd pulserpc && npx tsx tests/test_types.js
 	@cd pulserpc && npx tsx tests/test_validation.js
+	@cd pulserpc && npx tsx tests/test_contract.js
 	@cd pulserpc && npx tsx tests/test_client.js
 
 # Test using Docker
@@ -30,7 +31,7 @@ test-docker:
 	@echo "Testing TypeScript CJS runtime in Docker..."
 	@docker run --rm -v $(PWD):/workspace -w /workspace \
 		$(TS_IMAGE) \
-		/bin/bash -c "npm install -g tsx typescript @types/node >/dev/null 2>&1 && cd pulserpc && tsx tests/test_rpc.js && tsx tests/test_types.js && tsx tests/test_validation.js && tsx tests/test_client.js"
+		/bin/bash -c "npm install -g tsx typescript @types/node >/dev/null 2>&1 && cd pulserpc && tsx tests/test_rpc.js && tsx tests/test_types.js && tsx tests/test_validation.js && tsx tests/test_contract.js && tsx tests/test_client.js"
 
 # Test generator integration (requires Docker)
 test-integration:

@@ -5,31 +5,36 @@
  * dynamic interface proxies for convenient RPC calls.
  */
 
-const { dirname, join } = require("path");
-const { existsSync, readFileSync } = require("fs");
-const { RPCError } = require("./rpc");
-const { Contract } = require("./contract");
-const { Transport } = require("./transport");
-const { diffIDL, extractChecksum } = require("./diff");
+import { dirname, join } from "path";
+import { existsSync, readFileSync } from "fs";
+import { RPCError } from "./rpc";
+import { Contract } from "./contract";
+import { Transport } from "./transport";
+import { diffIDL, extractChecksum } from "./diff";
+import type { JsonRpcRequest, JsonRpcResponse, VerificationResult } from "./types";
 
 /**
- * Proxy for an interface that provides callable methods
+ * Proxy for an interface that provides callable methods.
  *
  * Created dynamically by Client for each interface in the IDL.
  */
 class InterfaceClientProxy {
-  constructor(client, iface) {
+  client: Client;
+  iface: any;
+  ifaceName: string;
+
+  constructor(client: Client, iface: any) {
     this.client = client;
     this.iface = iface;
     this.ifaceName = iface.name;
 
     for (const funcName of iface.functions.keys()) {
-      this[funcName] = this.createMethodCaller(funcName);
+      (this as any)[funcName] = this.createMethodCaller(funcName);
     }
   }
 
-  createMethodCaller(funcName) {
-    return (...args) => {
+  createMethodCaller(funcName: string): (...args: any[]) => Promise<any> {
+    return (...args: any[]) => {
       return this.client.call(
         `${this.ifaceName}.${funcName}`,
         args.length > 0 ? args : undefined
@@ -38,24 +43,39 @@ class InterfaceClientProxy {
   }
 }
 
+export interface ClientOptions {
+  auditor?: any;
+  verifyOnBootstrap?: boolean;
+}
+
 /**
- * JSON-RPC 2.0 client with automatic interface discovery
+ * JSON-RPC 2.0 client with automatic interface discovery.
  *
  * The Client class sends JSON-RPC requests via a Transport implementation.
  * On initialization, it fetches the IDL from the server and dynamically
  * creates interface proxies.
- *
- * Example:
- *   const transport = new HttpTransport("http://localhost:8080");
- *   const client = new Client(transport);
- *   const result = await client.UserService.getUser({ userId: "123" });
  */
-class Client {
+export class Client {
+  transport: Transport;
+  validateRequest: boolean;
+  validateResponse: boolean;
+  contract: Contract | null = null;
+
+  // Index signature to allow dynamic interface proxies
+  [key: string]: any;
+
+  private requestId: number = 0;
+  private initialized: boolean = false;
+  private initPromise: Promise<void> | null = null;
+  private _auditor: any;
+  private _verifyOnBootstrap: boolean = false;
+  private _localIDL: Record<string, any> | null = null;
+
   constructor(
-    transport,
-    validateRequest = false,
-    validateResponse = false,
-    options
+    transport: Transport,
+    validateRequest: boolean = false,
+    validateResponse: boolean = false,
+    options?: ClientOptions
   ) {
     this.transport = transport;
     this.validateRequest = validateRequest;
@@ -66,13 +86,12 @@ class Client {
       this._verifyOnBootstrap = options.verifyOnBootstrap || false;
     }
 
-    this.contract = null;
-    this.requestId = 0;
-    this.initialized = false;
+    this._findIDLJson();
+
     this.initPromise = this.bootstrapWithVerification();
   }
 
-  async ready() {
+  async ready(): Promise<void> {
     if (this.initialized) {
       return;
     }
@@ -82,15 +101,15 @@ class Client {
     }
   }
 
-  async bootstrapWithVerification() {
+  private async bootstrapWithVerification(): Promise<void> {
     await this.bootstrap();
     if (this._verifyOnBootstrap) {
       await this.verifyCompatibility();
     }
   }
 
-  async bootstrap() {
-    const req = {
+  private async bootstrap(): Promise<void> {
+    const req: JsonRpcRequest = {
       jsonrpc: "2.0",
       method: "pulserpc-idl",
       id: "bootstrap",
@@ -99,9 +118,7 @@ class Client {
     const resp = await this.transport.request(req);
 
     if (resp.error) {
-      throw new Error(
-        `Failed to fetch IDL from server: ${resp.error.message}`
-      );
+      throw new Error(`Failed to fetch IDL from server: ${resp.error.message}`);
     }
 
     const idlJson = resp.result;
@@ -113,24 +130,23 @@ class Client {
 
     if (this.contract.interfaces) {
       for (const [ifaceName, iface] of this.contract.interfaces.entries()) {
-        this[ifaceName] = new InterfaceClientProxy(this, iface);
+        (this as any)[ifaceName] = new InterfaceClientProxy(this, iface);
       }
     }
 
     this.initialized = true;
   }
 
-  _findIDLJson() {
+  _findIDLJson(): void {
     try {
-      // In CommonJS, __dirname is the directory of this file (equivalent to
-      // dirname(fileURLToPath(import.meta.url)) in ESM).
+      // __dirname is the CJS equivalent of import.meta.url
       let currentDir = __dirname;
 
       for (let i = 0; i < 10; i++) {
-        const idlPath = join(currentDir, 'idl.json');
+        const idlPath = join(currentDir, "idl.json");
         try {
           if (existsSync(idlPath)) {
-            const content = readFileSync(idlPath, 'utf-8');
+            const content = readFileSync(idlPath, "utf-8");
             this._localIDL = JSON.parse(content);
             return;
           }
@@ -146,16 +162,16 @@ class Client {
     }
   }
 
-  setLocalIDL(idlJson) {
+  setLocalIDL(idlJson: string): void {
     this._localIDL = JSON.parse(idlJson);
   }
 
-  async verifyCompatibility() {
-    if (!this.contract || !this.contract.idlParsed) {
+  async verifyCompatibility(): Promise<VerificationResult> {
+    if (!this.contract || !(this.contract as any).idlParsed) {
       throw new Error("No server IDL available - client not bootstrapped");
     }
 
-    const serverIDL = this.contract.idlParsed;
+    const serverIDL = (this.contract as any).idlParsed;
     const clientIDL = this._localIDL;
 
     if (!clientIDL) {
@@ -163,13 +179,13 @@ class Client {
     }
 
     const deltas = diffIDL(clientIDL, serverIDL);
-    const hasError = deltas.some(d => d.severity === "Error");
+    const hasError = deltas.some((d: any) => d.severity === "Error");
     const compatible = !hasError;
 
     const serverChecksum = extractChecksum(serverIDL);
     const clientChecksum = extractChecksum(clientIDL);
 
-    const result = {
+    const result: VerificationResult = {
       compatible,
       serverChecksum,
       clientChecksum,
@@ -184,7 +200,7 @@ class Client {
     return result;
   }
 
-  async call(method, params, expectResponse = true) {
+  async call(method: string, params?: any, expectResponse: boolean = true): Promise<any> {
     const dotIndex = method.lastIndexOf(".");
     if (dotIndex === -1) {
       throw new Error(`Invalid method name format: ${method}`);
@@ -199,14 +215,14 @@ class Client {
         if (paramList !== null) {
           try {
             this.contract.validateRequest(ifaceName, funcName, paramList);
-          } catch (e) {
+          } catch (e: any) {
             throw new Error(`Request validation failed: ${e.message}`);
           }
         }
       } else if (Array.isArray(params)) {
         try {
           this.contract.validateRequest(ifaceName, funcName, params);
-        } catch (e) {
+        } catch (e: any) {
           throw new Error(`Request validation failed: ${e.message}`);
         }
       }
@@ -215,7 +231,7 @@ class Client {
     this.requestId++;
     const reqId = expectResponse ? this.requestId : null;
 
-    const req = {
+    const req: JsonRpcRequest = {
       jsonrpc: "2.0",
       method,
     };
@@ -246,7 +262,7 @@ class Client {
     if (this.validateResponse && this.contract && result !== undefined && result !== null) {
       try {
         this.contract.validateResponse(ifaceName, funcName, result);
-      } catch (e) {
+      } catch (e: any) {
         throw new Error(`Response validation failed: ${e.message}`);
       }
     }
@@ -254,11 +270,11 @@ class Client {
     return result;
   }
 
-  notify(method, params) {
-    return this.call(method, params, false);
+  notify(method: string, params?: any): Promise<void> {
+    return this.call(method, params, false) as any;
   }
 
-  namedToPositional(ifaceName, funcName, namedParams) {
+  private namedToPositional(ifaceName: string, funcName: string, namedParams: Record<string, any>): any[] | null {
     if (!this.contract) {
       return null;
     }
@@ -275,7 +291,7 @@ class Client {
 
     const paramDefs = func.parameters || [];
 
-    const positionalParams = [];
+    const positionalParams: any[] = [];
     for (const paramDef of paramDefs) {
       positionalParams.push(namedParams[paramDef.name]);
     }
@@ -283,7 +299,3 @@ class Client {
     return positionalParams;
   }
 }
-
-module.exports = {
-  Client,
-};

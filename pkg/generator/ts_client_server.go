@@ -398,10 +398,14 @@ var (
 //
 // Line-by-line processing keeps the transform predictable: each line is
 // classified by its leading token and rewritten. Multi-line constructs
-// (class/function/enum/interface bodies) are tracked via a per-pending-
-// export brace counter so the trailing module.exports.X = X line lands at
-// the matching close brace, and so multi-line interfaces and types are
-// dropped entirely.
+// (class/function/enum bodies) are tracked via a per-pending-export
+// brace counter so the trailing module.exports.X = X line lands at the
+// matching close brace.
+//
+// `export interface` and `export type` declarations are left in place
+// unchanged so that downstream `tsc --noEmit` can resolve type-only
+// references (e.g., `import * as types from './types'; types.RepeatRequest`).
+// Those declarations are erased at compile time by tsc itself.
 func transformCjs(content []byte) []byte {
 	var out bytes.Buffer
 	lines := strings.Split(string(content), "\n")
@@ -411,36 +415,21 @@ func transformCjs(content []byte) []byte {
 	// carries its own brace depth so unrelated braces (e.g., a non-export
 	// nested class) inside an export body don't accidentally close it.
 	var pending []pendingCjsExport
-	dropDepth := 0
-	dropping := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		// If we're inside a dropped interface/type body, track depth and skip.
-		if dropping {
-			dropDepth += strings.Count(line, "{") - strings.Count(line, "}")
-			if dropDepth <= 0 {
-				dropping = false
-				dropDepth = 0
-			}
-			continue
-		}
-
 		// Classify and rewrite the line.
 		switch {
-		case cjsImportNamedRE.MatchString(trimmed):
-			m := cjsImportNamedRE.FindStringSubmatch(trimmed)
-			requirePath := strings.TrimSuffix(m[2], ".js")
-			fmt.Fprintf(&out, "const { %s } = require('%s');\n", m[1], requirePath)
-		case cjsImportStarRE.MatchString(trimmed):
-			m := cjsImportStarRE.FindStringSubmatch(trimmed)
-			requirePath := strings.TrimSuffix(m[2], ".js")
-			fmt.Fprintf(&out, "const %s = require('%s');\n", m[1], requirePath)
-		case cjsImportDefaultRE.MatchString(trimmed):
-			m := cjsImportDefaultRE.FindStringSubmatch(trimmed)
-			requirePath := strings.TrimSuffix(m[2], ".js")
-			fmt.Fprintf(&out, "const %s = require('%s').default || require('%s');\n", m[1], requirePath, requirePath)
+		case cjsImportNamedRE.MatchString(trimmed), cjsImportStarRE.MatchString(trimmed), cjsImportDefaultRE.MatchString(trimmed):
+			// Leave import statements unchanged. The runtime tree for the
+			// CJS module style uses `export class` etc., so these imports
+			// resolve cleanly via `tsc --module CommonJS --esModuleInterop`
+			// (and via tsx at runtime). Converting them to `require()`
+			// here would shadow the runtime's exported types with local
+			// `const` bindings, which breaks `tsc --noEmit`.
+			out.WriteString(line)
+			out.WriteString("\n")
 		case cjsExportStarFromRE.MatchString(trimmed):
 			m := cjsExportStarFromRE.FindStringSubmatch(trimmed)
 			requirePath := strings.TrimSuffix(m[1], ".js")
@@ -456,18 +445,16 @@ func transformCjs(content []byte) []byte {
 				source, local := splitExportName(n)
 				fmt.Fprintf(&out, "module.exports.%s = require('%s').%s;\n", local, requirePath, source)
 			}
-		case cjsExportInterfaceRE.MatchString(trimmed):
-			// Drop the entire interface block. The opening line is always
-			// dropped; remaining body lines are dropped until the matching
-			// close brace is seen.
-			dropDepth = strings.Count(line, "{") - strings.Count(line, "}")
-			dropping = dropDepth > 0
-		case cjsExportTypeRE.MatchString(trimmed):
-			// Drop the entire type alias. The opening line is always
-			// dropped; remaining body lines (if any) are dropped until the
-			// matching close brace is seen.
-			dropDepth = strings.Count(line, "{") - strings.Count(line, "}")
-			dropping = dropDepth > 0
+		case cjsExportInterfaceRE.MatchString(trimmed), cjsExportTypeRE.MatchString(trimmed):
+			// Leave `export interface` / `export type` declarations in
+			// place. They are type-only constructs that tsc erases at
+			// compile time, and they must remain visible so that
+			// downstream `tsc --noEmit` (and any sibling namespace
+			// imports like `import * as types from './types'`) can
+			// resolve type references. They fall through to the
+			// default branch below.
+			out.WriteString(line)
+			out.WriteString("\n")
 		case cjsExportAbstractClassRE.MatchString(trimmed), cjsExportClassRE.MatchString(trimmed):
 			m := cjsExportAbstractClassRE.FindStringSubmatch(trimmed)
 			if m == nil {
@@ -971,7 +958,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			PrintFileCreated(clientPath, fs)
 
 			// Generate index.ts for this namespace (re-exports from types, server, client)
-			if err := generateNamespaceIndexTs(paths, ns, p.moduleStyle); err != nil {
+			if err := p.generateNamespaceIndexTs(paths, ns); err != nil {
 				return fmt.Errorf("failed to write %s/index.ts: %w", ns, err)
 			}
 			indexPath := filepath.Join(nsDir, "index.ts")
@@ -1078,7 +1065,15 @@ func (p *TSClientServer) copyRuntimeFiles(paths TSNamespacePaths, silent bool) e
 
 	for filename, data := range files {
 		dstPath := filepath.Join(runtimeDir, filename)
-		transformed := p.transformFileForStyle(data, p.moduleStyle)
+		// For esm-node the transform is a no-op; for esm-bundler it strips
+		// .js suffixes from relative imports. For cjs the embedded runtime
+		// tree is already authored as CJS (require/module.exports), so
+		// running the line-based CJS transform on it would be wasted work
+		// and could mangle content (e.g., trailing-newline drift).
+		transformed := data
+		if style != "cjs" {
+			transformed = p.transformFileForStyle(data, p.moduleStyle)
+		}
 		if err := os.WriteFile(dstPath, transformed, 0644); err != nil {
 			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)
 		}
@@ -1915,7 +1910,8 @@ func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, struct
 // generateNamespaceIndexTs writes an index.ts file to the namespace subdirectory
 // that re-exports from types.ts, server.ts, and client.ts. The import suffix
 // is style-aware: ".js" for ESM variants, none for CJS.
-func generateNamespaceIndexTs(paths TSNamespacePaths, namespace string, moduleStyle string) error {
+func (p *TSClientServer) generateNamespaceIndexTs(paths TSNamespacePaths, namespace string) error {
+	moduleStyle := p.moduleStyle
 	nsDir := paths.ResolveNamespaceDir(namespace)
 	indexContent := fmt.Sprintf(
 		"export * from '%s';\nexport * from '%s';\nexport * from '%s';\n",
@@ -1927,28 +1923,11 @@ func generateNamespaceIndexTs(paths TSNamespacePaths, namespace string, moduleSt
 	// Apply the active module-style transform so that, under esm-bundler,
 	// the .js suffix is stripped from the re-exports; under cjs, the
 	// `export * from` statements are rewritten to module.exports re-assign.
-	transformed := transformFileForStyleBytes([]byte(indexContent), moduleStyle)
+	transformed := p.transformFileForStyle([]byte(indexContent), moduleStyle)
 	if err := os.WriteFile(indexPath, transformed, 0644); err != nil {
 		return fmt.Errorf("failed to write %s/index.ts: %w", namespace, err)
 	}
 	return nil
-}
-
-// transformFileForStyleBytes is a free-function form of the per-style
-// transform used by helpers that don't carry a *TSClientServer (e.g.,
-// generateNamespaceIndexTs). Behaviour is identical to
-// (*TSClientServer).transformFileForStyle.
-func transformFileForStyleBytes(content []byte, moduleStyle string) []byte {
-	switch moduleStyle {
-	case "", "esm-node":
-		return content
-	case "esm-bundler":
-		return transformEsmBundler(content)
-	case "cjs":
-		return transformCjs(content)
-	default:
-		return content
-	}
 }
 
 // generateTestServerTs generates test_server.ts with concrete implementations of all interfaces

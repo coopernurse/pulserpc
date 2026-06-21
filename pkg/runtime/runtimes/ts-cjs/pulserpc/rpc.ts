@@ -2,15 +2,16 @@
  * RPC error handling for JSON-RPC 2.0
  */
 
-class RPCError extends Error {
-  constructor(code, message, data) {
+export class RPCError extends Error {
+  code: number;
+  data?: any;
+
+  constructor(code: number, message: string, data?: any) {
     super(`RPCError ${code}: ${message}`);
     this.code = code;
     this.data = data;
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, RPCError);
+    if (typeof (Error as any).captureStackTrace === "function") {
+      (Error as any).captureStackTrace(this, RPCError);
     }
   }
 }
-
-module.exports.RPCError = RPCError;

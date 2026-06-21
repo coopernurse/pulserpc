@@ -1,11 +1,11 @@
 /**
- * IDL diff functionality for contract verification
+ * IDL diff functionality for contract verification.
  */
 
-const { EntityType, ChangeType, Direction, Severity } = require("./types");
+import { EntityType, ChangeType, Direction, Severity, ContractDelta } from "./types";
 
-function diffIDL(clientIDL, serverIDL) {
-  const deltas = [];
+export function diffIDL(clientIDL: any, serverIDL: any): ContractDelta[] {
+  const deltas: ContractDelta[] = [];
 
   const clientInterfaces = extractInterfaces(clientIDL);
   const serverInterfaces = extractInterfaces(serverIDL);
@@ -26,8 +26,8 @@ function diffIDL(clientIDL, serverIDL) {
   return deltas;
 }
 
-function extractInterfaces(idl) {
-  const result = {};
+function extractInterfaces(idl: any): Record<string, any> {
+  const result: Record<string, any> = {};
   for (const ifaceData of idl.interfaces || []) {
     const name = ifaceData.name;
     if (name) {
@@ -37,8 +37,8 @@ function extractInterfaces(idl) {
   return result;
 }
 
-function extractStructs(idl) {
-  const result = {};
+function extractStructs(idl: any): Record<string, any> {
+  const result: Record<string, any> = {};
   for (const structData of idl.structs || []) {
     const name = structData.name;
     if (name) {
@@ -48,8 +48,8 @@ function extractStructs(idl) {
   return result;
 }
 
-function extractEnums(idl) {
-  const result = {};
+function extractEnums(idl: any): Record<string, any> {
+  const result: Record<string, any> = {};
   for (const enumData of idl.enums || []) {
     const name = enumData.name;
     if (name) {
@@ -59,8 +59,8 @@ function extractEnums(idl) {
   return result;
 }
 
-function extractErrors(idl) {
-  const result = {};
+function extractErrors(idl: any): Record<string, any> {
+  const result: Record<string, any> = {};
   for (const errData of idl.errors || []) {
     const name = errData.name;
     if (name) {
@@ -70,8 +70,8 @@ function extractErrors(idl) {
   return result;
 }
 
-function diffInterfaces(client, server) {
-  const deltas = [];
+function diffInterfaces(client: Record<string, any>, server: Record<string, any>): ContractDelta[] {
+  const deltas: ContractDelta[] = [];
 
   for (const name of Object.keys(client)) {
     if (name in server) {
@@ -106,8 +106,8 @@ function diffInterfaces(client, server) {
   return deltas;
 }
 
-function diffInterfaceMethods(ifaceName, clientIface, serverIface) {
-  const deltas = [];
+function diffInterfaceMethods(ifaceName: string, clientIface: any, serverIface: any): ContractDelta[] {
+  const deltas: ContractDelta[] = [];
   const clientMethods = extractMethods(clientIface);
   const serverMethods = extractMethods(serverIface);
 
@@ -154,8 +154,8 @@ function diffInterfaceMethods(ifaceName, clientIface, serverIface) {
   return deltas;
 }
 
-function extractMethods(iface) {
-  const result = {};
+function extractMethods(iface: any): Record<string, any> {
+  const result: Record<string, any> = {};
   for (const method of iface.methods || []) {
     const name = method.name;
     if (name) {
@@ -165,7 +165,7 @@ function extractMethods(iface) {
   return result;
 }
 
-function methodsEqual(a, b) {
+function methodsEqual(a: any, b: any): boolean {
   if (!mapsEqual(a.parameters, b.parameters)) {
     return false;
   }
@@ -175,7 +175,7 @@ function methodsEqual(a, b) {
   return true;
 }
 
-function mapsEqual(a, b) {
+function mapsEqual(a: any, b: any): boolean {
   if (a === null && b === null) return true;
   if (a === null || b === null) return false;
   if (typeof a === "object" && typeof b === "object") {
@@ -198,8 +198,8 @@ function mapsEqual(a, b) {
   return a === b;
 }
 
-function diffStructs(client, server) {
-  const deltas = [];
+function diffStructs(client: Record<string, any>, server: Record<string, any>): ContractDelta[] {
+  const deltas: ContractDelta[] = [];
 
   for (const name of Object.keys(client)) {
     if (name in server) {
@@ -234,8 +234,8 @@ function diffStructs(client, server) {
   return deltas;
 }
 
-function diffStructFields(structName, clientStruct, serverStruct) {
-  const deltas = [];
+function diffStructFields(structName: string, clientStruct: any, serverStruct: any): ContractDelta[] {
+  const deltas: ContractDelta[] = [];
   const clientFields = extractFields(clientStruct);
   const serverFields = extractFields(serverStruct);
 
@@ -315,8 +315,8 @@ function diffStructFields(structName, clientStruct, serverStruct) {
   return deltas;
 }
 
-function extractFields(structData) {
-  const result = {};
+function extractFields(structData: any): Record<string, any> {
+  const result: Record<string, any> = {};
   for (const field of structData.fields || []) {
     const name = field.name;
     if (name) {
@@ -326,7 +326,7 @@ function extractFields(structData) {
   return result;
 }
 
-function fieldsEqualDetailed(a, b) {
+function fieldsEqualDetailed(a: any, b: any): [boolean, boolean, boolean, boolean] {
   const typeChanged = !mapsEqual(a.type, b.type);
   const aOptional = getFieldOptional(a);
   const bOptional = getFieldOptional(b);
@@ -336,16 +336,16 @@ function fieldsEqualDetailed(a, b) {
   return [typeChanged, optionalityChanged, wasRequired, isRequired];
 }
 
-function getFieldOptional(field) {
+function getFieldOptional(field: any): boolean {
   return field.optional === true;
 }
 
-function isFieldRequired(field) {
+function isFieldRequired(field: any): boolean {
   return field.optional !== true;
 }
 
-function diffEnums(client, server) {
-  const deltas = [];
+function diffEnums(client: Record<string, any>, server: Record<string, any>): ContractDelta[] {
+  const deltas: ContractDelta[] = [];
 
   for (const name of Object.keys(client)) {
     if (name in server) {
@@ -380,8 +380,8 @@ function diffEnums(client, server) {
   return deltas;
 }
 
-function diffEnumValues(enumName, clientEnum, serverEnum) {
-  const deltas = [];
+function diffEnumValues(enumName: string, clientEnum: any, serverEnum: any): ContractDelta[] {
+  const deltas: ContractDelta[] = [];
   const clientValues = extractEnumValues(clientEnum);
   const serverValues = extractEnumValues(serverEnum);
 
@@ -416,8 +416,8 @@ function diffEnumValues(enumName, clientEnum, serverEnum) {
   return deltas;
 }
 
-function extractEnumValues(enumData) {
-  const result = {};
+function extractEnumValues(enumData: any): Record<string, true> {
+  const result: Record<string, true> = {};
   for (const value of enumData.values || []) {
     const name = value.name;
     if (name) {
@@ -427,8 +427,8 @@ function extractEnumValues(enumData) {
   return result;
 }
 
-function diffErrors(client, server) {
-  const deltas = [];
+function diffErrors(client: Record<string, any>, server: Record<string, any>): ContractDelta[] {
+  const deltas: ContractDelta[] = [];
 
   for (const name of Object.keys(client)) {
     if (!(name in server)) {
@@ -461,7 +461,12 @@ function diffErrors(client, server) {
   return deltas;
 }
 
-function classifySeverity(entityType, changeType, direction, extra = "") {
+export function classifySeverity(
+  entityType: EntityType,
+  changeType: ChangeType,
+  direction: Direction,
+  extra: string = ""
+): Severity {
   if (entityType === EntityType.Struct) {
     if (changeType === ChangeType.Removed && direction === Direction.ClientHasMore) {
       return Severity.Error;
@@ -520,15 +525,9 @@ function classifySeverity(entityType, changeType, direction, extra = "") {
   return Severity.Info;
 }
 
-module.exports = {
-  diffIDL,
-  classifySeverity,
-  extractChecksum,
-};
-
-function extractChecksum(idl) {
-  if (idl && typeof idl === 'object' && 'checksum' in idl) {
+export function extractChecksum(idl: any): string {
+  if (idl && typeof idl === "object" && "checksum" in idl) {
     return String(idl.checksum);
   }
-  return '';
+  return "";
 }

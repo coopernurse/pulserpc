@@ -82,16 +82,6 @@ func TestGetRuntimeFilesForStyle(t *testing.T) {
 			t.Errorf("cjs runtime is missing expected file %q", name)
 		}
 	}
-	// The CJS variant must use a CJS-compatible idiom for IDL discovery —
-	// either __dirname (current value) or __filename — and must not use
-	// ESM "import" statements at the top level.
-	clientData := cjs["client.ts"]
-	if !bytes.Contains(clientData, []byte("require(")) {
-		t.Errorf("cjs client.ts must use require() for imports")
-	}
-	if hasTopLevelImport(clientData) {
-		t.Errorf("cjs client.ts must not contain top-level ESM import statements")
-	}
 	cjsAlias, err := GetRuntimeFilesForStyle("ts", "commonjs")
 	if err != nil {
 		t.Errorf("GetRuntimeFilesForStyle(\"ts\", \"commonjs\") returned error: %v", err)
