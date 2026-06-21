@@ -1,12 +1,14 @@
 package generator
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -287,14 +289,19 @@ func (p *TSClientServer) resolveEffectiveModuleStyle(fs *flag.FlagSet, outputDir
 
 	// 4. Pick the effective style.
 	resolved := explicit
-	var detectedSource, detectedValue string
+	type detected struct {
+		source string // e.g. "tsconfig.json module"
+		value  string // e.g. "commonjs", "NodeNext"
+		path   string // filesystem path
+	}
+	var det *detected
 	switch {
 	case explicit != "" && explicit != "esm-node":
 		// Explicit non-default wins, but warn if it disagrees with detection.
 		if tsconfigStyle != "" && tsconfigStyle != explicit {
-			detectedSource, detectedValue = "tsconfig.json module", tsconfigPath
+			det = &detected{source: "tsconfig.json module", value: p.tsconfigModule, path: tsconfigPath}
 		} else if packageStyle != "" && packageStyle != explicit {
-			detectedSource, detectedValue = "package.json type", packagePath
+			det = &detected{source: "package.json type", value: p.packageJSONType, path: packagePath}
 		}
 	case explicit == "esm-node" && (tsconfigStyle != "" || packageStyle != ""):
 		// No explicit override (or it's the default) — use the highest-precedence detection.
@@ -313,24 +320,478 @@ func (p *TSClientServer) resolveEffectiveModuleStyle(fs *flag.FlagSet, outputDir
 	}
 
 	// Warn when explicit disagrees with detection.
-	if detectedSource != "" {
+	if det != nil {
 		fmt.Fprintf(stderrWriter,
 			"warning: -ts-module=%s overrides detected %s=%s at %s\n",
-			explicit, detectedSource, detectedValue, detectedPath(detectedValue))
+			explicit, det.source, det.value, det.path)
 	}
 
 	p.moduleStyle = resolved
 	return nil
 }
 
-// detectedPath returns the basename of a detected source path for use in
-// warning messages. It is split out so future iterations can swap in a
-// different format without changing the warning text logic.
-func detectedPath(p string) string {
-	if p == "" {
-		return ""
+
+// transformFileForStyle rewrites a TypeScript source file's bytes so they
+// match the given module style. See step 7 of the plan.
+//
+//   - "esm-node" (and empty/unknown): bytes are returned unchanged. The
+//     generator already emits ".js" import suffixes; the runtime tree at
+//     ts-node is already valid Node ESM.
+//   - "esm-bundler": the .js suffix is stripped from every RELATIVE import
+//     (./x.js, ../x.js). Absolute or package imports are left alone. The
+//     runtime tree at ts-node is used and transformed in place; bundlers
+//     resolve imports without the suffix.
+//   - "cjs": full ESM-to-CJS rewrite. import/export statements are converted
+//     to require()/module.exports, interfaces and types are dropped, and
+//     class/function/enum definitions are tracked so the matching
+//     module.exports.X = X line can be appended.
+//
+// Both runtime-copied files and user-generated code are passed through this
+// function. For the runtime files in ts-cjs, the input is already CJS and
+// the transform is effectively a no-op (no import/export lines remain to
+// rewrite).
+func (p *TSClientServer) transformFileForStyle(content []byte, moduleStyle string) []byte {
+	switch moduleStyle {
+	case "", "esm-node":
+		return content
+	case "esm-bundler":
+		return transformEsmBundler(content)
+	case "cjs":
+		return transformCjs(content)
+	default:
+		return content
 	}
-	return p
+}
+
+// bundlerRelativeImportRE matches `from '<relative-path-with-.js>'` and
+// captures the relative path (without the `.js` suffix). Relative paths are
+// defined as starting with `./` or `../`.
+var bundlerRelativeImportRE = regexp.MustCompile(`from\s+['"](\.{1,2}/[^'"]*?)\.js['"]`)
+
+// transformEsmBundler strips `.js` suffixes from every relative import path.
+// Other content is preserved verbatim.
+func transformEsmBundler(content []byte) []byte {
+	return bundlerRelativeImportRE.ReplaceAll(content, []byte("from '$1'"))
+}
+
+// cjs transform regular expressions. Each is anchored to the start of the
+// trimmed line so we don't accidentally match the word `import` inside a
+// string literal or a comment.
+var (
+	cjsImportNamedRE = regexp.MustCompile(`^import\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsImportStarRE  = regexp.MustCompile(`^import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsImportDefaultRE = regexp.MustCompile(`^import\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsExportStarFromRE = regexp.MustCompile(`^export\s+\*\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsExportNamedFromRE = regexp.MustCompile(`^export\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsExportInterfaceRE = regexp.MustCompile(`^export\s+(abstract\s+)?interface\s+\w+`)
+	cjsExportTypeRE = regexp.MustCompile(`^export\s+type\s+`)
+	cjsExportAbstractClassRE = regexp.MustCompile(`^export\s+abstract\s+class\s+(\w+)`)
+	cjsExportClassRE = regexp.MustCompile(`^export\s+class\s+(\w+)`)
+	cjsExportEnumRE = regexp.MustCompile(`^export\s+enum\s+(\w+)`)
+	cjsExportFunctionRE = regexp.MustCompile(`^export\s+(async\s+)?function\s+(\w+)`)
+	cjsExportConstRE = regexp.MustCompile(`^export\s+const\s+(\w+)\s*=`)
+	cjsExportNamedRE = regexp.MustCompile(`^export\s*\{\s*([^}]+?)\s*\}\s*;?\s*$`)
+)
+
+// transformCjs converts ESM TypeScript source to CommonJS-compatible
+// TypeScript. The runtime still expects .ts files (compile with tsc), but
+// the import/export statements become require/module.exports statements
+// so the compiled output works as Node CJS.
+//
+// Line-by-line processing keeps the transform predictable: each line is
+// classified by its leading token and rewritten. Multi-line constructs
+// (class/function/enum/interface bodies) are tracked via a per-pending-
+// export brace counter so the trailing module.exports.X = X line lands at
+// the matching close brace, and so multi-line interfaces and types are
+// dropped entirely.
+func transformCjs(content []byte) []byte {
+	var out bytes.Buffer
+	lines := strings.Split(string(content), "\n")
+
+	// Stack of pending exports whose module.exports.X = X assignment must
+	// be emitted when the matching close brace is encountered. Each entry
+	// carries its own brace depth so unrelated braces (e.g., a non-export
+	// nested class) inside an export body don't accidentally close it.
+	var pending []pendingCjsExport
+	dropDepth := 0
+	dropping := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// If we're inside a dropped interface/type body, track depth and skip.
+		if dropping {
+			dropDepth += strings.Count(line, "{") - strings.Count(line, "}")
+			if dropDepth <= 0 {
+				dropping = false
+				dropDepth = 0
+			}
+			continue
+		}
+
+		// Classify and rewrite the line.
+		switch {
+		case cjsImportNamedRE.MatchString(trimmed):
+			m := cjsImportNamedRE.FindStringSubmatch(trimmed)
+			requirePath := strings.TrimSuffix(m[2], ".js")
+			fmt.Fprintf(&out, "const { %s } = require('%s');\n", m[1], requirePath)
+		case cjsImportStarRE.MatchString(trimmed):
+			m := cjsImportStarRE.FindStringSubmatch(trimmed)
+			requirePath := strings.TrimSuffix(m[2], ".js")
+			fmt.Fprintf(&out, "const %s = require('%s');\n", m[1], requirePath)
+		case cjsImportDefaultRE.MatchString(trimmed):
+			m := cjsImportDefaultRE.FindStringSubmatch(trimmed)
+			requirePath := strings.TrimSuffix(m[2], ".js")
+			fmt.Fprintf(&out, "const %s = require('%s').default || require('%s');\n", m[1], requirePath, requirePath)
+		case cjsExportStarFromRE.MatchString(trimmed):
+			m := cjsExportStarFromRE.FindStringSubmatch(trimmed)
+			requirePath := strings.TrimSuffix(m[1], ".js")
+			fmt.Fprintf(&out, "module.exports = Object.assign(module.exports, require('%s'));\n", requirePath)
+		case cjsExportNamedFromRE.MatchString(trimmed):
+			m := cjsExportNamedFromRE.FindStringSubmatch(trimmed)
+			requirePath := strings.TrimSuffix(m[2], ".js")
+			for _, n := range strings.Split(m[1], ",") {
+				n = strings.TrimSpace(n)
+				if n == "" {
+					continue
+				}
+				source, local := splitExportName(n)
+				fmt.Fprintf(&out, "module.exports.%s = require('%s').%s;\n", local, requirePath, source)
+			}
+		case cjsExportInterfaceRE.MatchString(trimmed):
+			// Drop the entire interface block. The opening line is always
+			// dropped; remaining body lines are dropped until the matching
+			// close brace is seen.
+			dropDepth = strings.Count(line, "{") - strings.Count(line, "}")
+			dropping = dropDepth > 0
+		case cjsExportTypeRE.MatchString(trimmed):
+			// Drop the entire type alias. The opening line is always
+			// dropped; remaining body lines (if any) are dropped until the
+			// matching close brace is seen.
+			dropDepth = strings.Count(line, "{") - strings.Count(line, "}")
+			dropping = dropDepth > 0
+		case cjsExportAbstractClassRE.MatchString(trimmed), cjsExportClassRE.MatchString(trimmed):
+			m := cjsExportAbstractClassRE.FindStringSubmatch(trimmed)
+			if m == nil {
+				m = cjsExportClassRE.FindStringSubmatch(trimmed)
+			}
+			// Strip the leading `export ` keyword and emit the plain
+			// `class Foo { ... }` form, matching the CJS runtime's
+			// convention (no top-level `export` in the body).
+			pushPendingExport(&pending, m[1], stripExportPrefix(line), &out)
+		case cjsExportEnumRE.MatchString(trimmed):
+			m := cjsExportEnumRE.FindStringSubmatch(trimmed)
+			pushPendingExport(&pending, m[1], stripExportPrefix(line), &out)
+		case cjsExportFunctionRE.MatchString(trimmed):
+			m := cjsExportFunctionRE.FindStringSubmatch(trimmed)
+			pushPendingExport(&pending, m[2], stripExportPrefix(line), &out)
+		case cjsExportConstRE.MatchString(trimmed):
+			m := cjsExportConstRE.FindStringSubmatch(trimmed)
+			// export const is a single statement — emit the line without
+			// the leading `export` keyword, then append the
+			// module.exports assignment immediately.
+			out.WriteString(stripExportPrefix(line))
+			out.WriteString("\n")
+			fmt.Fprintf(&out, "module.exports.%s = %s;\n", m[1], m[1])
+		case cjsExportNamedRE.MatchString(trimmed):
+			m := cjsExportNamedRE.FindStringSubmatch(trimmed)
+			for _, n := range strings.Split(m[1], ",") {
+				n = strings.TrimSpace(n)
+				if n == "" {
+					continue
+				}
+				source, local := splitExportName(n)
+				fmt.Fprintf(&out, "module.exports.%s = %s;\n", local, source)
+			}
+		default:
+			out.WriteString(line)
+			out.WriteString("\n")
+			advancePendingExports(&pending, line, &out)
+		}
+	}
+
+	return out.Bytes()
+}
+
+// pendingCjsExport tracks an in-flight export whose module.exports.X = X
+// assignment must be appended when its body closes.
+type pendingCjsExport struct {
+	name  string
+	depth int
+}
+
+// pushPendingExport records a new pending export for a class, enum, or
+// function declaration. It writes the source line, computes the opening
+// brace delta, and pushes the entry on the stack.
+func pushPendingExport(stack *[]pendingCjsExport, name, line string, out *bytes.Buffer) {
+	delta := strings.Count(line, "{") - strings.Count(line, "}")
+	out.WriteString(line)
+	out.WriteString("\n")
+	*stack = append(*stack, pendingCjsExport{name: name, depth: delta})
+}
+
+// advancePendingExports walks the pending-export stack and emits
+// module.exports.X = X lines for any export whose body just closed on
+// this line. Unrelated braces inside an export body are tolerated
+// because each entry has its own depth counter.
+func advancePendingExports(stack *[]pendingCjsExport, line string, out *bytes.Buffer) {
+	delta := strings.Count(line, "{") - strings.Count(line, "}")
+	// Apply the brace delta to every entry's depth counter.
+	for i := range *stack {
+		(*stack)[i].depth += delta
+	}
+	// Pop entries whose depth has closed. Process innermost-first so
+	// nested export classes emit their module.exports in the right order.
+	for len(*stack) > 0 {
+		top := &(*stack)[len(*stack)-1]
+		if top.depth > 0 {
+			return
+		}
+		// depth <= 0: the body has closed on this line (or earlier).
+		// Emit the assignment and pop.
+		fmt.Fprintf(out, "module.exports.%s = %s;\n", top.name, top.name)
+		*stack = (*stack)[:len(*stack)-1]
+	}
+}
+
+// splitExportName parses an entry from an `export { a, b as c, ... }`
+// list, returning the source name (what to read) and the local name (what
+// to bind on module.exports). The input is already trimmed.
+func splitExportName(s string) (source, local string) {
+	if idx := strings.Index(s, " as "); idx >= 0 {
+		return strings.TrimSpace(s[:idx]), strings.TrimSpace(s[idx+len(" as "):])
+	}
+	return s, s
+}
+
+// stripExportPrefix removes the leading `export ` keyword from a line
+// (with one trailing space), if present. Used by the CJS transform so the
+// emitted body uses plain `class` / `function` / `enum` / `const`
+// declarations while the module.exports.X = X line carries the export.
+func stripExportPrefix(line string) string {
+	const prefix = "export "
+	if strings.HasPrefix(line, prefix) {
+		return line[len(prefix):]
+	}
+	return line
+}
+
+// writeTransformedFile is a helper that applies the active module-style
+// transform to content and writes it to path. It centralises the
+// transformation step required by step 7.3 of the plan: every user-generated
+// file and every runtime file passes through here.
+func (p *TSClientServer) writeTransformedFile(path string, content []byte) error {
+	transformed := p.transformFileForStyle(content, p.moduleStyle)
+	if err := os.WriteFile(path, transformed, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", path, err)
+	}
+	return nil
+}
+
+// wipePulserpcDirs removes any leftover runtime directories from a previous
+// generation. Different module styles ship different runtime trees, so a
+// stale `client.ts` from a prior CJS run could otherwise satisfy a later
+// ESM regeneration if the filenames happened to coincide. See step 8.
+//
+// runtimeDir is the resolved path to the runtime directory for the current
+// packageBase (typically <outputDir>/pulserpc or
+// <outputDir>/<packageBase>/pulserpc). namespaceDirs lists any per-namespace
+// runtime subdirectories the plan asks us to defend against
+// (<outputDir>/<namespace>/pulserpc); the existing path helper does not
+// place the runtime per-namespace, but a previous run or a custom caller
+// might have.
+//
+// os.RemoveAll is a no-op for non-existent paths, so wiping a directory
+// that doesn't exist does not surface as an error.
+func wipePulserpcDirs(runtimeDir string, namespaceDirs ...string) {
+	if runtimeDir != "" {
+		_ = os.RemoveAll(runtimeDir)
+	}
+	for _, d := range namespaceDirs {
+		if d == "" {
+			continue
+		}
+		_ = os.RemoveAll(d)
+	}
+}
+
+// tsPackageJSON is the JSON shape emitted by generatePackageJSON. The
+// struct tags control the field order in the rendered file.
+type tsPackageJSON struct {
+	Name    string            `json:"name"`
+	Version string            `json:"version"`
+	Type    string            `json:"type"`
+	Main    string            `json:"main,omitempty"`
+	Scripts map[string]string `json:"scripts"`
+	Exports map[string]string `json:"exports,omitempty"`
+}
+
+// sanitizePackageName returns a valid `name` field value for a generated
+// package.json, derived from filepath.Base(outputDir). Leading non-
+// alphanumeric runes are stripped; if nothing is left (e.g., basename "/"),
+// the literal fallback "pulserpc-generated" is returned.
+func sanitizePackageName(base string) string {
+	name := strings.TrimLeftFunc(base, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+	})
+	if name == "" {
+		return "pulserpc-generated"
+	}
+	return name
+}
+
+// generatePackageJSON writes a minimal package.json at outputDir that
+// matches the resolved module style. See step 9 of the plan.
+//
+// outputDir must be non-empty (the caller should skip generation when no
+// -dir was provided). The function refuses to overwrite an existing
+// package.json — callers must delete it or omit -ts-gen-package-json.
+//
+// Field rules:
+//   - `type` is "module" for esm-node and esm-bundler, "commonjs" for cjs.
+//   - `main` is "./client.js" only in flat (single-namespace, no-package)
+//     mode for esm-node and cjs. esm-bundler never gets `main` (bundlers
+//     resolve via `exports`). Multi-namespace mode omits `main` because
+//     the exports map is the canonical entry point.
+//   - `exports` is emitted only in multi-namespace mode, with one entry
+//     per non-empty namespace pointing at "./<ns>/index.js".
+//
+// The file is written via json.MarshalIndent so it round-trips through
+// encoding/json (an invariant in step 9).
+func (p *TSClientServer) generatePackageJSON(outputDir string, useNamespaceDirs bool, namespaces []string) error {
+	if outputDir == "" {
+		return fmt.Errorf("cannot generate package.json: outputDir is empty")
+	}
+	pkgPath := filepath.Join(outputDir, "package.json")
+	if _, err := os.Stat(pkgPath); err == nil {
+		return fmt.Errorf("package.json already exists at %s; remove it or skip -ts-gen-package-json", pkgPath)
+	}
+
+	typeVal := "module"
+	if p.moduleStyle == "cjs" {
+		typeVal = "commonjs"
+	}
+
+	pkg := tsPackageJSON{
+		Name:    sanitizePackageName(filepath.Base(outputDir)),
+		Version: "0.1.0",
+		Type:    typeVal,
+		Scripts: map[string]string{"build": "tsc"},
+	}
+
+	// `main` is only meaningful in flat mode for the non-bundler styles.
+	if p.moduleStyle != "esm-bundler" && !useNamespaceDirs {
+		pkg.Main = "./client.js"
+	}
+
+	// `exports` is only emitted in multi-namespace mode.
+	if useNamespaceDirs {
+		pkg.Exports = make(map[string]string, len(namespaces))
+		for _, ns := range namespaces {
+			if ns == "" {
+				continue
+			}
+			pkg.Exports["./"+ns] = "./" + ns + "/index.js"
+		}
+	}
+
+	data, err := json.MarshalIndent(pkg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal package.json: %w", err)
+	}
+	// Trailing newline so editors and POSIX tools are happy.
+	data = append(data, '\n')
+
+	if err := os.WriteFile(pkgPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", pkgPath, err)
+	}
+	return nil
+}
+
+// tsConfigJSON is the JSON shape emitted by generateTSConfig. We use a
+// free-form compilerOptions map so future tweaks (e.g., adding a new
+// compiler option) don't require schema changes here.
+type tsConfigJSON struct {
+	CompilerOptions map[string]interface{} `json:"compilerOptions"`
+	Include         []string               `json:"include"`
+	Exclude         []string               `json:"exclude"`
+}
+
+// tsconfigStyleValues returns the (module, moduleResolution) pair that
+// matches the resolved module style, per the §10.3 mapping table.
+func tsconfigStyleValues(moduleStyle string) (moduleVal, resolutionVal string) {
+	switch moduleStyle {
+	case "cjs":
+		return "CommonJS", "Node10"
+	case "esm-bundler":
+		return "Bundler", "Bundler"
+	default:
+		// "esm-node" and any defensive default.
+		return "NodeNext", "NodeNext"
+	}
+}
+
+// generateTSConfig writes a minimal tsconfig.json at outputDir that
+// matches the resolved module style. See step 10 of the plan.
+//
+// outputDir must be non-empty. The function refuses to overwrite an
+// existing tsconfig.json — callers must delete it or omit
+// -ts-gen-tsconfig.
+//
+// The file includes a base compilerOptions block (target ES2020,
+// strict=false, esModuleInterop, etc.), `include: ["**/*.ts"]`, and
+// `exclude: ["node_modules"]`. `module` and `moduleResolution` are
+// always consistent with the resolved module style.
+func (p *TSClientServer) generateTSConfig(outputDir string) error {
+	if outputDir == "" {
+		return fmt.Errorf("cannot generate tsconfig.json: outputDir is empty")
+	}
+	tsPath := filepath.Join(outputDir, "tsconfig.json")
+	if _, err := os.Stat(tsPath); err == nil {
+		return fmt.Errorf("tsconfig.json already exists at %s; remove it or skip -ts-gen-tsconfig", tsPath)
+	}
+
+	moduleVal, resolutionVal := tsconfigStyleValues(p.moduleStyle)
+
+	cfg := tsConfigJSON{
+		CompilerOptions: map[string]interface{}{
+			"target":                    "ES2020",
+			"module":                    moduleVal,
+			"moduleResolution":          resolutionVal,
+			"strict":                    false,
+			"esModuleInterop":           true,
+			"allowImportingTsExtensions": true,
+			"skipLibCheck":              true,
+		},
+		Include: []string{"**/*.ts"},
+		Exclude: []string{"node_modules"},
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal tsconfig.json: %w", err)
+	}
+	data = append(data, '\n')
+
+	if err := os.WriteFile(tsPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", tsPath, err)
+	}
+	return nil
+}
+
+// sortedNamespaceNames returns the keys of namespaceMap in deterministic
+// (sorted) order, with the empty namespace skipped. Used by
+// generatePackageJSON's exports map and by Generate's wiring.
+func sortedNamespaceNames(namespaceMap map[string]*NamespaceTypes) []string {
+	out := make([]string, 0, len(namespaceMap))
+	for k := range namespaceMap {
+		if k == "" {
+			continue
+		}
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Generate generates TypeScript HTTP server and client code from the parsed IDL
@@ -382,6 +843,22 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 	// Initialize path helpers with package base
 	paths := NewTSNamespacePaths(outputDir, p.packageBase)
+
+	// Step 8: wipe any leftover pulserpc runtime directories from a previous
+	// generation before re-creating them. Different module styles ship
+	// different runtime trees, so a stale `client.ts` from a prior CJS run
+	// could otherwise satisfy a later ESM regeneration if filenames
+	// happened to coincide. Wipe the single runtime dir (under packageBase
+	// when set) plus any per-namespace runtime subdirs as a defensive
+	// measure.
+	nsRuntimeDirs := make([]string, 0, len(namespaceMap))
+	for ns := range namespaceMap {
+		nsRuntimeDirs = append(nsRuntimeDirs, filepath.Join(outputDir, ns, "pulserpc"))
+		if packagePrefix != "" {
+			nsRuntimeDirs = append(nsRuntimeDirs, filepath.Join(outputDir, packagePrefix, ns, "pulserpc"))
+		}
+	}
+	wipePulserpcDirs(paths.ResolveRuntimeDir(), nsRuntimeDirs...)
 
 	// Ensure runtime directory exists
 	if err := paths.EnsureRuntimeDir(); err != nil {
@@ -459,24 +936,24 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			// Generate types.ts for this namespace
 			typesCode := generateTypesTsForNamespace(nsTypes, ns, nsStructMap, nsEnumMap, true, namespaceMap, p.moduleStyle)
 			typesPath := filepath.Join(nsDir, "types.ts")
-			if err := os.WriteFile(typesPath, []byte(typesCode), 0644); err != nil {
-				return fmt.Errorf("failed to write %s/types.ts: %w", ns, err)
+			if err := p.writeTransformedFile(typesPath, []byte(typesCode)); err != nil {
+				return err
 			}
 			PrintFileCreated(typesPath, fs)
 
 			// Generate server.ts for this namespace
 			serverCode := generateServerTsForNamespace(nsTypes, nsStructMap, nsEnumMap, nsInterfaceMap, packagePrefix, true, namespaceMap, p.moduleStyle)
 			serverPath := filepath.Join(nsDir, "server.ts")
-			if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
-				return fmt.Errorf("failed to write %s/server.ts: %w", ns, err)
+			if err := p.writeTransformedFile(serverPath, []byte(serverCode)); err != nil {
+				return err
 			}
 			PrintFileCreated(serverPath, fs)
 
 			// Generate client.ts for this namespace
 			clientCode := generateClientTsForNamespace(nsTypes, nsStructMap, nsEnumMap, packagePrefix, true, namespaceMap, p.moduleStyle)
 			clientPath := filepath.Join(nsDir, "client.ts")
-			if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
-				return fmt.Errorf("failed to write %s/client.ts: %w", ns, err)
+			if err := p.writeTransformedFile(clientPath, []byte(clientCode)); err != nil {
+				return err
 			}
 			PrintFileCreated(clientPath, fs)
 
@@ -491,24 +968,43 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		// Backwards-compatible flat output: generate single types.ts, server.ts, client.ts
 		typesCode := generateTypesTs(structMap, enumMap)
 		typesPath := filepath.Join(outputDir, "types.ts")
-		if err := os.WriteFile(typesPath, []byte(typesCode), 0644); err != nil {
-			return fmt.Errorf("failed to write types.ts: %w", err)
+		if err := p.writeTransformedFile(typesPath, []byte(typesCode)); err != nil {
+			return err
 		}
 		PrintFileCreated(typesPath, fs)
 
 		serverCode := generateServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, p.moduleStyle)
 		serverPath := filepath.Join(outputDir, "server.ts")
-		if err := os.WriteFile(serverPath, []byte(serverCode), 0644); err != nil {
-			return fmt.Errorf("failed to write server.ts: %w", err)
+		if err := p.writeTransformedFile(serverPath, []byte(serverCode)); err != nil {
+			return err
 		}
 		PrintFileCreated(serverPath, fs)
 
 		clientCode := generateClientTs(idl, structMap, enumMap, packagePrefix, namespaceMap, p.moduleStyle)
 		clientPath := filepath.Join(outputDir, "client.ts")
-		if err := os.WriteFile(clientPath, []byte(clientCode), 0644); err != nil {
-			return fmt.Errorf("failed to write client.ts: %w", err)
+		if err := p.writeTransformedFile(clientPath, []byte(clientCode)); err != nil {
+			return err
 		}
 		PrintFileCreated(clientPath, fs)
+	}
+
+	// Steps 9 & 10: emit package.json / tsconfig.json when the
+	// corresponding flags are set. Both files live at the root of
+	// outputDir, independent of namespace layout. The flag checks are
+	// no-ops when the flag isn't registered, matching the pattern used
+	// by `silent` and `generate-test-files` above.
+	if genPackageFlag := fs.Lookup("ts-gen-package-json"); genPackageFlag != nil && genPackageFlag.Value.String() == "true" {
+		namespaces := sortedNamespaceNames(namespaceMap)
+		if err := p.generatePackageJSON(outputDir, useNamespaceDirs, namespaces); err != nil {
+			return fmt.Errorf("failed to generate package.json: %w", err)
+		}
+		PrintFileCreated(filepath.Join(outputDir, "package.json"), fs)
+	}
+	if genTSConfigFlag := fs.Lookup("ts-gen-tsconfig"); genTSConfigFlag != nil && genTSConfigFlag.Value.String() == "true" {
+		if err := p.generateTSConfig(outputDir); err != nil {
+			return fmt.Errorf("failed to generate tsconfig.json: %w", err)
+		}
+		PrintFileCreated(filepath.Join(outputDir, "tsconfig.json"), fs)
 	}
 
 	// Check if generate-test-files flag is set
@@ -526,16 +1022,16 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		// Generate test_server.ts
 		testServerCode := generateTestServerTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, entryPointNs, p.moduleStyle)
 		testServerPath := filepath.Join(testDir, "test_server.ts")
-		if err := os.WriteFile(testServerPath, []byte(testServerCode), 0644); err != nil {
-			return fmt.Errorf("failed to write test_server.ts: %w", err)
+		if err := p.writeTransformedFile(testServerPath, []byte(testServerCode)); err != nil {
+			return err
 		}
 		PrintFileCreated(testServerPath, fs)
 
 		// Generate test_client.ts
 		testClientCode := generateTestClientTs(idl, structMap, enumMap, interfaceMap, packagePrefix, namespaceMap, entryPointNs, p.moduleStyle)
 		testClientPath := filepath.Join(testDir, "test_client.ts")
-		if err := os.WriteFile(testClientPath, []byte(testClientCode), 0644); err != nil {
-			return fmt.Errorf("failed to write test_client.ts: %w", err)
+		if err := p.writeTransformedFile(testClientPath, []byte(testClientCode)); err != nil {
+			return err
 		}
 		PrintFileCreated(testClientPath, fs)
 	}
@@ -547,6 +1043,11 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 // The runtime tree is selected from p.moduleStyle: "esm-node" and "esm-bundler"
 // share the ts-node tree (and the bundler transform in step 7 will rewrite
 // imports in the written files); "cjs" pulls from the ts-cjs tree.
+//
+// Each file's bytes pass through transformFileForStyle before being
+// written. For esm-node the transform is a strict no-op (byte-equal
+// output), for esm-bundler it strips the `.js` suffix from every relative
+// import, and for cjs it converts ESM imports/exports to require/module.exports.
 func (p *TSClientServer) copyRuntimeFiles(paths TSNamespacePaths, silent bool) error {
 	runtimeDir := paths.ResolveRuntimeDir()
 	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
@@ -564,7 +1065,8 @@ func (p *TSClientServer) copyRuntimeFiles(paths TSNamespacePaths, silent bool) e
 
 	for filename, data := range files {
 		dstPath := filepath.Join(runtimeDir, filename)
-		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+		transformed := p.transformFileForStyle(data, p.moduleStyle)
+		if err := os.WriteFile(dstPath, transformed, 0644); err != nil {
 			return fmt.Errorf("failed to write runtime file %s: %w", dstPath, err)
 		}
 		if !silent {
@@ -1409,10 +1911,31 @@ func generateNamespaceIndexTs(paths TSNamespacePaths, namespace string, moduleSt
 		tsImportPath(moduleStyle, "./client"),
 	)
 	indexPath := filepath.Join(nsDir, "index.ts")
-	if err := os.WriteFile(indexPath, []byte(indexContent), 0644); err != nil {
+	// Apply the active module-style transform so that, under esm-bundler,
+	// the .js suffix is stripped from the re-exports; under cjs, the
+	// `export * from` statements are rewritten to module.exports re-assign.
+	transformed := transformFileForStyleBytes([]byte(indexContent), moduleStyle)
+	if err := os.WriteFile(indexPath, transformed, 0644); err != nil {
 		return fmt.Errorf("failed to write %s/index.ts: %w", namespace, err)
 	}
 	return nil
+}
+
+// transformFileForStyleBytes is a free-function form of the per-style
+// transform used by helpers that don't carry a *TSClientServer (e.g.,
+// generateNamespaceIndexTs). Behaviour is identical to
+// (*TSClientServer).transformFileForStyle.
+func transformFileForStyleBytes(content []byte, moduleStyle string) []byte {
+	switch moduleStyle {
+	case "", "esm-node":
+		return content
+	case "esm-bundler":
+		return transformEsmBundler(content)
+	case "cjs":
+		return transformCjs(content)
+	default:
+		return content
+	}
 }
 
 // generateTestServerTs generates test_server.ts with concrete implementations of all interfaces

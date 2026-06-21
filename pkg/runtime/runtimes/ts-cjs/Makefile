@@ -44,7 +44,7 @@ test-integration:
 		-v $$(pwd):/workspace \
 		-w /workspace \
 		node:18-slim \
-		/bin/bash -c "apt-get update -qq && apt-get install -y -qq curl >/dev/null 2>&1 && bash tests/integration/test_generator_ts_cjs.sh"
+		/bin/bash -c "apt-get update -qq && apt-get install -y -qq curl >/dev/null 2>&1 && bash tests/integration/test_generator_ts.sh"
 
 # Clean build artifacts
 clean:
