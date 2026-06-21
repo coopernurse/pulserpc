@@ -77,7 +77,7 @@ The playground supports generating client and server code for:
 - **Go** (`go-client-server`): Modern Go code with interfaces and structs
 - **Java** (`java-client-server`): Java code with Jackson or Gson JSON library support
 - **Python** (`python-client-server`): Python 3 code with type hints
-- **TypeScript** (`ts-client-server`): TypeScript code for Node.js and browsers
+- **TypeScript** (`ts-client-server`): TypeScript code in three module styles — Node ESM, bundler ESM, or CommonJS — with optional auto-generated config files
 - **C#** (`csharp-client-server`): C# code for .NET applications
 
 ### API Endpoints

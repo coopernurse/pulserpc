@@ -19,6 +19,65 @@ layout: default
 | `Struct` | Class | `new Product({...})` |
 | `T [optional]` | `T \| undefined` | `string \| undefined` |
 
+## Module Styles
+
+PulseRPC generates TypeScript code in three module styles, controlled by the `-ts-module` CLI flag:
+
+| Style | Aliases | Default | Description | Import Format |
+|-------|---------|---------|-------------|---------------|
+| `esm-node` | `esm`, `node` | default | Node-flavored ESM with explicit `.js` import suffixes | `import { X } from './foo.js'` |
+| `esm-bundler` | `bundler` | | ESM without `.js` suffixes (for Vite, webpack, Next.js) | `import { X } from './foo'` |
+| `cjs` | `commonjs` | | CommonJS with `require()` and `module.exports` | `const { X } = require('./foo')` |
+
+### Auto-Detection
+
+When `-ts-module` is not set, PulseRPC resolves the style using this precedence:
+
+1. **Explicit `-ts-module` flag** — always wins if set.
+2. **`tsconfig.json` `compilerOptions.module`** — walks up from the output directory (up to 10 levels). Recognized values map as: `Node16`, `NodeNext`, `ES2022`, `ES2020`, `ESNext` → `esm-node`; `Bundler`, `Preserve` → `esm-bundler`; `CommonJS`, `Node10` → `cjs`.
+3. **`package.json` `type` field** — walks up from the output directory (up to 10 levels). `"module"` or absent → `esm-node`; `"commonjs"` → `cjs`.
+4. **Default** — `esm-node`.
+
+Use `-ts-no-detect` to skip steps 2–3 and always use the default (or the explicit flag if set).
+
+When the explicit flag disagrees with a detected value, a warning is printed to stderr but generation proceeds with the explicit value.
+
+### Generated Config Files
+
+Use `-ts-gen-package-json` and `-ts-gen-tsconfig` to generate matching project config files at `-dir`. These flags **error** if a `package.json` or `tsconfig.json` already exists at that location.
+
+Each style produces matching compiler settings:
+
+| Style | `package.json` `type` | `tsconfig.json` `module` | `tsconfig.json` `moduleResolution` |
+|-------|----------------------|--------------------------|------------------------------------|
+| `esm-node` | `"module"` | `NodeNext` | `NodeNext` |
+| `esm-bundler` | `"module"` | `Bundler` | `Bundler` |
+| `cjs` | `"commonjs"` | `CommonJS` | `Node10` |
+
+### When To Use Each Style
+
+| Style | Best for |
+|-------|----------|
+| `esm-node` | Standard Node.js projects using `"type": "module"` or `.mjs` files. Requires Node 16+. |
+| `esm-bundler` | Projects built with Vite, webpack, Next.js, or any bundler that resolves imports without `.js` suffixes. |
+| `cjs` | Node.js projects using `"type": "commonjs"`, legacy setups, or projects not yet migrated to ESM. |
+
+### Examples
+
+```bash
+# Auto-detect from project files, or use esm-node (default)
+pulserpc -plugin ts-client-server -dir ./src api/service.pulse
+
+# Explicit bundler style with generated config files
+pulserpc -plugin ts-client-server -dir ./src -ts-module=esm-bundler -ts-gen-package-json -ts-gen-tsconfig api/service.pulse
+
+# CommonJS
+pulserpc -plugin ts-client-server -dir ./src -ts-module=cjs api/service.pulse
+
+# CommonJS with generated config files, no auto-detection
+pulserpc -plugin ts-client-server -dir ./src -ts-module=cjs -ts-gen-package-json -ts-gen-tsconfig -ts-no-detect api/service.pulse
+```
+
 ## Generated Classes
 
 Each struct in your IDL becomes a TypeScript class:

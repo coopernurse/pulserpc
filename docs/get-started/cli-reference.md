@@ -74,6 +74,12 @@ pulserpc [flags] <idl-file>
 | Flag | Type | Description |
 |------|------|-------------|
 | `-package` | string | Package prefix for generated types and classes. Used for namespace isolation. |
+| `-ts-module` | string | Module style for generated TypeScript code. Values: `esm-node` (default, ESM with `.js` suffixes for Node), `esm-bundler` (ESM without `.js` suffixes for Vite/webpack), `cjs` (CommonJS). Aliases: `esm`, `node`, `bundler`, `commonjs`. When unset, auto-detected from `tsconfig.json` compilerOptions.module > `package.json` type > esm-node. |
+| `-ts-gen-package-json` | bool | Generate a `package.json` at `-dir` matching the resolved module style (errors if one already exists). |
+| `-ts-gen-tsconfig` | bool | Generate a `tsconfig.json` at `-dir` matching the resolved module style (errors if one already exists). |
+| `-ts-no-detect` | bool | Disable auto-detection of module style from `tsconfig.json`/`package.json`. Defaults to `esm-node` unless `-ts-module` is set. |
+
+Auto-detection walks up from the output directory (up to 10 levels) looking for `tsconfig.json` first, then `package.json`. See the [TypeScript Reference](../languages/typescript/reference.html#module-styles) for the full precedence chain and recognized values.
 
 #### Python Plugin (`python-client-server`)
 
@@ -161,6 +167,22 @@ Generate TypeScript with a namespace prefix:
 
 ```bash
 pulserpc -plugin ts-client-server -dir ./src -package '@mycompany/api' api/service.pulse
+```
+
+### Generate TypeScript Code with CJS and Config Files
+
+Generate CommonJS TypeScript code with matching config files:
+
+```bash
+pulserpc -plugin ts-client-server -dir ./src -ts-module=cjs -ts-gen-package-json -ts-gen-tsconfig api/service.pulse
+```
+
+### Generate TypeScript Code for Bundlers
+
+Generate ESM without `.js` import suffixes (for Vite, webpack, Next.js):
+
+```bash
+pulserpc -plugin ts-client-server -dir ./src -ts-module=esm-bundler api/service.pulse
 ```
 
 ### Generate Test Files

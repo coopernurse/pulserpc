@@ -41,7 +41,7 @@ if [ -f "$BINARY_PATH" ] && [ -x "$BINARY_PATH" ]; then
 elif command -v go >/dev/null 2>&1; then
     echo -e "${YELLOW}Building pulserpc binary in container...${NC}"
     cd "$PROJECT_ROOT"
-    go build -o "$BINARY_PATH" cmd/pulserpc/pulserpc.go
+    go build -o "$BINARY_PATH" ./cmd/pulse
     if [ ! -f "$BINARY_PATH" ]; then
         echo -e "${RED}ERROR: Failed to build pulserpc binary${NC}"
         exit 1

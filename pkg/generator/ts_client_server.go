@@ -616,7 +616,7 @@ type tsPackageJSON struct {
 // alphanumeric runes are stripped; if nothing is left (e.g., basename "/"),
 // the literal fallback "pulserpc-generated" is returned.
 func sanitizePackageName(base string) string {
-		name := strings.TrimLeftFunc(base, func(r rune) bool {
+	name := strings.TrimLeftFunc(base, func(r rune) bool {
 		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
 	})
 	if name == "" {

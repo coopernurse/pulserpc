@@ -44,7 +44,13 @@ For details on error handling, see [Error Handling](../../idl-guide/errors.html)
 Generate the TypeScript code from your IDL:
 
 ```bash
-pulserpc -plugin ts-client-server checkout.pulse
+pulserpc -plugin ts-client-server -dir ./src checkout.pulse
+```
+
+The default module style is `esm-node` (Node-flavored ESM with `.js` import suffixes). Use `-ts-module` to select `esm-bundler` (no `.js` suffixes, for Vite/webpack/Next.js) or `cjs` (CommonJS). Add `-ts-gen-package-json` and `-ts-gen-tsconfig` to auto-generate matching project config files (the examples below use `cjs`):
+
+```bash
+pulserpc -plugin ts-client-server -dir ./src -ts-module=cjs -ts-gen-package-json -ts-gen-tsconfig checkout.pulse
 ```
 
 This creates:
@@ -61,7 +67,7 @@ Create `my_server.ts` that implements your service handlers:
 
 {% include quickstart/ts-server.md %}
 
-Create a `package.json` file in the same directory:
+Create a `package.json` file in the same directory (if you used `-ts-gen-package-json`, this file was already generated — skip this step):
 
 ```json
 {
@@ -82,7 +88,7 @@ Create a `package.json` file in the same directory:
 }
 ```
 
-Create a `tsconfig.json` file in the same directory:
+Create a `tsconfig.json` file in the same directory (if you used `-ts-gen-tsconfig`, this file was already generated — skip this step):
 
 ```json
 {
