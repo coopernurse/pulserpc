@@ -41,8 +41,6 @@ const tsWalkUpMaxDepth = 10
 type TSClientServer struct {
 	packageBase    string
 	moduleStyle    string
-	genPackage     bool
-	genTSConfig    bool
 	noDetect       bool
 	packageJSONType string
 	tsconfigModule  string
@@ -64,7 +62,7 @@ func (p *TSClientServer) RegisterFlags(fs *flag.FlagSet) {
 		fs.String("package", "", "Base module path for generated imports (e.g., @myapp/lib/rpc). Creates single directory level under -dir.")
 	}
 	if fs.Lookup("ts-module") == nil {
-		fs.String("ts-module", "esm-node", "Module style for generated TypeScript code: esm-node (default), esm-bundler, or cjs. Aliases: esm, node, bundler, commonjs. Precedence when unset: tsconfig.json module > package.json type > esm-node.")
+		fs.String("ts-module", "", "Module style for generated TypeScript code: esm-node (default), esm-bundler, or cjs. Aliases: esm, node, bundler, commonjs. Precedence when unset: tsconfig.json module > package.json type > esm-node.")
 	}
 	if fs.Lookup("ts-gen-package-json") == nil {
 		fs.Bool("ts-gen-package-json", false, "Generate a package.json at -dir matching the resolved module style (errors if one already exists).")
@@ -295,16 +293,16 @@ func (p *TSClientServer) resolveEffectiveModuleStyle(fs *flag.FlagSet, outputDir
 		path   string // filesystem path
 	}
 	var det *detected
-	switch {
-	case explicit != "" && explicit != "esm-node":
-		// Explicit non-default wins, but warn if it disagrees with detection.
+
+	if explicitRaw != "" {
+		// Explicitly set via flag — always wins, but warn if it disagrees.
 		if tsconfigStyle != "" && tsconfigStyle != explicit {
 			det = &detected{source: "tsconfig.json module", value: p.tsconfigModule, path: tsconfigPath}
 		} else if packageStyle != "" && packageStyle != explicit {
 			det = &detected{source: "package.json type", value: p.packageJSONType, path: packagePath}
 		}
-	case explicit == "esm-node" && (tsconfigStyle != "" || packageStyle != ""):
-		// No explicit override (or it's the default) — use the highest-precedence detection.
+	} else {
+		// No explicit flag — use highest-precedence detection, else default (esm-node).
 		if tsconfigStyle != "" {
 			resolved = tsconfigStyle
 		} else if packageStyle != "" {
@@ -314,14 +312,14 @@ func (p *TSClientServer) resolveEffectiveModuleStyle(fs *flag.FlagSet, outputDir
 
 	// Warn when tsconfig and package.json disagree with each other.
 	if tsconfigStyle != "" && packageStyle != "" && tsconfigStyle != packageStyle {
-		fmt.Fprintf(stderrWriter,
+		_, _ = fmt.Fprintf(stderrWriter,
 			"warning: tsconfig.json module=%s disagrees with package.json type=%s; using tsconfig.json module=%s\n",
 			p.tsconfigModule, p.packageJSONType, p.tsconfigModule)
 	}
 
 	// Warn when explicit disagrees with detection.
 	if det != nil {
-		fmt.Fprintf(stderrWriter,
+		_, _ = fmt.Fprintf(stderrWriter,
 			"warning: -ts-module=%s overrides detected %s=%s at %s\n",
 			explicit, det.source, det.value, det.path)
 	}
@@ -631,8 +629,8 @@ type tsPackageJSON struct {
 // alphanumeric runes are stripped; if nothing is left (e.g., basename "/"),
 // the literal fallback "pulserpc-generated" is returned.
 func sanitizePackageName(base string) string {
-	name := strings.TrimLeftFunc(base, func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+		name := strings.TrimLeftFunc(base, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
 	})
 	if name == "" {
 		return "pulserpc-generated"
@@ -753,18 +751,33 @@ func (p *TSClientServer) generateTSConfig(outputDir string) error {
 
 	moduleVal, resolutionVal := tsconfigStyleValues(p.moduleStyle)
 
+	compilerOpts := map[string]interface{}{
+		"target":           "ES2020",
+		"module":           moduleVal,
+		"moduleResolution": resolutionVal,
+		"strict":           false,
+		"esModuleInterop":  true,
+		"skipLibCheck":     true,
+	}
+	// allowImportingTsExtensions is incompatible with module: CommonJS
+	// in TypeScript 5.x (requires noEmit or rewriteRelativeImportExtensions).
+	if p.moduleStyle != "cjs" {
+		compilerOpts["allowImportingTsExtensions"] = true
+	}
+	// CJS code uses require(), module.exports, and process; tell tsc where to
+	// find type declarations for these Node built-ins.
+	if p.moduleStyle == "cjs" {
+		compilerOpts["types"] = []string{"node"}
+	}
+	// moduleResolution=Node10 is deprecated in TS 5.x+; suppress the
+	// deprecation diagnostic so tsc --project works without error.
+	if resolutionVal == "Node10" {
+		compilerOpts["ignoreDeprecations"] = "6.0"
+	}
 	cfg := tsConfigJSON{
-		CompilerOptions: map[string]interface{}{
-			"target":                    "ES2020",
-			"module":                    moduleVal,
-			"moduleResolution":          resolutionVal,
-			"strict":                    false,
-			"esModuleInterop":           true,
-			"allowImportingTsExtensions": true,
-			"skipLibCheck":              true,
-		},
-		Include: []string{"**/*.ts"},
-		Exclude: []string{"node_modules"},
+		CompilerOptions: compilerOpts,
+		Include:         []string{"**/*.ts"},
+		Exclude:         []string{"node_modules"},
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -2268,7 +2281,7 @@ func writeDefaultTestValueTs(sb *strings.Builder, t *parser.Type, structMap map[
 // generateTestClientTs generates test_client.ts that exercises all client methods
 // When entryPointNs is provided, the file will be placed in that namespace subdirectory,
 // so imports are adjusted accordingly.
-func generateTestClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, entryPointNs string, moduleStyle string) string {
+func generateTestClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, entryPointNs string, _ string) string {
 	var sb strings.Builder
 
 	// Determine if we're generating in a namespace subdirectory
