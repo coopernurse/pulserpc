@@ -902,6 +902,10 @@ func TestTsStaticClientGeneration(t *testing.T) {
 		assertTsFileContains(t, outputDir, "client.ts", "export class CatalogServiceClient")
 		assertTsFileContains(t, outputDir, "client.ts", "constructor(private transport: Transport)")
 		assertTsFileContains(t, outputDir, "client.ts", "async listProducts()")
+		// Each request must carry a JSON-RPC id; without it the request is a
+		// notification and the server is not obligated to respond.
+		assertTsFileContains(t, outputDir, "client.ts", "private _nextId = 0;")
+		assertTsFileContains(t, outputDir, "client.ts", "id: ++this._nextId,")
 	})
 }
 

@@ -12,7 +12,7 @@ ifeq ($(DOCKER_AVAILABLE),yes)
 else
 	@echo "Using local Node.js for testing..."
 	@node --version >/dev/null 2>&1 || (echo "Error: Node.js not found. Please install Node.js 18+ or use Docker." && exit 1)
-	@npx tsx pulserpc/tests/test_rpc.ts && npx tsx pulserpc/tests/test_types.ts && npx tsx pulserpc/tests/test_validation.ts || (echo "Error: TypeScript runtime tests failed. Using Docker..." && $(MAKE) test-docker)
+	@npx tsx pulserpc/tests/test_rpc.ts && npx tsx pulserpc/tests/test_types.ts && npx tsx pulserpc/tests/test_validation.ts && npx tsx pulserpc/tests/test_transport.ts || (echo "Error: TypeScript runtime tests failed. Using Docker..." && $(MAKE) test-docker)
 endif
 
 # Test using Docker
@@ -20,7 +20,7 @@ test-docker:
 	@echo "Testing TypeScript runtime in Docker..."
 	@docker run --rm -v $(PWD):/workspace -w /workspace \
 		$(TS_IMAGE) \
-		/bin/bash -c "npm install -g tsx typescript @types/node >/dev/null 2>&1 && cd pulserpc/tests && tsx test_rpc.ts && tsx test_types.ts && tsx test_validation.ts"
+		/bin/bash -c "npm install -g tsx typescript @types/node >/dev/null 2>&1 && cd pulserpc/tests && tsx test_rpc.ts && tsx test_types.ts && tsx test_validation.ts && tsx test_transport.ts"
 
 # Test generator integration (requires Docker)
 test-integration:

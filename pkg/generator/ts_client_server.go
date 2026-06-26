@@ -1942,6 +1942,7 @@ func writeClientMethodTs(sb *strings.Builder, iface *parser.Interface, method *p
 	// Build request
 	fmt.Fprintf(sb, "    const _req = {\n")
 	sb.WriteString("      jsonrpc: \"2.0\" as const,\n")
+	sb.WriteString("      id: ++this._nextId,\n")
 	fmt.Fprintf(sb, "      method: \"%s.%s\",\n", iface.Name, method.Name)
 	if len(method.Parameters) > 0 {
 		sb.WriteString("      params: [")
@@ -1988,6 +1989,7 @@ func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, struct
 
 	clientName := iface.Name + "Client"
 	fmt.Fprintf(sb, "export class %s {\n", clientName)
+	sb.WriteString("  private _nextId = 0;\n")
 	sb.WriteString("  constructor(private transport: Transport) {}\n\n")
 
 	// Generate methods

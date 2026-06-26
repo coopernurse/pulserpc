@@ -55,7 +55,9 @@ export class HttpTransport extends Transport {
     fetchFn: typeof fetch = fetch
   ) {
     super();
-    this.baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+    // The endpoint URL is used verbatim; do not strip or append anything so
+    // callers can target a specific path (e.g. a reverse-proxied /api/rpc).
+    this.baseUrl = baseUrl;
     this.headers = {
       "Content-Type": "application/json",
       ...headers,
@@ -64,7 +66,7 @@ export class HttpTransport extends Transport {
   }
 
   async request(req: JsonRpcRequest): Promise<JsonRpcResponse> {
-    const url = `${this.baseUrl}/`;
+    const url = this.baseUrl;
 
     const response = await this.fetchFn(url, {
       method: "POST",
