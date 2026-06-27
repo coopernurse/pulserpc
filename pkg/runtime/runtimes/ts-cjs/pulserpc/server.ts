@@ -101,7 +101,8 @@ export class Server {
         try {
           this.contract.validateRequest(ifaceName, funcName, params);
         } catch (e: any) {
-          return this.errorResponse(reqId, -32602, "Invalid params", e.message);
+          const code = e instanceof RPCError ? e.code : -32602;
+          return this.errorResponse(reqId, code, e.message || "Invalid params", e.data);
         }
       }
 
@@ -124,7 +125,8 @@ export class Server {
         try {
           this.contract.validateRequest(ifaceName, funcName, paramList);
         } catch (e: any) {
-          return this.errorResponse(reqId, -32602, "Invalid params", e.message);
+          const code = e instanceof RPCError ? e.code : -32602;
+          return this.errorResponse(reqId, code, e.message || "Invalid params", e.data);
         }
       }
     }

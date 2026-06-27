@@ -27,6 +27,8 @@ from .rpctypes import (
     Severity,
     ContractDelta,
     VerificationResult,
+    ValidationError,
+    ValidationResult,
 )
 from .diff import diff_idl
 from .contract import (
@@ -61,6 +63,8 @@ __all__ = [
     "Severity",
     "ContractDelta",
     "VerificationResult",
+    "ValidationError",
+    "ValidationResult",
     "diff_idl",
     "ContractAuditor",
     "NoOpAuditor",

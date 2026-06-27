@@ -2,66 +2,96 @@
 
 from typing import Any, Callable, Dict, List
 
-from .rpctypes import find_struct, find_enum, get_struct_fields
+from .rpctypes import find_struct, find_enum, get_struct_fields, ValidationError
 
 
-def validate_string(value: Any) -> None:
-    """Validate that value is a string"""
+def _join_path(parent: str, child: str) -> str:
+    return f"{parent}.{child}" if parent else f".{child}"
+
+
+def _array_index_path(parent: str, index: Any) -> str:
+    return f"{parent}[{index}]"
+
+
+def _make_error(path: str, message: str) -> ValidationError:
+    return ValidationError(path=path, message=message)
+
+
+def validate_string(value: Any, path: str = "") -> List[ValidationError]:
     if not isinstance(value, str):
-        raise TypeError(f"Expected string, got {type(value).__name__}")
+        return [_make_error(path, f"Expected string, got {type(value).__name__}")]
+    return []
 
 
-def validate_int(value: Any) -> None:
-    """Validate that value is an int"""
+def validate_int(value: Any, path: str = "") -> List[ValidationError]:
+    if isinstance(value, bool):
+        return [_make_error(path, f"Expected int, got bool")]
     if isinstance(value, int):
-        return
-    if isinstance(value, float) and value == int(value):
-        return
-    raise TypeError(f"Expected int, got {type(value).__name__}")
+        return []
+    if isinstance(value, float):
+        if value != value:  # NaN check
+            return [_make_error(path, f"Expected int, got float NaN")]
+        if value == float('inf') or value == float('-inf'):
+            return [_make_error(path, f"Expected int, got float infinity")]
+        if value == int(value):
+            return []
+    return [_make_error(path, f"Expected int, got {type(value).__name__}")]
 
 
-def validate_float(value: Any) -> None:
-    """Validate that value is a float or int"""
+def validate_float(value: Any, path: str = "") -> List[ValidationError]:
     if not isinstance(value, (int, float)):
-        raise TypeError(f"Expected float, got {type(value).__name__}")
+        return [_make_error(path, f"Expected float, got {type(value).__name__}")]
+    return []
 
 
-def validate_bool(value: Any) -> None:
-    """Validate that value is a bool"""
+def validate_bool(value: Any, path: str = "") -> List[ValidationError]:
     if not isinstance(value, bool):
-        raise TypeError(f"Expected bool, got {type(value).__name__}")
+        return [_make_error(path, f"Expected bool, got {type(value).__name__}")]
+    return []
 
 
-def validate_array(value: Any, element_validator: Callable[[Any], None]) -> None:
-    """Validate that value is an array and each element passes validation"""
+def validate_array(
+    value: Any,
+    element_validator: Callable[[Any, str], List[ValidationError]],
+    path: str = ""
+) -> List[ValidationError]:
     if not isinstance(value, list):
-        raise TypeError(f"Expected list, got {type(value).__name__}")
+        return [_make_error(path, f"Expected list, got {type(value).__name__}")]
+    errors: List[ValidationError] = []
     for i, elem in enumerate(value):
-        try:
-            element_validator(elem)
-        except Exception as e:
-            raise ValueError(f"Array element at index {i} validation failed: {e}") from e
+        element_path = _array_index_path(path, i)
+        errors.extend(element_validator(elem, element_path))
+    return errors
 
 
-def validate_map(value: Any, value_validator: Callable[[Any], None]) -> None:
-    """Validate that value is a map (dict) with string keys and validated values"""
+def validate_map(
+    value: Any,
+    value_validator: Callable[[Any, str], List[ValidationError]],
+    path: str = ""
+) -> List[ValidationError]:
     if not isinstance(value, dict):
-        raise TypeError(f"Expected dict, got {type(value).__name__}")
+        return [_make_error(path, f"Expected dict, got {type(value).__name__}")]
+    errors: List[ValidationError] = []
     for key, val in value.items():
         if not isinstance(key, str):
-            raise TypeError(f"Map key must be string, got {type(key).__name__}")
-        try:
-            value_validator(val)
-        except Exception as e:
-            raise ValueError(f"Map value for key '{key}' validation failed: {e}") from e
+            errors.append(_make_error(path, f"Map key must be string, got {type(key).__name__}"))
+            continue
+        key_path = _array_index_path(path, key)
+        errors.extend(value_validator(val, key_path))
+    return errors
 
 
-def validate_enum(value: Any, enum_name: str, allowed_values: List[str]) -> None:
-    """Validate that value is a string and matches one of the allowed enum values"""
+def validate_enum(
+    value: Any,
+    enum_name: str,
+    allowed_values: List[str],
+    path: str = ""
+) -> List[ValidationError]:
     if not isinstance(value, str):
-        raise TypeError(f"Expected string for enum {enum_name}, got {type(value).__name__}")
+        return [_make_error(path, f"Expected string for enum {enum_name}, got {type(value).__name__}")]
     if value not in allowed_values:
-        raise ValueError(f"Invalid value for enum {enum_name}: '{value}'. Allowed values: {allowed_values}")
+        return [_make_error(path, f"Invalid value for enum {enum_name}: '{value}'. Allowed values: {allowed_values}")]
+    return []
 
 
 def validate_struct(
@@ -69,37 +99,41 @@ def validate_struct(
     struct_name: str,
     struct_def: Dict[str, Any],
     all_structs: Dict[str, Any],
-    all_enums: Dict[str, Any]
-) -> None:
-    """Validate that value is a dict matching the struct definition"""
+    all_enums: Dict[str, Any],
+    path: str = ""
+) -> List[ValidationError]:
     if not isinstance(value, dict):
-        raise TypeError(f"Expected dict for struct {struct_name}, got {type(value).__name__}")
-    
-    # Get all fields including parent fields
+        return [_make_error(path, f"Expected dict for struct {struct_name}, got {type(value).__name__}")]
+
     fields = get_struct_fields(struct_name, all_structs)
-    
-    # Check required fields
+    errors: List[ValidationError] = []
+
     for field in fields:
         field_name = field['name']
         field_type = field['type']
         is_optional = field.get('optional', False)
-        
+        field_path = _join_path(path, field_name)
+
         if field_name not in value:
             if not is_optional:
-                raise ValueError(f"Missing required field '{field_name}' in struct {struct_name}")
+                errors.append(_make_error(
+                    field_path,
+                    f"Missing required field '{field_name}' in struct {struct_name}"
+                ))
         else:
-            # Field is present, validate it
             field_value = value[field_name]
             if field_value is None:
                 if not is_optional:
-                    raise ValueError(f"Field '{field_name}' in struct {struct_name} cannot be None")
+                    errors.append(_make_error(
+                        field_path,
+                        f"Field '{field_name}' in struct {struct_name} cannot be None"
+                    ))
             else:
-                # Create validator for this field type
-                field_validator = lambda v: validate_type(v, field_type, all_structs, all_enums, is_optional)
-                try:
-                    field_validator(field_value)
-                except Exception as e:
-                    raise ValueError(f"Field '{field_name}' in struct {struct_name} validation failed: {e}") from e
+                errors.extend(
+                    validate_type(field_value, field_type, all_structs, all_enums, is_optional, field_path)
+                )
+
+    return errors
 
 
 def validate_type(
@@ -107,66 +141,53 @@ def validate_type(
     type_def: Dict[str, Any],
     all_structs: Dict[str, Any],
     all_enums: Dict[str, Any],
-    is_optional: bool = False
-) -> None:
-    """Validate a value against a type definition"""
-    # Handle optional types
+    is_optional: bool = False,
+    path: str = ""
+) -> List[ValidationError]:
     if value is None:
         if is_optional:
-            return
+            return []
         else:
-            raise ValueError("Value cannot be None for non-optional type")
-    
-    # Built-in types
+            return [_make_error(path, "Value cannot be None for non-optional type")]
+
     if type_def.get('builtIn') == 'string':
-        validate_string(value)
+        return validate_string(value, path)
     elif type_def.get('builtIn') == 'int':
-        validate_int(value)
+        return validate_int(value, path)
     elif type_def.get('builtIn') == 'float':
-        validate_float(value)
+        return validate_float(value, path)
     elif type_def.get('builtIn') == 'bool':
-        validate_bool(value)
-    # Array types
+        return validate_bool(value, path)
     elif type_def.get('array'):
         element_type = type_def['array']
-        element_validator = lambda v: validate_type(v, element_type, all_structs, all_enums, False)
-        validate_array(value, element_validator)
-    # Map types
+        element_validator = lambda v, p: validate_type(v, element_type, all_structs, all_enums, False, p)
+        return validate_array(value, element_validator, path)
     elif type_def.get('mapValue'):
         value_type = type_def['mapValue']
-        value_validator = lambda v: validate_type(v, value_type, all_structs, all_enums, False)
-        validate_map(value, value_validator)
-    # User-defined types
+        value_validator = lambda v, p: validate_type(v, value_type, all_structs, all_enums, False, p)
+        return validate_map(value, value_validator, path)
     elif type_def.get('userDefined'):
         user_type = type_def['userDefined']
-        # Check if it's a struct
-        # Try direct lookup first (for qualified names like "inc.Response")
         struct_def = find_struct(user_type, all_structs)
-        # If not found and it's a simple name (no dot), try qualifying with each namespace
         if not struct_def and '.' not in user_type:
-            # Try to find the struct by looking for any qualified key that ends with this simple name
             for qualified_key in all_structs:
                 if qualified_key.endswith('.' + user_type):
                     struct_def = all_structs[qualified_key]
-                    user_type = qualified_key  # Update to use the qualified name
+                    user_type = qualified_key
                     break
         if struct_def:
-            validate_struct(value, user_type, struct_def, all_structs, all_enums)
-        # Check if it's an enum
+            return validate_struct(value, user_type, struct_def, all_structs, all_enums, path)
         else:
             enum_def = find_enum(user_type, all_enums)
-            # If not found and it's a simple name (no dot), try qualifying with each namespace
             if not enum_def and '.' not in user_type:
-                # Try to find the enum by looking for any qualified key that ends with this simple name
                 for qualified_key in all_enums:
                     if qualified_key.endswith('.' + user_type):
                         enum_def = all_enums[qualified_key]
                         break
             if enum_def:
                 allowed_values = [v['name'] for v in enum_def.get('values', [])]
-                validate_enum(value, user_type, allowed_values)
+                return validate_enum(value, user_type, allowed_values, path)
             else:
-                raise ValueError(f"Unknown user-defined type: {user_type}")
+                return [_make_error(path, f"Unknown user-defined type: {user_type}")]
     else:
-        raise ValueError(f"Invalid type definition: {type_def}")
-
+        return [_make_error(path, f"Invalid type definition: {type_def}")]

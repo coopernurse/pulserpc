@@ -5,8 +5,10 @@
  * and provides validation for requests and responses.
  */
 
-import type { StructMap, EnumMap, FieldDef } from "./types";
+import * as fs from "fs";
+import type { StructMap, EnumMap, FieldDef, ValidationError, ValidationResult } from "./types";
 import { validateType } from "./validation";
+import { RPCError } from "./rpc";
 
 export interface ContractAuditor {
   audit(result: { compatible: boolean; deltas: any[] }): void;
@@ -82,6 +84,21 @@ export class InterfaceImpl {
   }
 }
 
+function buildValidationResult(errors: ValidationError[]): ValidationResult {
+  if (errors.length === 0) {
+    return { valid: true };
+  }
+  const result: ValidationResult = {
+    valid: false,
+    error: errors.map(e => e.path ? `${e.path}: ${e.message}` : e.message).join("; "),
+  };
+  const paths = errors.map(e => e.path).filter(Boolean);
+  if (paths.length > 0) {
+    result.invalidFields = paths;
+  }
+  return result;
+}
+
 /**
  * Represents a parsed IDL contract.
  *
@@ -126,6 +143,14 @@ export class Contract {
     }
   }
 
+  /**
+   * Load a Contract from a JSON file path
+   */
+  static fromFile(path: string): Contract {
+    const content = fs.readFileSync(path, "utf-8");
+    return new Contract(JSON.parse(content));
+  }
+
   hasInterface(ifaceName: string): boolean {
     return this.interfaces.has(ifaceName);
   }
@@ -134,57 +159,76 @@ export class Contract {
     return this.interfaces.get(ifaceName);
   }
 
+  /**
+   * Validate a value against a named type (struct or enum) from the IDL
+   */
+  validate(typeName: string, value: any): ValidationResult {
+    const typeDef = { userDefined: typeName };
+    const errors = validateType(value, typeDef, this.structs, this.enums);
+    return buildValidationResult(errors);
+  }
+
   validateRequest(ifaceName: string, funcName: string, params: any[]): void {
     const iface = this.getInterface(ifaceName);
     if (!iface) {
-      throw new Error(`Unknown interface: '${ifaceName}'`);
+      throw new RPCError(-32602, `Unknown interface: '${ifaceName}'`);
     }
 
     const func = iface.getFunction(funcName);
     if (!func) {
-      throw new Error(`${ifaceName}: Unknown function: '${funcName}'`);
+      throw new RPCError(-32602, `${ifaceName}: Unknown function: '${funcName}'`);
     }
 
     const paramDefs: FieldDef[] = func.parameters || [];
 
     if (params.length !== paramDefs.length) {
-      throw new Error(
+      throw new RPCError(
+        -32602,
         `Function '${ifaceName}.${funcName}' expects ${paramDefs.length} param(s). ${params.length} given.`
       );
     }
 
+    const allErrors: ValidationError[] = [];
     for (let i = 0; i < params.length; i++) {
       const paramValue = params[i];
       const paramDef = paramDefs[i];
-      const paramName = paramDef.name;
       const paramType = paramDef.type;
       const isOptional = paramDef.optional || false;
 
-      try {
-        validateType(paramValue, paramType, this.structs, this.enums, isOptional);
-      } catch (e: any) {
-        throw new Error(
-          `Function '${ifaceName}.${funcName}' invalid param '${paramName}'. ${e.message}`
-        );
+      const errors = validateType(paramValue, paramType, this.structs, this.enums, isOptional);
+      for (const err of errors) {
+        allErrors.push({
+          path: err.path ? `param[${i}]${err.path}` : `param[${i}]`,
+          message: err.message,
+        });
       }
+    }
+
+    if (allErrors.length > 0) {
+      throw new RPCError(
+        -32602,
+        `Function '${ifaceName}.${funcName}' invalid params`,
+        buildValidationResult(allErrors)
+      );
     }
   }
 
   validateResponse(ifaceName: string, funcName: string, result: any): void {
     const iface = this.getInterface(ifaceName);
     if (!iface) {
-      throw new Error(`Unknown interface: '${ifaceName}'`);
+      throw new RPCError(-32603, `Unknown interface: '${ifaceName}'`);
     }
 
     const func = iface.getFunction(funcName);
     if (!func) {
-      throw new Error(`${ifaceName}: Unknown function: '${funcName}'`);
+      throw new RPCError(-32603, `${ifaceName}: Unknown function: '${funcName}'`);
     }
 
     const returnType = func.returnType;
     if (!returnType) {
       if (result !== null && result !== undefined) {
-        throw new Error(
+        throw new RPCError(
+          -32603,
           `Function '${ifaceName}.${funcName}' invalid response: '${JSON.stringify(result)}'. Expected null/undefined`
         );
       }
@@ -192,11 +236,12 @@ export class Contract {
     }
 
     const isOptional = func.returnOptional || false;
-    try {
-      validateType(result, returnType, this.structs, this.enums, isOptional);
-    } catch (e: any) {
-      throw new Error(
-        `Function '${ifaceName}.${funcName}' invalid response: '${JSON.stringify(result)}'. ${e.message}`
+    const errors = validateType(result, returnType, this.structs, this.enums, isOptional);
+    if (errors.length > 0) {
+      throw new RPCError(
+        -32603,
+        `Function '${ifaceName}.${funcName}' invalid response`,
+        buildValidationResult(errors)
       );
     }
   }

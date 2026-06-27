@@ -92,6 +92,19 @@ def get_struct_fields(struct_name: str, all_structs: Dict[str, Any]) -> List[Dic
     return fields
 
 
+@dataclass
+class ValidationError:
+    path: str
+    message: str
+
+
+@dataclass
+class ValidationResult:
+    valid: bool
+    error: Optional[str] = None
+    invalid_fields: Optional[List[str]] = None
+
+
 def extract_checksum(idl: Any) -> str:
     """Extract checksum from IDL data.
     

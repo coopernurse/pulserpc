@@ -249,10 +249,9 @@ class OrderServiceImpl extends OrderService {
 
 ## Validation
 
-PulseRPC automatically validates:
-- Required fields are present
-- Types match IDL definition
-- Enum values are valid
+### Automatic Validation
+
+PulseRPC automatically validates requests and responses against your IDL:
 
 ```typescript
 // This will throw RPCException (-32602) if validation fails
@@ -261,6 +260,104 @@ const cart = cart.addToCart({
   productId: 'prod001',
   quantity: 2
 });
+```
+
+Validation checks:
+- Required fields are present
+- Types match IDL definition
+- Enum values are valid
+- Optional fields allow `null`
+
+### Manual Validation
+
+Validate arbitrary data against any named type using the `Contract` class:
+
+```typescript
+import { Contract } from './pulserpc/contract';
+
+// Load IDL from file or use parsed JSON
+const contract = Contract.fromFile('idl.json');
+
+// Validate a struct — returns ValidationResult
+const result = contract.validate('Person', {
+  username: 'alice',
+  age: 30,
+  email: 'alice@example.com'
+});
+
+if (result.valid) {
+  process(data);
+} else {
+  console.log(result.error);           // Error summary with all failures
+  console.log(result.invalidFields);   // [".age", ".email"] — field selectors
+}
+```
+
+### ValidationResult Reference
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `valid` | `boolean` | `true` if the value is valid |
+| `error` | `string \| undefined` | Human-readable error summary (`undefined` if valid) |
+| `invalidFields` | `string[] \| undefined` | Path selectors for each invalid field (`undefined` if valid) |
+
+### ValidationError Reference
+
+Each collected error has:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | `string` | Dot-separated path to the invalid value (e.g. `.address.city`, `.items[1].quantity`) |
+| `message` | `string` | Human-readable error description |
+
+### Examples
+
+**Validating form input:**
+
+```typescript
+const result = contract.validate('SignupRequest', {
+  username,
+  email,
+  age
+});
+if (!result.valid) {
+  // Map errors back to form fields
+  result.invalidFields?.forEach(field => {
+    form.addError(field.replace(/^\./, ''), result.error);
+  });
+}
+```
+
+**Validating an enum value:**
+
+```typescript
+const result = contract.validate('Color', 'red');     // result.valid == true
+const result = contract.validate('Color', 'yellow');   // result.valid == false
+```
+
+**Validating nested data with path tracking:**
+
+```typescript
+const result = contract.validate('Order', {
+  orderId: 'ord_123',
+  items: [
+    { productId: 'p1', quantity: 2 },
+    { productId: 'p2', quantity: -1 }
+  ]
+});
+// result.invalidFields == [".items[1].quantity"]
+```
+
+### Loading a Contract
+
+```typescript
+// From an idl.json file
+const contract = Contract.fromFile('path/to/idl.json');
+
+// From parsed JSON
+import * as fs from 'fs';
+const json = JSON.parse(fs.readFileSync('idl.json', 'utf-8'));
+const contract = new Contract(json);
 ```
 
 ## Type Safety

@@ -172,10 +172,9 @@ if product:
 
 ## Validation
 
-PulseRPC automatically validates:
-- Required fields are present
-- Types match IDL definition
-- Enum values are valid
+### Automatic Validation
+
+PulseRPC automatically validates requests and responses against your IDL:
 
 ```python
 # This will raise RPCError (-32602) if validation fails
@@ -183,6 +182,101 @@ cart = cart.addToCart({
     'productId': 'prod001',
     'quantity': 2
 })
+```
+
+Validation checks:
+- Required fields are present
+- Types match IDL definition
+- Enum values are valid
+- Optional fields allow `None`
+
+### Manual Validation
+
+Validate arbitrary data against any named type using the `Contract` class:
+
+```python
+from pulserpc import Contract
+
+# Load IDL from file or use parsed JSON
+contract = Contract.from_file("idl.json")
+
+# Validate a struct — returns ValidationResult
+result = contract.validate("Person", {
+    "username": "alice",
+    "age": 30,
+    "email": "alice@example.com"
+})
+
+if result.valid:
+    process(data)
+else:
+    print(result.error)           # Error summary with all failures
+    print(result.invalid_fields)  # [".age", ".email"] — field selectors
+```
+
+### ValidationResult Reference
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `valid` | `bool` | `True` if the value is valid |
+| `error` | `Optional[str]` | Human-readable error summary (`None` if valid) |
+| `invalid_fields` | `Optional[List[str]]` | Path selectors for each invalid field (`None` if valid) |
+
+### ValidationError Reference
+
+Each collected error has:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | `str` | Dot-separated path to the invalid value (e.g. `.address.city`, `.items[1].quantity`) |
+| `message` | `str` | Human-readable error description |
+
+### Examples
+
+**Validating form input:**
+
+```python
+result = contract.validate("SignupRequest", {
+    "username": username,
+    "email": email,
+    "age": age
+})
+if not result.valid:
+    # Map errors back to form fields
+    for field in (result.invalid_fields or []):
+        form.add_error(field.lstrip("."), result.error)
+```
+
+**Validating an enum value:**
+
+```python
+result = contract.validate("Color", "red")     # result.valid == True
+result = contract.validate("Color", "yellow")   # result.valid == False
+```
+
+**Validating nested data with path tracking:**
+
+```python
+result = contract.validate("Order", {
+    "orderId": "ord_123",
+    "items": [
+        {"productId": "p1", "quantity": 2},
+        {"productId": "p2", "quantity": -1}
+    ]
+})
+# result.invalid_fields == [".items[1].quantity"]
+```
+
+### Loading a Contract
+
+```python
+# From an idl.json file
+contract = Contract.from_file("path/to/idl.json")
+
+# From parsed JSON (e.g. from the generated ALL_STRUCTS/ALL_ENUMS)
+import json
+with open("idl.json") as f:
+    contract = Contract(json.load(f))
 ```
 
 ## Best Practices

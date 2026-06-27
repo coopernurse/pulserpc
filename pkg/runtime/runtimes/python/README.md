@@ -45,8 +45,13 @@ from pulserpc import ALL_STRUCTS, ALL_ENUMS
 
 The runtime library provides:
 - `RPCError` - Exception class for JSON-RPC errors
-- `validate_type()` - Main validation function
-- `validate_struct()`, `validate_enum()`, etc. - Specific validators
+- `Contract` - Class for parsing IDL and validating data
+  - `Contract.validate(type_name, value) -> ValidationResult` — manually validate against any named type
+  - `Contract.from_file(path) -> Contract` — load IDL from JSON file
+- `ValidationResult` - Result type with `valid`, `error`, `invalid_fields` fields
+- `ValidationError` - Individual error with `path` and `message` fields
+- `validate_type()` - Main validation function, returns `List[ValidationError]`
+- `validate_struct()`, `validate_enum()`, etc. - Specific validators, return `List[ValidationError]`
 - Helper functions for working with type definitions
 
 **Note:** The runtime library is automatically bundled into the output directory when code is generated, so no separate installation is required.

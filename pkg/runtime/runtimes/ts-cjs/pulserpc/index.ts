@@ -38,4 +38,6 @@ export {
   findStruct,
   findEnum,
   getStructFields,
+  ValidationError,
+  ValidationResult,
 } from "./types";

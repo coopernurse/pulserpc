@@ -2,122 +2,147 @@
  * Validation functions for PulseRPC types.
  */
 
-import { findStruct, findEnum, getStructFields, StructMap, EnumMap, FieldDef } from "./types";
+import { findStruct, findEnum, getStructFields, StructMap, EnumMap, ValidationError } from "./types";
 
-function validateString(value: any): void {
-  if (typeof value !== "string") {
-    throw new TypeError(`Expected string, got ${typeof value}`);
-  }
+function joinPath(parent: string, child: string): string {
+  return parent ? `${parent}.${child}` : `.${child}`;
 }
 
-function validateInt(value: any): void {
+function arrayIndexPath(parent: string, index: number | string): string {
+  return `${parent}[${index}]`;
+}
+
+function makeError(path: string, message: string): ValidationError {
+  return { path, message };
+}
+
+export function validateString(value: any, path: string = ""): ValidationError[] {
+  if (typeof value !== "string") {
+    return [makeError(path, `Expected string, got ${typeof value}`)];
+  }
+  return [];
+}
+
+export function validateInt(value: any, path: string = ""): ValidationError[] {
   if (typeof value !== "number") {
-    throw new TypeError(`Expected number for int, got ${typeof value}`);
+    return [makeError(path, `Expected number for int, got ${typeof value}`)];
   }
   if (Number.isInteger(value)) {
-    return;
+    return [];
   }
   if (value === Math.floor(value)) {
-    return;
+    return [];
   }
-  throw new TypeError(`Expected integer, got number with fractional component: ${value}`);
+  return [makeError(path, `Expected integer, got number with fractional component: ${value}`)];
 }
 
-function validateFloat(value: any): void {
+export function validateFloat(value: any, path: string = ""): ValidationError[] {
   if (typeof value !== "number") {
-    throw new TypeError(`Expected number for float, got ${typeof value}`);
+    return [makeError(path, `Expected number for float, got ${typeof value}`)];
   }
+  return [];
 }
 
-function validateBool(value: any): void {
+export function validateBool(value: any, path: string = ""): ValidationError[] {
   if (typeof value !== "boolean") {
-    throw new TypeError(`Expected boolean, got ${typeof value}`);
+    return [makeError(path, `Expected boolean, got ${typeof value}`)];
   }
+  return [];
 }
 
-function validateArray(value: any, elementValidator: (v: any) => void): void {
+export function validateArray(
+  value: any,
+  elementValidator: (v: any, p: string) => ValidationError[],
+  path: string = ""
+): ValidationError[] {
   if (!Array.isArray(value)) {
-    throw new TypeError(`Expected array, got ${typeof value}`);
+    return [makeError(path, `Expected array, got ${typeof value}`)];
   }
+  const errors: ValidationError[] = [];
   for (let i = 0; i < value.length; i++) {
-    try {
-      elementValidator(value[i]);
-    } catch (e: any) {
-      throw new Error(`Array element at index ${i} validation failed: ${e.message}`);
-    }
+    const elementPath = arrayIndexPath(path, i);
+    errors.push(...elementValidator(value[i], elementPath));
   }
+  return errors;
 }
 
-function validateMap(value: any, valueValidator: (v: any) => void): void {
+export function validateMap(
+  value: any,
+  valueValidator: (v: any, p: string) => ValidationError[],
+  path: string = ""
+): ValidationError[] {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(`Expected object for map, got ${typeof value}`);
+    return [makeError(path, `Expected object for map, got ${typeof value}`)];
   }
+  const errors: ValidationError[] = [];
   for (const [key, val] of Object.entries(value)) {
     if (typeof key !== "string") {
-      throw new TypeError(`Map key must be string, got ${typeof key}`);
+      errors.push(makeError(path, `Map key must be string, got ${typeof key}`));
+      continue;
     }
-    try {
-      valueValidator(val);
-    } catch (e: any) {
-      throw new Error(`Map value for key '${key}' validation failed: ${e.message}`);
-    }
+    const keyPath = arrayIndexPath(path, key);
+    errors.push(...valueValidator(val, keyPath));
   }
+  return errors;
 }
 
-function validateEnum(value: any, enumName: string, allowedValues: string[]): void {
+export function validateEnum(
+  value: any,
+  enumName: string,
+  allowedValues: string[],
+  path: string = ""
+): ValidationError[] {
   if (typeof value !== "string") {
-    throw new TypeError(`Expected string for enum ${enumName}, got ${typeof value}`);
+    return [makeError(path, `Expected string for enum ${enumName}, got ${typeof value}`)];
   }
   if (!allowedValues.includes(value)) {
-    throw new Error(
-      `Invalid value for enum ${enumName}: '${value}'. Allowed values: ${allowedValues.join(", ")}`
-    );
+    return [makeError(path, `Invalid value for enum ${enumName}: '${value}'. Allowed values: ${allowedValues.join(", ")}`)];
   }
+  return [];
 }
 
-function validateStruct(
+export function validateStruct(
   value: any,
   structName: string,
   structDef: any,
   allStructs: StructMap,
-  allEnums: EnumMap
-): void {
+  allEnums: EnumMap,
+  path: string = ""
+): ValidationError[] {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(`Expected object for struct ${structName}, got ${typeof value}`);
+    return [makeError(path, `Expected object for struct ${structName}, got ${typeof value}`)];
   }
 
-  const fields: FieldDef[] = getStructFields(structName, allStructs);
+  const fields = getStructFields(structName, allStructs);
+  const errors: ValidationError[] = [];
 
   for (const field of fields) {
     const fieldName = field.name;
     const fieldType = field.type;
     const isOptional = field.optional || false;
+    const fieldPath = joinPath(path, fieldName);
 
     if (!(fieldName in value)) {
       if (!isOptional) {
-        throw new Error(`Missing required field '${fieldName}' in struct ${structName}`);
+        errors.push(makeError(fieldPath, `Missing required field '${fieldName}' in struct ${structName}`));
       }
     } else {
       const fieldValue = value[fieldName];
       if (fieldValue === null) {
         if (!isOptional) {
-          throw new Error(`Field '${fieldName}' in struct ${structName} cannot be null`);
+          errors.push(makeError(fieldPath, `Field '${fieldName}' in struct ${structName} cannot be null`));
         }
       } else if (fieldValue === undefined) {
         if (!isOptional) {
-          throw new Error(`Field '${fieldName}' in struct ${structName} cannot be undefined`);
+          errors.push(makeError(fieldPath, `Field '${fieldName}' in struct ${structName} cannot be undefined`));
         }
       } else {
-        try {
-          validateType(fieldValue, fieldType, allStructs, allEnums, isOptional);
-        } catch (e: any) {
-          throw new Error(
-            `Field '${fieldName}' in struct ${structName} validation failed: ${e.message}`
-          );
-        }
+        errors.push(...validateType(fieldValue, fieldType, allStructs, allEnums, isOptional, fieldPath));
       }
     }
   }
+
+  return errors;
 }
 
 export function validateType(
@@ -125,64 +150,54 @@ export function validateType(
   typeDef: any,
   allStructs: StructMap,
   allEnums: EnumMap,
-  isOptional: boolean = false
-): void {
+  isOptional: boolean = false,
+  path: string = ""
+): ValidationError[] {
   if (value === null) {
     if (isOptional) {
-      return;
+      return [];
     } else {
-      throw new Error("Value cannot be null for non-optional type");
+      return [makeError(path, "Value cannot be null for non-optional type")];
     }
   }
 
   if (value === undefined) {
-    throw new Error("Value cannot be undefined");
+    return [makeError(path, "Value cannot be undefined")];
   }
 
   if (typeDef.builtIn === "string") {
-    validateString(value);
+    return validateString(value, path);
   } else if (typeDef.builtIn === "int") {
-    validateInt(value);
+    return validateInt(value, path);
   } else if (typeDef.builtIn === "float") {
-    validateFloat(value);
+    return validateFloat(value, path);
   } else if (typeDef.builtIn === "bool") {
-    validateBool(value);
+    return validateBool(value, path);
   } else if (typeDef.array) {
     const elementType = typeDef.array;
-    const elementValidator = (v: any) =>
-      validateType(v, elementType, allStructs, allEnums, false);
-    validateArray(value, elementValidator);
+    const elementValidator = (v: any, p: string) =>
+      validateType(v, elementType, allStructs, allEnums, false, p);
+    return validateArray(value, elementValidator, path);
   } else if (typeDef.mapValue) {
     const valueType = typeDef.mapValue;
-    const valueValidator = (v: any) =>
-      validateType(v, valueType, allStructs, allEnums, false);
-    validateMap(value, valueValidator);
+    const valueValidator = (v: any, p: string) =>
+      validateType(v, valueType, allStructs, allEnums, false, p);
+    return validateMap(value, valueValidator, path);
   } else if (typeDef.userDefined) {
     const userType = typeDef.userDefined;
     const structDef = findStruct(userType, allStructs);
     if (structDef) {
-      validateStruct(value, userType, structDef, allStructs, allEnums);
+      return validateStruct(value, userType, structDef, allStructs, allEnums, path);
     } else {
       const enumDef = findEnum(userType, allEnums);
       if (enumDef) {
         const allowedValues = enumDef.values.map((v: any) => v.name);
-        validateEnum(value, userType, allowedValues);
+        return validateEnum(value, userType, allowedValues, path);
       } else {
-        throw new Error(`Unknown user-defined type: ${userType}`);
+        return [makeError(path, `Unknown user-defined type: ${userType}`)];
       }
     }
   } else {
-    throw new Error(`Invalid type definition: ${JSON.stringify(typeDef)}`);
+    return [makeError(path, `Invalid type definition: ${JSON.stringify(typeDef)}`)];
   }
 }
-
-export {
-  validateString,
-  validateInt,
-  validateFloat,
-  validateBool,
-  validateArray,
-  validateMap,
-  validateEnum,
-  validateStruct,
-};

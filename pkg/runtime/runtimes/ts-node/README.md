@@ -45,15 +45,32 @@ class RPCError extends Error {
 
 ### Validation Functions
 
-- `validateType(value: any, typeDef: TypeDef, allStructs: StructMap, allEnums: EnumMap, isOptional?: boolean): void`
-- `validateString(value: any): void`
-- `validateInt(value: any): void`
-- `validateFloat(value: any): void`
-- `validateBool(value: any): void`
-- `validateArray(value: any, elementValidator: (v: any) => void): void`
-- `validateMap(value: any, valueValidator: (v: any) => void): void`
-- `validateEnum(value: any, enumName: string, allowedValues: string[]): void`
-- `validateStruct(value: any, structName: string, structDef: StructDef, allStructs: StructMap, allEnums: EnumMap): void`
+All validation functions return `ValidationError[]`. Each error has `{ path: string, message: string }`.
+
+- `validateType(value: any, typeDef: TypeDef, allStructs: StructMap, allEnums: EnumMap, isOptional?: boolean, path?: string): ValidationError[]`
+- `validateString(value: any, path?: string): ValidationError[]`
+- `validateInt(value: any, path?: string): ValidationError[]`
+- `validateFloat(value: any, path?: string): ValidationError[]`
+- `validateBool(value: any, path?: string): ValidationError[]`
+- `validateArray(value: any, elementValidator: (v: any, p: string) => ValidationError[], path?: string): ValidationError[]`
+- `validateMap(value: any, valueValidator: (v: any, p: string) => ValidationError[], path?: string): ValidationError[]`
+- `validateEnum(value: any, enumName: string, allowedValues: string[], path?: string): ValidationError[]`
+- `validateStruct(value: any, structName: string, structDef: StructDef, allStructs: StructMap, allEnums: EnumMap, path?: string): ValidationError[]`
+
+### Contract API
+
+- `Contract.fromFile(path: string): Contract` — load IDL from JSON file
+- `contract.validate(typeName: string, value: any): ValidationResult` — manually validate data against a named type
+- `contract.validateRequest(ifaceName: string, funcName: string, params: any[]): void` — throws `RPCError` on invalid params
+- `contract.validateResponse(ifaceName: string, funcName: string, result: any): void` — throws `RPCError` on invalid response
+
+### ValidationResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `valid` | `boolean` | `true` if the value is valid |
+| `error` | `string \| undefined` | Human-readable error summary |
+| `invalidFields` | `string[] \| undefined` | Path selectors for each invalid field |
 
 ### Type Helper Functions
 

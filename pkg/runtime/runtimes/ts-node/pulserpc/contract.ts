@@ -5,8 +5,10 @@
  * and provides validation for requests and responses.
  */
 
-import { TypeDef, StructMap, EnumMap, VerificationResult, ContractDelta, Severity } from "./types.js";
+import * as fs from "fs";
+import { TypeDef, StructMap, EnumMap, VerificationResult, ContractDelta, Severity, ValidationError, ValidationResult } from "./types.js";
 import { validateType } from "./validation.js";
+import { RPCError } from "./rpc.js";
 
 export type { VerificationResult, ContractDelta };
 
@@ -115,6 +117,21 @@ class InterfaceImpl implements Interface {
   }
 }
 
+function buildValidationResult(errors: ValidationError[]): ValidationResult {
+  if (errors.length === 0) {
+    return { valid: true };
+  }
+  const result: ValidationResult = {
+    valid: false,
+    error: errors.map(e => e.path ? `${e.path}: ${e.message}` : e.message).join("; "),
+  };
+  const paths = errors.map(e => e.path).filter(Boolean);
+  if (paths.length > 0) {
+    result.invalidFields = paths;
+  }
+  return result;
+}
+
 /**
  * Represents a parsed IDL contract
  *
@@ -161,6 +178,14 @@ export class Contract {
     }
   }
 
+  /**
+   * Load a Contract from a JSON file path
+   */
+  static fromFile(path: string): Contract {
+    const content = fs.readFileSync(path, "utf-8");
+    return new Contract(JSON.parse(content));
+  }
+
   hasInterface(ifaceName: string): boolean {
     return this.interfaces.has(ifaceName);
   }
@@ -170,43 +195,71 @@ export class Contract {
   }
 
   /**
+   * Validate a value against a named type (struct or enum) from the IDL
+   *
+   * Returns a ValidationResult with valid=true on success, or valid=false
+   * with error details and invalid field selectors on failure.
+   *
+   * Example:
+   *   const result = contract.validate("Person", { username: "alice" });
+   *   // { valid: true }
+   *
+   *   const result = contract.validate("Person", {});
+   *   // { valid: false, error: ".username: Missing required field...", invalidFields: [".username"] }
+   */
+  validate(typeName: string, value: any): ValidationResult {
+    const typeDef: TypeDef = { userDefined: typeName };
+    const errors = validateType(value, typeDef, this.structs, this.enums);
+    return buildValidationResult(errors);
+  }
+
+  /**
    * Validate request parameters against IDL
    */
   validateRequest(ifaceName: string, funcName: string, params: any[]): void {
     const iface = this.getInterface(ifaceName);
     if (!iface) {
-      throw new Error(`Unknown interface: '${ifaceName}'`);
+      throw new RPCError(-32602, `Unknown interface: '${ifaceName}'`);
     }
 
     const func = iface.getFunction(funcName);
     if (!func) {
-      throw new Error(`${ifaceName}: Unknown function: '${funcName}'`);
+      throw new RPCError(-32602, `${ifaceName}: Unknown function: '${funcName}'`);
     }
 
     const paramDefs = func.parameters || [];
 
     // Check parameter count
     if (params.length !== paramDefs.length) {
-      throw new Error(
+      throw new RPCError(
+        -32602,
         `Function '${ifaceName}.${funcName}' expects ${paramDefs.length} param(s). ${params.length} given.`
       );
     }
 
-    // Validate each parameter
+    // Validate each parameter and collect errors
+    const allErrors: ValidationError[] = [];
     for (let i = 0; i < params.length; i++) {
       const paramValue = params[i];
       const paramDef = paramDefs[i];
-      const paramName = paramDef.name;
       const paramType = paramDef.type;
       const isOptional = paramDef.optional || false;
 
-      try {
-        validateType(paramValue, paramType, this.structs, this.enums, isOptional);
-      } catch (e: any) {
-        throw new Error(
-          `Function '${ifaceName}.${funcName}' invalid param '${paramName}'. ${e.message}`
-        );
+      const errors = validateType(paramValue, paramType, this.structs, this.enums, isOptional);
+      for (const err of errors) {
+        allErrors.push({
+          path: err.path ? `param[${i}]${err.path}` : `param[${i}]`,
+          message: err.message,
+        });
       }
+    }
+
+    if (allErrors.length > 0) {
+      throw new RPCError(
+        -32602,
+        `Function '${ifaceName}.${funcName}' invalid params`,
+        buildValidationResult(allErrors)
+      );
     }
   }
 
@@ -216,12 +269,12 @@ export class Contract {
   validateResponse(ifaceName: string, funcName: string, result: any): void {
     const iface = this.getInterface(ifaceName);
     if (!iface) {
-      throw new Error(`Unknown interface: '${ifaceName}'`);
+      throw new RPCError(-32603, `Unknown interface: '${ifaceName}'`);
     }
 
     const func = iface.getFunction(funcName);
     if (!func) {
-      throw new Error(`${ifaceName}: Unknown function: '${funcName}'`);
+      throw new RPCError(-32603, `${ifaceName}: Unknown function: '${funcName}'`);
     }
 
     // Check if function has a return type
@@ -229,7 +282,8 @@ export class Contract {
     if (!returnType) {
       // Function returns void/None
       if (result !== null && result !== undefined) {
-        throw new Error(
+        throw new RPCError(
+          -32603,
           `Function '${ifaceName}.${funcName}' invalid response: '${JSON.stringify(result)}'. Expected null/undefined`
         );
       }
@@ -238,11 +292,12 @@ export class Contract {
 
     // Validate return type
     const isOptional = func.returnOptional || false;
-    try {
-      validateType(result, returnType, this.structs, this.enums, isOptional);
-    } catch (e: any) {
-      throw new Error(
-        `Function '${ifaceName}.${funcName}' invalid response: '${JSON.stringify(result)}'. ${e.message}`
+    const errors = validateType(result, returnType, this.structs, this.enums, isOptional);
+    if (errors.length > 0) {
+      throw new RPCError(
+        -32603,
+        `Function '${ifaceName}.${funcName}' invalid response`,
+        buildValidationResult(errors)
       );
     }
   }

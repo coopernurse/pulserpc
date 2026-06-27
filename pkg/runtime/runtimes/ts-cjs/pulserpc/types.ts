@@ -132,3 +132,14 @@ export function extractChecksum(idl: any): string {
   }
   return "";
 }
+
+export interface ValidationError {
+  path: string;
+  message: string;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  error?: string;
+  invalidFields?: string[];
+}

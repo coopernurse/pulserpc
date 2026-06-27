@@ -110,6 +110,122 @@ struct Order {
 
 Validates `Cart` and `User` structures recursively.
 
+## Manual Validation
+
+In addition to automatic request/response validation, you can validate arbitrary data against any named type using the `Contract.validate()` method. This is useful for form validation, testing, or validating data before passing it to business logic.
+
+### Loading a Contract
+
+```python
+from pulserpc import Contract
+
+# Load from idl.json
+contract = Contract.from_file("path/to/idl.json")
+```
+
+```typescript
+import { Contract } from './pulserpc/contract';
+
+// Load from idl.json
+const contract = Contract.fromFile('path/to/idl.json');
+```
+
+### Validating a Struct
+
+```python
+result = contract.validate("Person", {
+    "username": "alice",
+    "age": 30
+})
+```
+
+```typescript
+const result = contract.validate("Person", {
+    username: "alice",
+    age: 30
+});
+```
+
+Returns `ValidationResult`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `valid` | `bool` | Whether the value passed validation |
+| `error` | `string \| null` | Human-readable error summary (null if valid) |
+| `invalidFields` | `string[] \| null` | Path selectors for each invalid field (null if valid) |
+
+### Checking Results
+
+```python
+if result.valid:
+    process(data)
+else:
+    print(result.error)           # ".age: Expected int, got string; .email: Expected string, got int"
+    for field in result.invalid_fields:
+        highlight_form_field(field)  # ".age", ".email"
+```
+
+```typescript
+if (result.valid) {
+  process(data);
+} else {
+  console.log(result.error);      // ".age: Expected int, got string; .email: Expected string, got int"
+  result.invalidFields?.forEach(f => highlightFormField(f));  // ".age", ".email"
+}
+```
+
+### Error Path Selectors
+
+When validation fails, each error includes a path selector that pinpoints the exact location:
+
+| Path | Meaning |
+|------|---------|
+| `.username` | Top-level field `username` in a struct |
+| `.address.city` | Nested field `city` inside struct `address` |
+| `.items[2]` | Element at index 2 of an array |
+| `.children[1].age` | Field `age` of element at index 1 in array `children` |
+
+This makes it straightforward to map validation errors back to form fields or API payload paths.
+
+### Nested Validation
+
+```python
+result = contract.validate("Order", {
+    "orderId": "ord_123",
+    "items": [
+        {"productId": "p1", "quantity": 2},
+        {"productId": "p2", "quantity": -1}
+    ]
+})
+if not result.valid:
+    print(result.invalid_fields)  # [".items[1].quantity"]
+```
+
+```typescript
+const result = contract.validate("Order", {
+  orderId: "ord_123",
+  items: [
+    { productId: "p1", quantity: 2 },
+    { productId: "p2", quantity: -1 }
+  ]
+});
+if (!result.valid) {
+  console.log(result.invalidFields);  // [".items[1].quantity"]
+}
+```
+
+### Validating an Enum
+
+```python
+result = contract.validate("Color", "red")         # result.valid == True
+result = contract.validate("Color", "yellow")       # result.valid == False
+```
+
+```typescript
+const result = contract.validate("Color", "red");     // result.valid == true
+const result = contract.validate("Color", "yellow");   // result.valid == false
+```
+
 ## Validation Errors
 
 When validation fails, PulseRPC returns an RPC error:
