@@ -72,33 +72,33 @@ if product.get("imageUrl"):
 
 ## Transport Context (ctx)
 
-All handler methods receive an optional `ctx` parameter containing transport-level metadata (headers, auth tokens, etc.). This is passed automatically by the runtime as a keyword argument.
+All handler methods receive a `ctx` parameter as the first positional argument after `self`. It contains transport-level metadata (headers, auth tokens, etc.) and may be `None` if no context was provided.
 
 ```python
-def listProducts(self, ctx=None):
+def listProducts(self, ctx):
     # ctx is a dict with transport metadata (may be None)
     if ctx and 'headers' in ctx:
         auth = ctx['headers'].get('Authorization')
     return products_db
 ```
 
-The `ctx` parameter is passed as: `func(*params, ctx=ctx)` (Python 3) or as the last positional argument (Python 2).
+The `ctx` parameter is passed as the first positional argument in both Python 3 and Python 2: `func(ctx, *params)`.
 
 ---
 
 ## Error Handling
 
-Throw `RPCError` with custom codes:
+Raise `RPCError` with custom codes:
 
 ```python
 from pulserpc import RPCError
 
 # Standard JSON-RPC errors
-throw RPCError(-32602, "Invalid params")
+raise RPCError(-32602, "Invalid params")
 
 # Custom application errors (use codes >= 1000)
-throw RPCError(1001, "CartNotFound: Cart does not exist")
-throw RPCError(1002, "CartEmpty: Cannot create order from empty cart")
+raise RPCError(1001, "CartNotFound: Cart does not exist")
+raise RPCError(1002, "CartEmpty: Cannot create order from empty cart")
 ```
 
 Common error codes:
@@ -111,13 +111,13 @@ Common error codes:
 
 ## Server Implementation
 
-Extend generated service classes. All handler methods receive an optional `ctx=None` parameter for transport-level metadata:
+Extend generated service classes. All handler methods receive `ctx` as the first positional argument after `self` for transport-level metadata:
 
 ```python
 from server import PulseRPCServer, CatalogService
 
 class CatalogServiceImpl(CatalogService):
-    def listProducts(self, ctx=None):
+    def listProducts(self, ctx):
         # ctx is for transport-level metadata (headers, auth)
         # Return list of Product dicts
         return [
@@ -125,7 +125,7 @@ class CatalogServiceImpl(CatalogService):
             {"productId": "p2", "name": "Item 2", "price": 20.0, "stock": 3}
         ]
 
-    def getProduct(self, productId, ctx=None):
+    def getProduct(self, ctx, productId):
         # ctx is for transport-level metadata (headers, auth)
         # Return None for optional return type
         for p in products:
@@ -138,6 +138,22 @@ server = PulseRPCServer(host="0.0.0.0", port=8080)
 server.register("CatalogService", CatalogServiceImpl())
 server.serve_forever()
 ```
+
+### Error Callbacks
+
+Pass an `on_error` callback to the server for custom error handling on unexpected handler exceptions:
+
+```python
+from pulserpc import Server, Contract, RPCError
+
+def handle_error(e: Exception) -> None:
+    # Log to your monitoring system, metrics, etc.
+    print(f"Handler error: {e}")
+
+server = Server(contract, on_error=handle_error)
+```
+
+When `on_error` is set, it is invoked with the exception rather than printing a traceback. If `on_error` is not set (default `None`), unhandled exceptions print a traceback to stderr.
 
 ## Client Usage
 
@@ -171,6 +187,8 @@ if product:
 - If runtime imports fail, confirm you are importing `pulserpc` from the generated base package, not from the project root.
 
 ## Validation
+
+> **Note:** The `Contract.validate()` method, `ValidationResult`, and `ValidationError` classes are only available in the Python 3 runtime. `Contract.from_file()` is available in both runtimes. Python 2 uses the older `Contract` API without `validate()` and validation classes (see the [Python 2 Server Guide](python2.html)).
 
 ### Automatic Validation
 

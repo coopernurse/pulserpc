@@ -31,16 +31,28 @@ Note: Python 2 generates only metadata + runtime. No stub classes are generated 
 The Python 2 runtime provides:
 
 - **Server** - Main server class (from `pulserpc`)
-- **Contract** - IDL validation
-- **RPCError** - For returning structured errors
+- **Contract** - IDL validation (from `pulserpc`)
+- **RPCError** - For returning structured errors (from `pulserpc`)
 
-Handlers are plain classes (no generated base classes in Python 2). All handler methods receive `ctx` as the **last positional argument** for transport-level metadata.
+Handlers are plain classes (no generated base classes in Python 2). All handler methods receive `ctx` as the **first positional argument** for transport-level metadata.
+
+The `Server` constructor accepts an optional `on_error` callback for custom error handling:
+
+```python
+def handle_error(e):
+    # Log to your monitoring system, metrics, etc.
+    print("Handler error:", e)
+
+server = Server(contract, on_error=handle_error)
+```
+
+When `on_error` is set, it is invoked with unhandled handler exceptions instead of printing a traceback. If `on_error` is not set (default `None`), unhandled exceptions print a traceback to stderr.
 
 ## Transport Context (ctx)
 
-All handler methods receive a `ctx` parameter as the last positional argument. This contains transport-level metadata (headers, auth tokens, etc.) passed automatically by the runtime.
+All handler methods receive a `ctx` parameter as the first positional argument. This contains transport-level metadata (headers, auth tokens, etc.) passed automatically by the runtime.
 
-**Important**: Python 2 runtime passes `ctx` as a positional argument (not keyword), so it must be the last parameter in your method signature. See `pkg/runtime/runtimes/python2/pulserpc/server.py` for implementation details.
+**Important**: Python 2 runtime passes `ctx` as a first positional argument, so it must be the first parameter after `self` in your method signature. See `pkg/runtime/runtimes/python2/pulserpc/server.py` for implementation details.
 
 ```python
 class CatalogServiceImpl(object):
@@ -49,8 +61,8 @@ class CatalogServiceImpl(object):
         # ctx is a dict with transport metadata (e.g., headers)
         return products_db
 
-    def getProduct(self, productId, ctx):
-        # ctx is passed as last positional argument
+    def getProduct(self, ctx, productId):
+        # ctx is passed as first positional argument
         return None
 ```
 
@@ -96,11 +108,11 @@ class PulseRPCHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(response))
 ```
 
-Handler methods receive `ctx` as the last positional argument:
+Handler methods receive `ctx` as the first positional argument:
 
 ```python
 class OrderServiceImpl(object):
-    def createOrder(self, request, ctx):
+    def createOrder(self, ctx, request):
         # ctx contains transport metadata (headers, auth, remote_addr)
         if ctx and ctx.get('auth'):
             print("Authenticated request:", ctx['auth'])

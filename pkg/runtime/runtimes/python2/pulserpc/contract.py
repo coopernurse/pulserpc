@@ -4,6 +4,8 @@ This module provides the Contract class which parses IDL metadata
 and provides validation for requests and responses.
 """
 
+import json
+
 from validation import validate_type
 
 
@@ -65,6 +67,20 @@ class Contract(object):
                     for key, value in item.items():
                         if key != "type":
                             self.meta[key] = value
+
+    @classmethod
+    def from_file(cls, path):
+        """Load a Contract from a JSON file path
+
+        Args:
+            path: Path to the idl.json file
+
+        Returns:
+            Contract instance
+        """
+        import io
+        with io.open(path, 'r', encoding='utf-8') as f:
+            return cls(json.load(f))
 
     def has_interface(self, iface_name):
         """Check if interface exists"""

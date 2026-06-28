@@ -1,6 +1,6 @@
 """Server class for handling JSON-RPC 2.0 requests"""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from .rpc import RPCError
 from .contract import Contract
 
@@ -13,18 +13,21 @@ class Server:
     """
 
     def __init__(self, contract: Contract, validate_requests: bool = True,
-                 validate_responses: bool = True):
+                 validate_responses: bool = True,
+                 on_error: Optional[Callable[[Exception], None]] = None):
         """Initialize Server
 
         Args:
             contract: Contract instance for validation
             validate_requests: Validate request parameters against IDL
             validate_responses: Validate response values against IDL
+            on_error: Optional callback invoked on unhandled handler exceptions
         """
         self.handlers: Dict[str, Any] = {}
         self.contract = contract
         self.validate_requests = validate_requests
         self.validate_responses = validate_responses
+        self.on_error = on_error
 
     def add_handler(self, iface_name: str, handler: Any) -> None:
         """Register a handler instance for an interface
@@ -41,7 +44,7 @@ class Server:
         Args:
             req: JSON-RPC request dict with 'jsonrpc', 'method', 'params', 'id'
             ctx: Optional context dict for transport-level metadata (headers, auth, etc.)
-                Passed as the last positional argument to handler methods.
+                Passed as the first positional argument to handler methods.
 
         Returns:
             JSON-RPC response dict, or None for notification (requests without 'id')
@@ -132,8 +135,11 @@ class Server:
                 return self._error_response(req_id, e.code, e.message, e.data)
             else:
                 # Log unexpected errors and return internal error
-                import traceback
-                traceback.print_exc()
+                if self.on_error is not None:
+                    self.on_error(e)
+                else:
+                    import traceback
+                    traceback.print_exc()
                 return self._error_response(req_id, -32603, "Internal error",
                                           f"Handler exception: {e}")
 

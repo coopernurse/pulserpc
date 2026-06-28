@@ -33,7 +33,7 @@ class Server(object):
         Args:
             req: JSON-RPC request dict with 'jsonrpc', 'method', 'params', 'id'
             ctx: Optional context dict for transport-level metadata (headers, auth, etc.)
-                Passed as the last positional argument to handler methods.
+                Passed as the first positional argument to handler methods.
         """
         if not isinstance(req, dict):
             return self._error_response(

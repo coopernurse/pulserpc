@@ -20,7 +20,7 @@ Create `checkout.pulse` with your service definition:
 
 This IDL defines:
 - **3 interfaces**: CatalogService, CartService, OrderService
-- **7 structs**: Product, CartItem, Cart, Address, Order, AddToCartRequest, CreateOrderRequest, CheckoutResponse
+- **8 structs**: Product, CartItem, Cart, Address, Order, AddToCartRequest, CreateOrderRequest, CheckoutResponse
 - **2 enums**: OrderStatus, PaymentMethod
 - **5 errors** (1001-1005): CartNotFound, CartEmpty, PaymentFailed, OutOfStock, InvalidAddress
 

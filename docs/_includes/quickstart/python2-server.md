@@ -7,9 +7,7 @@ from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 import random
 import time
 
-from pulserpc import Server
-from pulserpc.contract import Contract
-from pulserpc import RPCError
+from pulserpc import Server, Contract, RPCError
 
 products_db = [
     {
