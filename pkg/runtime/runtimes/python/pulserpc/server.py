@@ -119,8 +119,6 @@ class Server:
                 self.contract.validate_request(iface_name, func_name, params)
             except RPCError as e:
                 return self._error_response(req_id, e.code, e.message, e.data)
-            except (TypeError, ValueError) as e:
-                return self._error_response(req_id, -32602, "Invalid params", str(e))
 
         # Invoke handler method
         try:
@@ -145,9 +143,6 @@ class Server:
                 self.contract.validate_response(iface_name, func_name, result)
             except RPCError as e:
                 return self._error_response(req_id, e.code, e.message, e.data)
-            except (TypeError, ValueError) as e:
-                return self._error_response(req_id, -32603, "Internal error",
-                                          f"Response validation failed: {e}")
 
         # Don't respond to notifications
         if is_notification:
