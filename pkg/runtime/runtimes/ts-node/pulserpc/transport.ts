@@ -6,6 +6,8 @@
  * - InProcTransport: In-process transport for testing
  */
 
+import { RPCError } from "./rpc.js";
+
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
   method: string;
@@ -75,18 +77,18 @@ export class HttpTransport extends Transport {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status} ${response.statusText}`);
+      throw new RPCError(-32000, `HTTP ${response.status}: ${response.statusText}`, { status: response.status });
     }
 
     const text = await response.text();
     if (!text) {
-      throw new Error("Empty response body");
+      throw new RPCError(-32000, "Empty response body");
     }
 
     try {
       return JSON.parse(text) as JsonRpcResponse;
     } catch (e: any) {
-      throw new Error(`Invalid JSON response: ${e.message}`);
+      throw new RPCError(-32000, `Invalid JSON response: ${e.message}`);
     }
   }
 }

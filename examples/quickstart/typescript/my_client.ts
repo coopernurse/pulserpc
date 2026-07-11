@@ -2,13 +2,10 @@ import { HttpTransport, Client } from './pulserpc/index.js';
 
 const port = parseInt(process.env.SERVER_PORT || '8080', 10);
 const transport = new HttpTransport(`http://127.0.0.1:${port}`);
-const client = new Client(transport);
+const client = await Client.create(transport);
 
 async function main() {
-  // Wait for client to finish initializing (fetches IDL from server)
-  await client.ready();
-
-  // Client automatically fetches IDL from server and creates interface proxies
+  // Client.create() fetches IDL from server and creates interface proxies
   const products = await client.CatalogService.listProducts();
   console.log('=== Products ===');
   for (const p of products) {

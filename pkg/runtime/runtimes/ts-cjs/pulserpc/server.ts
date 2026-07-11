@@ -35,7 +35,7 @@ export class Server {
     this.handlers.set(ifaceName, handler);
   }
 
-  async call(req: any, ctx: HandlerCtx = {}): Promise<JsonRpcResponse> {
+  async call(req: any, ctx: HandlerCtx = {}): Promise<JsonRpcResponse | null> {
     if (typeof req !== "object" || req === null) {
       return this.errorResponse(
         req?.id ?? null,

@@ -14,5 +14,5 @@ export { Transport, HttpTransport, InProcTransport } from "./transport.js";
 export type { JsonRpcRequest, JsonRpcResponse } from "./transport.js";
 export * from "./types.js";
 export * from "./validation.js";
-export { diffIDL, classifySeverity, extractChecksum } from "./diff.js";
+export { diffIDL, classifySeverity } from "./diff.js";
 export { NoOpAuditor, LoggingAuditor, FailFastAuditor } from "./contract.js";

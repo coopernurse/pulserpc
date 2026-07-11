@@ -1,282 +1,264 @@
-/**
- * Tests for diff.ts contract verification functionality
- */
+import { strict as assert } from "assert";
+import { diffIDL, classifySeverity } from "../diff.js";
+import { EntityType, ChangeType, Direction, Severity } from "../types.js";
 
-import { diffIDL, classifySeverity } from "./diff.js";
-import { EntityType, ChangeType, Direction, Severity } from "./types.js";
-
-describe("diffIDL", () => {
-  describe("identical IDLs", () => {
-    it("produces no deltas for identical IDLs", () => {
-      const idl = {
-        interfaces: [
-          {
-            name: "TestService",
-            methods: [
-              { name: "getData", parameters: [], returnType: { builtIn: "string" } },
-            ],
-          },
+function testIdenticalIDLs() {
+  const idl = {
+    interfaces: [
+      {
+        name: "TestService",
+        methods: [
+          { name: "getData", parameters: [], returnType: { builtIn: "string" } },
         ],
-        structs: [
-          { name: "TestStruct", fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }] },
+      },
+    ],
+    structs: [
+      { name: "TestStruct", fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }] },
+    ],
+    enums: [{ name: "TestEnum", values: [{ name: "Value1" }, { name: "Value2" }] }],
+    errors: [{ name: "TestError", code: 100 }],
+  };
+  const deltas = diffIDL(idl, idl);
+  assert.strictEqual(deltas.length, 0);
+  console.log("✓ testIdenticalIDLs");
+}
+
+function testAddedOptionalField() {
+  const clientIDL = {
+    interfaces: [],
+    structs: [
+      { name: "TestStruct", fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }] },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const serverIDL = {
+    interfaces: [],
+    structs: [
+      {
+        name: "TestStruct",
+        fields: [
+          { name: "field1", type: { builtIn: "string" }, optional: false },
+          { name: "field2", type: { builtIn: "string" }, optional: true },
         ],
-        enums: [{ name: "TestEnum", values: [{ name: "Value1" }, { name: "Value2" }] }],
-        errors: [{ name: "TestError", code: 100 }],
-      };
-      const deltas = diffIDL(idl, idl);
-      expect(deltas).toHaveLength(0);
-    });
-  });
+      },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const deltas = diffIDL(clientIDL, serverIDL);
+  assert.strictEqual(deltas.length, 1);
+  assert.strictEqual(deltas[0].entityType, EntityType.Field);
+  assert.strictEqual(deltas[0].changeType, ChangeType.Added);
+  assert.strictEqual(deltas[0].direction, Direction.ClientHasLess);
+  assert.strictEqual(deltas[0].severity, Severity.Info);
+  console.log("✓ testAddedOptionalField");
+}
 
-  describe("field changes", () => {
-    it("detects added optional field with Info severity", () => {
-      const clientIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }],
-          },
+function testAddedRequiredField() {
+  const clientIDL = {
+    interfaces: [],
+    structs: [
+      { name: "TestStruct", fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }] },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const serverIDL = {
+    interfaces: [],
+    structs: [
+      {
+        name: "TestStruct",
+        fields: [
+          { name: "field1", type: { builtIn: "string" }, optional: false },
+          { name: "field2", type: { builtIn: "string" }, optional: false },
         ],
-        enums: [],
-        errors: [],
-      };
-      const serverIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [
-              { name: "field1", type: { builtIn: "string" }, optional: false },
-              { name: "field2", type: { builtIn: "string" }, optional: true },
-            ],
-          },
+      },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const deltas = diffIDL(clientIDL, serverIDL);
+  assert.strictEqual(deltas.length, 1);
+  assert.strictEqual(deltas[0].severity, Severity.Error);
+  console.log("✓ testAddedRequiredField");
+}
+
+function testRemovedField() {
+  const clientIDL = {
+    interfaces: [],
+    structs: [
+      {
+        name: "TestStruct",
+        fields: [
+          { name: "field1", type: { builtIn: "string" }, optional: false },
+          { name: "field2", type: { builtIn: "string" }, optional: true },
         ],
-        enums: [],
-        errors: [],
-      };
-      const deltas = diffIDL(clientIDL, serverIDL);
-      expect(deltas).toHaveLength(1);
-      expect(deltas[0].entityType).toBe(EntityType.Field);
-      expect(deltas[0].changeType).toBe(ChangeType.Added);
-      expect(deltas[0].direction).toBe(Direction.ClientHasLess);
-      expect(deltas[0].severity).toBe(Severity.Info);
-    });
+      },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const serverIDL = {
+    interfaces: [],
+    structs: [
+      { name: "TestStruct", fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }] },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const deltas = diffIDL(clientIDL, serverIDL);
+  assert.strictEqual(deltas.length, 1);
+  assert.strictEqual(deltas[0].entityType, EntityType.Field);
+  assert.strictEqual(deltas[0].changeType, ChangeType.Removed);
+  assert.strictEqual(deltas[0].direction, Direction.ClientHasMore);
+  assert.strictEqual(deltas[0].severity, Severity.Info);
+  console.log("✓ testRemovedField");
+}
 
-    it("detects added required field with Error severity", () => {
-      const clientIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }],
-          },
-        ],
-        enums: [],
-        errors: [],
-      };
-      const serverIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [
-              { name: "field1", type: { builtIn: "string" }, optional: false },
-              { name: "field2", type: { builtIn: "string" }, optional: false },
-            ],
-          },
-        ],
-        enums: [],
-        errors: [],
-      };
-      const deltas = diffIDL(clientIDL, serverIDL);
-      expect(deltas).toHaveLength(1);
-      expect(deltas[0].severity).toBe(Severity.Error);
-    });
+function testFieldMadeOptional() {
+  const clientIDL = {
+    interfaces: [],
+    structs: [
+      { name: "TestStruct", fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }] },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const serverIDL = {
+    interfaces: [],
+    structs: [
+      { name: "TestStruct", fields: [{ name: "field1", type: { builtIn: "string" }, optional: true }] },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const deltas = diffIDL(clientIDL, serverIDL);
+  assert.strictEqual(deltas.length, 1);
+  assert.strictEqual(deltas[0].entityType, EntityType.Field);
+  assert.strictEqual(deltas[0].changeType, ChangeType.Modified);
+  assert.strictEqual(deltas[0].direction, Direction.ClientHasLess);
+  assert.strictEqual(deltas[0].severity, Severity.Info);
+  assert.ok(deltas[0].description.includes("required to optional"));
+  console.log("✓ testFieldMadeOptional");
+}
 
-    it("detects removed field with Info severity", () => {
-      const clientIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [
-              { name: "field1", type: { builtIn: "string" }, optional: false },
-              { name: "field2", type: { builtIn: "string" }, optional: true },
-            ],
-          },
-        ],
-        enums: [],
-        errors: [],
-      };
-      const serverIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }],
-          },
-        ],
-        enums: [],
-        errors: [],
-      };
-      const deltas = diffIDL(clientIDL, serverIDL);
-      expect(deltas).toHaveLength(1);
-      expect(deltas[0].entityType).toBe(EntityType.Field);
-      expect(deltas[0].changeType).toBe(ChangeType.Removed);
-      expect(deltas[0].direction).toBe(Direction.ClientHasMore);
-      expect(deltas[0].severity).toBe(Severity.Info);
-    });
+function testFieldMadeRequired() {
+  const clientIDL = {
+    interfaces: [],
+    structs: [
+      { name: "TestStruct", fields: [{ name: "field1", type: { builtIn: "string" }, optional: true }] },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const serverIDL = {
+    interfaces: [],
+    structs: [
+      { name: "TestStruct", fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }] },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const deltas = diffIDL(clientIDL, serverIDL);
+  assert.strictEqual(deltas.length, 1);
+  assert.strictEqual(deltas[0].severity, Severity.Warning);
+  assert.ok(deltas[0].description.includes("optional to required"));
+  console.log("✓ testFieldMadeRequired");
+}
 
-    it("detects field made optional with Info severity", () => {
-      const clientIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }],
-          },
-        ],
-        enums: [],
-        errors: [],
-      };
-      const serverIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [{ name: "field1", type: { builtIn: "string" }, optional: true }],
-          },
-        ],
-        enums: [],
-        errors: [],
-      };
-      const deltas = diffIDL(clientIDL, serverIDL);
-      expect(deltas).toHaveLength(1);
-      expect(deltas[0].entityType).toBe(EntityType.Field);
-      expect(deltas[0].changeType).toBe(ChangeType.Modified);
-      expect(deltas[0].direction).toBe(Direction.ClientHasLess);
-      expect(deltas[0].severity).toBe(Severity.Info);
-      expect(deltas[0].description).toContain("required to optional");
-    });
+function testStructRemovedFromServer() {
+  const clientIDL = {
+    interfaces: [],
+    structs: [{ name: "TestStruct", fields: [] }],
+    enums: [],
+    errors: [],
+  };
+  const serverIDL = {
+    interfaces: [],
+    structs: [],
+    enums: [],
+    errors: [],
+  };
+  const deltas = diffIDL(clientIDL, serverIDL);
+  assert.strictEqual(deltas.length, 1);
+  assert.strictEqual(deltas[0].entityType, EntityType.Struct);
+  assert.strictEqual(deltas[0].changeType, ChangeType.Removed);
+  assert.strictEqual(deltas[0].direction, Direction.ClientHasMore);
+  assert.strictEqual(deltas[0].severity, Severity.Error);
+  console.log("✓ testStructRemovedFromServer");
+}
 
-    it("detects field made required with Warning severity", () => {
-      const clientIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [{ name: "field1", type: { builtIn: "string" }, optional: true }],
-          },
-        ],
-        enums: [],
-        errors: [],
-      };
-      const serverIDL = {
-        interfaces: [],
-        structs: [
-          {
-            name: "TestStruct",
-            fields: [{ name: "field1", type: { builtIn: "string" }, optional: false }],
-          },
-        ],
-        enums: [],
-        errors: [],
-      };
-      const deltas = diffIDL(clientIDL, serverIDL);
-      expect(deltas).toHaveLength(1);
-      expect(deltas[0].severity).toBe(Severity.Warning);
-      expect(deltas[0].description).toContain("optional to required");
-    });
-  });
+function testInterfaceAddedToServer() {
+  const clientIDL = {
+    interfaces: [],
+    structs: [],
+    enums: [],
+    errors: [],
+  };
+  const serverIDL = {
+    interfaces: [{ name: "TestService", methods: [] }],
+    structs: [],
+    enums: [],
+    errors: [],
+  };
+  const deltas = diffIDL(clientIDL, serverIDL);
+  assert.strictEqual(deltas.length, 1);
+  assert.strictEqual(deltas[0].entityType, EntityType.Interface);
+  assert.strictEqual(deltas[0].changeType, ChangeType.Added);
+  assert.strictEqual(deltas[0].direction, Direction.ClientHasLess);
+  assert.strictEqual(deltas[0].severity, Severity.Info);
+  console.log("✓ testInterfaceAddedToServer");
+}
 
-  describe("struct changes", () => {
-    it("detects struct removed from server with Error severity", () => {
-      const clientIDL = {
-        interfaces: [],
-        structs: [{ name: "TestStruct", fields: [] }],
-        enums: [],
-        errors: [],
-      };
-      const serverIDL = {
-        interfaces: [],
-        structs: [],
-        enums: [],
-        errors: [],
-      };
-      const deltas = diffIDL(clientIDL, serverIDL);
-      expect(deltas).toHaveLength(1);
-      expect(deltas[0].entityType).toBe(EntityType.Struct);
-      expect(deltas[0].changeType).toBe(ChangeType.Removed);
-      expect(deltas[0].direction).toBe(Direction.ClientHasMore);
-      expect(deltas[0].severity).toBe(Severity.Error);
-    });
-  });
+function testClassifySeverityRemovedStruct() {
+  assert.strictEqual(classifySeverity(EntityType.Struct, ChangeType.Removed, Direction.ClientHasMore), Severity.Error);
+  console.log("✓ testClassifySeverityRemovedStruct");
+}
 
-  describe("interface changes", () => {
-    it("detects interface added to server with Info severity", () => {
-      const clientIDL = {
-        interfaces: [],
-        structs: [],
-        enums: [],
-        errors: [],
-      };
-      const serverIDL = {
-        interfaces: [{ name: "TestService", methods: [] }],
-        structs: [],
-        enums: [],
-        errors: [],
-      };
-      const deltas = diffIDL(clientIDL, serverIDL);
-      expect(deltas).toHaveLength(1);
-      expect(deltas[0].entityType).toBe(EntityType.Interface);
-      expect(deltas[0].changeType).toBe(ChangeType.Added);
-      expect(deltas[0].direction).toBe(Direction.ClientHasLess);
-      expect(deltas[0].severity).toBe(Severity.Info);
-    });
-  });
-});
+function testClassifySeverityAddedStruct() {
+  assert.strictEqual(classifySeverity(EntityType.Struct, ChangeType.Added, Direction.ClientHasLess), Severity.Info);
+  console.log("✓ testClassifySeverityAddedStruct");
+}
 
-describe("classifySeverity", () => {
-  it("returns Error for removed struct", () => {
-    expect(classifySeverity(EntityType.Struct, ChangeType.Removed, Direction.ClientHasMore)).toBe(
-      Severity.Error
-    );
-  });
+function testClassifySeverityModifiedFieldMismatch() {
+  assert.strictEqual(classifySeverity(EntityType.Field, ChangeType.Modified, Direction.Mismatch), Severity.Error);
+  console.log("✓ testClassifySeverityModifiedFieldMismatch");
+}
 
-  it("returns Info for added struct", () => {
-    expect(classifySeverity(EntityType.Struct, ChangeType.Added, Direction.ClientHasLess)).toBe(
-      Severity.Info
-    );
-  });
+function testClassifySeverityAddedRequiredField() {
+  assert.strictEqual(classifySeverity(EntityType.Field, ChangeType.Added, Direction.ClientHasLess, "required"), Severity.Error);
+  console.log("✓ testClassifySeverityAddedRequiredField");
+}
 
-  it("returns Error for modified field with Mismatch direction", () => {
-    expect(classifySeverity(EntityType.Field, ChangeType.Modified, Direction.Mismatch)).toBe(
-      Severity.Error
-    );
-  });
+function testClassifySeverityAddedOptionalField() {
+  assert.strictEqual(classifySeverity(EntityType.Field, ChangeType.Added, Direction.ClientHasLess, "optional"), Severity.Info);
+  console.log("✓ testClassifySeverityAddedOptionalField");
+}
 
-  it("returns Error for added required field", () => {
-    expect(classifySeverity(EntityType.Field, ChangeType.Added, Direction.ClientHasLess, "required")).toBe(
-      Severity.Error
-    );
-  });
+function testClassifySeverityMadeRequired() {
+  assert.strictEqual(classifySeverity(EntityType.Field, ChangeType.Modified, Direction.ClientHasLess, "made_required"), Severity.Warning);
+  console.log("✓ testClassifySeverityMadeRequired");
+}
 
-  it("returns Info for added optional field", () => {
-    expect(classifySeverity(EntityType.Field, ChangeType.Added, Direction.ClientHasLess, "optional")).toBe(
-      Severity.Info
-    );
-  });
+function testClassifySeverityMadeOptional() {
+  assert.strictEqual(classifySeverity(EntityType.Field, ChangeType.Modified, Direction.ClientHasLess, "made_optional"), Severity.Info);
+  console.log("✓ testClassifySeverityMadeOptional");
+}
 
-  it("returns Warning for made_required", () => {
-    expect(classifySeverity(EntityType.Field, ChangeType.Modified, Direction.ClientHasLess, "made_required")).toBe(
-      Severity.Warning
-    );
-  });
-
-  it("returns Info for made_optional", () => {
-    expect(classifySeverity(EntityType.Field, ChangeType.Modified, Direction.ClientHasLess, "made_optional")).toBe(
-      Severity.Info
-    );
-  });
-});
+testIdenticalIDLs();
+testAddedOptionalField();
+testAddedRequiredField();
+testRemovedField();
+testFieldMadeOptional();
+testFieldMadeRequired();
+testStructRemovedFromServer();
+testInterfaceAddedToServer();
+testClassifySeverityRemovedStruct();
+testClassifySeverityAddedStruct();
+testClassifySeverityModifiedFieldMismatch();
+testClassifySeverityAddedRequiredField();
+testClassifySeverityAddedOptionalField();
+testClassifySeverityMadeRequired();
+testClassifySeverityMadeOptional();
+console.log("\nAll diff tests passed!");

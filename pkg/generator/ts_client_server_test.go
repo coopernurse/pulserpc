@@ -3025,8 +3025,21 @@ func TestTsCjsRuntimeUsesFilename(t *testing.T) {
 		if !strings.Contains(content, "__dirname") {
 			t.Error("CJS runtime client.ts must contain __dirname")
 		}
-		if !strings.Contains(content, "this._findIDLJson()") {
-			t.Error("CJS runtime client.ts constructor must call this._findIDLJson()")
+		if !strings.Contains(content, "_findIDLJson()") {
+			t.Error("CJS runtime client.ts must call _findIDLJson()")
+		}
+		if !strings.Contains(content, "static async create") {
+			t.Error("CJS runtime client.ts must have static async create method")
+		}
+		if strings.Contains(content, "public constructor") || strings.Contains(content, "constructor(") {
+			// The constructor is private; make sure there's no public constructor
+			// that initialises async work directly.
+			for i, line := range strings.Split(content, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "constructor(" {
+					t.Errorf("CJS runtime client.ts has bare non-private constructor at line %d: %s", i+1, line)
+				}
+			}
 		}
 		// Check non-comment lines only for ESM-only tokens (comments may
 		// document the ESM equivalent).

@@ -17,10 +17,8 @@ export { Client, ClientOptions } from "./client";
 export { Server, ServerOptions, HandlerCtx, Handler } from "./server";
 export { Transport, HttpTransport, InProcTransport } from "./transport";
 export { validateType } from "./validation";
+export { diffIDL, classifySeverity } from "./diff";
 export {
-  diffIDL,
-  classifySeverity,
-  extractChecksum,
   EntityType,
   ChangeType,
   Direction,
@@ -38,6 +36,7 @@ export {
   findStruct,
   findEnum,
   getStructFields,
+  extractChecksum,
   ValidationError,
   ValidationResult,
 } from "./types";

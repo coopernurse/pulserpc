@@ -1,15 +1,14 @@
 /**
- * Tests for HttpTransport URL handling
+ * Tests for HttpTransport URL handling and error behavior
  *
- * Pins the guarantee that HttpTransport uses the endpoint URL verbatim:
- * it must neither strip a trailing slash nor append one before calling fetch.
+ * Verifies that HttpTransport uses the endpoint URL verbatim and wraps
+ * transport-level errors in RPCError.
  */
 
 import { strict as assert } from "assert";
 import { HttpTransport, JsonRpcRequest } from "../transport.js";
+import { RPCError } from "../rpc.js";
 
-// Builds a fake fetch that records the URL it was called with and returns a
-// minimal, valid JSON-RPC response.
 function recordingFetch(): { urls: string[]; fn: typeof fetch } {
   const urls: string[] = [];
   const fn = (async (input: any) => {
@@ -46,9 +45,31 @@ async function testUrlUsedVerbatim() {
   console.log("✓ testUrlUsedVerbatim");
 }
 
-testUrlUsedVerbatim()
-  .then(() => console.log("\nAll transport tests passed!"))
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  });
+async function testHttpErrorWrapsRPCError() {
+  const failingFetch = (async () => ({
+    ok: false,
+    status: 503,
+    statusText: "Service Unavailable",
+    text: async () => "{}",
+  })) as unknown as typeof fetch;
+  const transport = new HttpTransport("http://localhost:8080", {}, failingFetch);
+  try {
+    await transport.request(req);
+    assert.fail("Expected RPCError to be thrown");
+  } catch (e: any) {
+    assert.ok(e instanceof RPCError, `Expected RPCError, got ${e?.constructor?.name}`);
+    assert.strictEqual(e.code, -32000);
+    assert.ok(e.message.includes("503"), `Expected message to include status code, got: ${e.message}`);
+    assert.deepStrictEqual(e.data, { status: 503 });
+  }
+  console.log("✓ testHttpErrorWrapsRPCError");
+}
+
+(async () => {
+  await testUrlUsedVerbatim();
+  await testHttpErrorWrapsRPCError();
+  console.log("\nAll transport tests passed!");
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

@@ -8,10 +8,9 @@ export class RPCError extends Error {
 
   constructor(code: number, message: string, data?: any) {
     super(message);
+    this.name = `RPCError ${code}`;
     this.code = code;
-    this.message = message;
     this.data = data;
-    // Maintains proper stack trace for where our error was thrown (only available on V8)
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, RPCError);
     }

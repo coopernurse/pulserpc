@@ -10,7 +10,8 @@ import { existsSync, readFileSync } from "fs";
 import { RPCError } from "./rpc";
 import { Contract } from "./contract";
 import { Transport } from "./transport";
-import { diffIDL, extractChecksum } from "./diff";
+import { diffIDL } from "./diff";
+import { extractChecksum } from "./types";
 import type { JsonRpcRequest, JsonRpcResponse, VerificationResult } from "./types";
 
 /**
@@ -52,8 +53,8 @@ export interface ClientOptions {
  * JSON-RPC 2.0 client with automatic interface discovery.
  *
  * The Client class sends JSON-RPC requests via a Transport implementation.
- * On initialization, it fetches the IDL from the server and dynamically
- * creates interface proxies.
+ * Use Client.create() to bootstrap: it fetches the IDL from the server
+ * and dynamically creates interface proxies.
  */
 export class Client {
   transport: Transport;
@@ -61,7 +62,6 @@ export class Client {
   validateResponse: boolean;
   contract: Contract | null = null;
 
-  // Index signature to allow dynamic interface proxies
   [key: string]: any;
 
   private requestId: number = 0;
@@ -71,7 +71,7 @@ export class Client {
   private _verifyOnBootstrap: boolean = false;
   private _localIDL: Record<string, any> | null = null;
 
-  constructor(
+  private constructor(
     transport: Transport,
     validateRequest: boolean = false,
     validateResponse: boolean = false,
@@ -85,10 +85,19 @@ export class Client {
       this._auditor = options.auditor;
       this._verifyOnBootstrap = options.verifyOnBootstrap || false;
     }
+  }
 
-    this._findIDLJson();
-
-    this.initPromise = this.bootstrapWithVerification();
+  static async create(
+    transport: Transport,
+    validateRequest: boolean = false,
+    validateResponse: boolean = false,
+    options?: ClientOptions
+  ): Promise<Client> {
+    const client = new Client(transport, validateRequest, validateResponse, options);
+    client._findIDLJson();
+    await client.bootstrapWithVerification();
+    client.initialized = true;
+    return client;
   }
 
   async ready(): Promise<void> {
@@ -139,7 +148,6 @@ export class Client {
 
   _findIDLJson(): void {
     try {
-      // __dirname is the CJS equivalent of import.meta.url
       let currentDir = __dirname;
 
       for (let i = 0; i < 10; i++) {
@@ -150,15 +158,23 @@ export class Client {
             this._localIDL = JSON.parse(content);
             return;
           }
-        } catch (e) {
-          // File doesn't exist or can't be read, try parent directory
+        } catch (e: any) {
+          if (e?.code === "ENOENT") {
+            // File doesn't exist or was removed, try parent directory
+            continue;
+          }
+          throw e;
         }
         const parentDir = dirname(currentDir);
         if (parentDir === currentDir) break;
         currentDir = parentDir;
       }
-    } catch (e) {
-      // __dirname not available or other error - local IDL must be set explicitly
+    } catch (e: any) {
+      if (e instanceof TypeError) {
+        // __dirname not available
+        return;
+      }
+      throw e;
     }
   }
 

@@ -407,6 +407,45 @@ type multiLineExportState struct {
 	names  []string // accumulated export names
 }
 
+// stripTrailingComment removes a // comment from the end of a line,
+// respecting string literals (single-quoted, double-quoted, and template
+// literals). If the entire line is consumed by a comment, returns "".
+// Block comments (/* */) on a single line are also removed.
+func stripTrailingComment(line string) string {
+	// Strip /* ... */ block comments first (single-line only)
+	for {
+		start := strings.Index(line, "/*")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(line[start+2:], "*/")
+		if end < 0 {
+			break
+		}
+		line = line[:start] + line[start+end+4:]
+	}
+
+	inSingle := false
+	inDouble := false
+	inTemplate := false
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		switch {
+		case ch == '\'' && !inDouble && !inTemplate:
+			inSingle = !inSingle
+		case ch == '"' && !inSingle && !inTemplate:
+			inDouble = !inDouble
+		case ch == '`' && !inSingle && !inDouble:
+			inTemplate = !inTemplate
+		case ch == '\\' && (inSingle || inDouble || inTemplate):
+			i++ // skip escaped character
+		case ch == '/' && i+1 < len(line) && line[i+1] == '/' && !inSingle && !inDouble && !inTemplate:
+			return strings.TrimSpace(line[:i])
+		}
+	}
+	return strings.TrimSpace(line)
+}
+
 // transformCjs converts ESM TypeScript source to CommonJS-compatible
 // TypeScript. The runtime still expects .ts files (compile with tsc), but
 // the import/export statements become require/module.exports statements
@@ -442,10 +481,26 @@ func transformCjs(content []byte) []byte {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
+		// Skip blank lines and pure comment lines
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			out.WriteString(line)
+			out.WriteString("\n")
+			continue
+		}
+
+		// Strip trailing comment from the line for regex matching, but
+		// keep the original line for output when preserved verbatim.
+		matchLine := stripTrailingComment(trimmed)
+		if matchLine == "" {
+			out.WriteString(line)
+			out.WriteString("\n")
+			continue
+		}
+
 		// If we're inside a multi-line export { ... } block, accumulate
 		// names until the closing } from ... or } line.
 		if multiLine.active {
-			if m := cjsExportCloseBraceFromRE.FindStringSubmatch(trimmed); m != nil {
+			if m := cjsExportCloseBraceFromRE.FindStringSubmatch(matchLine); m != nil {
 				requirePath := strings.TrimSuffix(m[1], ".js")
 				for _, n := range multiLine.names {
 					source, local := splitExportName(n)
@@ -454,7 +509,7 @@ func transformCjs(content []byte) []byte {
 				multiLine = multiLineExportState{}
 				continue
 			}
-			if cjsExportCloseBraceRE.MatchString(trimmed) {
+			if cjsExportCloseBraceRE.MatchString(matchLine) {
 				for _, n := range multiLine.names {
 					source, local := splitExportName(n)
 					fmt.Fprintf(&out, "module.exports.%s = %s;\n", local, source)
@@ -472,33 +527,33 @@ func transformCjs(content []byte) []byte {
 
 		// Classify and rewrite the line.
 		switch {
-		case cjsExportOpenBraceRE.MatchString(trimmed):
+		case cjsExportOpenBraceRE.MatchString(matchLine):
 			// Start of a multi-line export { ... } block.
 			multiLine.active = true
 			multiLine.names = []string{}
-		case cjsImportTypeRE.MatchString(trimmed):
+		case cjsImportTypeRE.MatchString(matchLine):
 			// import type is a TypeScript-only construct — preserve it.
 			// tsc erases it at compile time.
 			out.WriteString(line)
 			out.WriteString("\n")
-		case cjsImportNamedRE.MatchString(trimmed):
-			m := cjsImportNamedRE.FindStringSubmatch(trimmed)
+		case cjsImportNamedRE.MatchString(matchLine):
+			m := cjsImportNamedRE.FindStringSubmatch(matchLine)
 			requirePath := strings.TrimSuffix(m[2], ".js")
 			fmt.Fprintf(&out, "const { %s } = require('%s');\n", m[1], requirePath)
-		case cjsImportStarRE.MatchString(trimmed):
-			m := cjsImportStarRE.FindStringSubmatch(trimmed)
+		case cjsImportStarRE.MatchString(matchLine):
+			m := cjsImportStarRE.FindStringSubmatch(matchLine)
 			requirePath := strings.TrimSuffix(m[2], ".js")
 			fmt.Fprintf(&out, "const %s = require('%s');\n", m[1], requirePath)
-		case cjsImportDefaultRE.MatchString(trimmed):
-			m := cjsImportDefaultRE.FindStringSubmatch(trimmed)
+		case cjsImportDefaultRE.MatchString(matchLine):
+			m := cjsImportDefaultRE.FindStringSubmatch(matchLine)
 			requirePath := strings.TrimSuffix(m[2], ".js")
 			fmt.Fprintf(&out, "const %s = require('%s').default || require('%s');\n", m[1], requirePath, requirePath)
-		case cjsExportStarFromRE.MatchString(trimmed):
-			m := cjsExportStarFromRE.FindStringSubmatch(trimmed)
+		case cjsExportStarFromRE.MatchString(matchLine):
+			m := cjsExportStarFromRE.FindStringSubmatch(matchLine)
 			requirePath := strings.TrimSuffix(m[1], ".js")
 			fmt.Fprintf(&out, "module.exports = Object.assign(module.exports, require('%s'));\n", requirePath)
-		case cjsExportNamedFromRE.MatchString(trimmed):
-			m := cjsExportNamedFromRE.FindStringSubmatch(trimmed)
+		case cjsExportNamedFromRE.MatchString(matchLine):
+			m := cjsExportNamedFromRE.FindStringSubmatch(matchLine)
 			requirePath := strings.TrimSuffix(m[2], ".js")
 			for _, n := range strings.Split(m[1], ",") {
 				n = strings.TrimSpace(n)
@@ -508,26 +563,26 @@ func transformCjs(content []byte) []byte {
 				source, local := splitExportName(n)
 				fmt.Fprintf(&out, "module.exports.%s = require('%s').%s;\n", local, requirePath, source)
 			}
-		case cjsExportInterfaceRE.MatchString(trimmed), cjsExportTypeRE.MatchString(trimmed):
+		case cjsExportInterfaceRE.MatchString(matchLine), cjsExportTypeRE.MatchString(matchLine):
 			// Preserve export interface/type — they are TypeScript-only
 			// constructs that tsc erases at compile time, and downstream
 			// tsc --noEmit needs them for type resolution.
 			out.WriteString(line)
 			out.WriteString("\n")
-		case cjsExportAbstractClassRE.MatchString(trimmed), cjsExportClassRE.MatchString(trimmed):
-			m := cjsExportAbstractClassRE.FindStringSubmatch(trimmed)
+		case cjsExportAbstractClassRE.MatchString(matchLine), cjsExportClassRE.MatchString(matchLine):
+			m := cjsExportAbstractClassRE.FindStringSubmatch(matchLine)
 			if m == nil {
-				m = cjsExportClassRE.FindStringSubmatch(trimmed)
+				m = cjsExportClassRE.FindStringSubmatch(matchLine)
 			}
 			pushPendingExport(&pending, m[1], stripExportPrefix(line), &out)
-		case cjsExportEnumRE.MatchString(trimmed):
-			m := cjsExportEnumRE.FindStringSubmatch(trimmed)
+		case cjsExportEnumRE.MatchString(matchLine):
+			m := cjsExportEnumRE.FindStringSubmatch(matchLine)
 			pushPendingExport(&pending, m[1], stripExportPrefix(line), &out)
-		case cjsExportFunctionRE.MatchString(trimmed):
-			m := cjsExportFunctionRE.FindStringSubmatch(trimmed)
+		case cjsExportFunctionRE.MatchString(matchLine):
+			m := cjsExportFunctionRE.FindStringSubmatch(matchLine)
 			pushPendingExport(&pending, m[2], stripExportPrefix(line), &out)
-		case cjsExportConstRE.MatchString(trimmed):
-			m := cjsExportConstRE.FindStringSubmatch(trimmed)
+		case cjsExportConstRE.MatchString(matchLine):
+			m := cjsExportConstRE.FindStringSubmatch(matchLine)
 			stripped := stripExportPrefix(line)
 			braceDelta := countBraceDelta(stripped)
 			out.WriteString(stripped)
@@ -541,8 +596,8 @@ func transformCjs(content []byte) []byte {
 				bodyOpened := strings.Contains(stripped, "{")
 				pending = append(pending, pendingCjsExport{name: m[1], depth: braceDelta, bodyOpened: bodyOpened})
 			}
-		case cjsExportNamedRE.MatchString(trimmed):
-			m := cjsExportNamedRE.FindStringSubmatch(trimmed)
+		case cjsExportNamedRE.MatchString(matchLine):
+			m := cjsExportNamedRE.FindStringSubmatch(matchLine)
 			for _, n := range strings.Split(m[1], ",") {
 				n = strings.TrimSpace(n)
 				if n == "" {
@@ -940,6 +995,12 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// Group types by namespace
 	namespaceMap := GroupTypesByNamespace(idl)
 
+	// Build cross-namespace type index for O(1) lookups
+	typeIndex, err := buildTypeIndex(namespaceMap)
+	if err != nil {
+		return fmt.Errorf("invalid type layout: %w", err)
+	}
+
 	// Initialize path helpers with package base
 	paths := NewTSNamespacePaths(outputDir, p.packageBase)
 
@@ -1033,7 +1094,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			}
 
 			// Generate types.ts for this namespace
-			typesCode := generateTypesTsForNamespace(nsTypes, ns, nsStructMap, nsEnumMap, true, namespaceMap, p.moduleStyle)
+			typesCode := generateTypesTsForNamespace(nsTypes, ns, nsStructMap, nsEnumMap, true, typeIndex, p.moduleStyle)
 			typesPath := filepath.Join(nsDir, "types.ts")
 			if err := p.writeTransformedFile(typesPath, []byte(typesCode)); err != nil {
 				return err
@@ -1041,7 +1102,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			PrintFileCreated(typesPath, fs)
 
 			// Generate server.ts for this namespace
-			serverCode := generateServerTsForNamespace(nsTypes, nsStructMap, nsEnumMap, nsInterfaceMap, packagePrefix, true, namespaceMap, p.moduleStyle)
+			serverCode := generateServerTsForNamespace(nsTypes, nsStructMap, nsEnumMap, nsInterfaceMap, packagePrefix, ns, true, typeIndex, p.moduleStyle)
 			serverPath := filepath.Join(nsDir, "server.ts")
 			if err := p.writeTransformedFile(serverPath, []byte(serverCode)); err != nil {
 				return err
@@ -1049,7 +1110,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			PrintFileCreated(serverPath, fs)
 
 			// Generate client.ts for this namespace
-			clientCode := generateClientTsForNamespace(nsTypes, nsStructMap, nsEnumMap, packagePrefix, true, namespaceMap, p.moduleStyle)
+			clientCode := generateClientTsForNamespace(nsTypes, nsStructMap, nsEnumMap, packagePrefix, ns, true, typeIndex, p.moduleStyle)
 			clientPath := filepath.Join(nsDir, "client.ts")
 			if err := p.writeTransformedFile(clientPath, []byte(clientCode)); err != nil {
 				return err
@@ -1201,10 +1262,37 @@ func writeIDLJSONTs(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 	return nil
 }
 
+// buildTypeIndex creates a map from base type name to its containing namespace.
+// It scans all structs and enums across all namespaces. The resulting index
+// enables O(1) cross-namespace type lookups, replacing the O(N²) scans in
+// collectCrossNamespaceImports and getTypeScriptTypeForNamespace.
+//
+// Returns an error if the same base type name appears in multiple namespaces.
+func buildTypeIndex(namespaceMap map[string]*NamespaceTypes) (map[string]string, error) {
+	index := make(map[string]string)
+	for ns, nsTypes := range namespaceMap {
+		for _, s := range nsTypes.Structs {
+			base := GetBaseName(s.Name)
+			if existing, ok := index[base]; ok && existing != ns {
+				return nil, fmt.Errorf("duplicate type name %q in namespaces %q and %q", base, existing, ns)
+			}
+			index[base] = ns
+		}
+		for _, e := range nsTypes.Enums {
+			base := GetBaseName(e.Name)
+			if existing, ok := index[base]; ok && existing != ns {
+				return nil, fmt.Errorf("duplicate type name %q in namespaces %q and %q", base, existing, ns)
+			}
+			index[base] = ns
+		}
+	}
+	return index, nil
+}
+
 // collectCrossNamespaceImports identifies which external namespaces are referenced
 // by types in the given namespace's structs and enums. Returns a map of namespace
 // names that need to be imported.
-func collectCrossNamespaceImports(nsTypes *NamespaceTypes, currentNs string, allNamespaceMap map[string]*NamespaceTypes) map[string]string {
+func collectCrossNamespaceImports(nsTypes *NamespaceTypes, currentNs string, typeIndex map[string]string) map[string]string {
 	imports := make(map[string]string)
 
 	localTypes := make(map[string]bool)
@@ -1215,50 +1303,22 @@ func collectCrossNamespaceImports(nsTypes *NamespaceTypes, currentNs string, all
 		localTypes[GetBaseName(e.Name)] = true
 	}
 
-	for _, s := range nsTypes.Structs {
-		// Check extends clause
-		if s.Extends != "" {
-			typeName := GetBaseName(s.Extends)
-			if !localTypes[typeName] {
-				for ns, nsTypes := range allNamespaceMap {
-					if ns == currentNs {
-						continue
-					}
-					for _, otherStruct := range nsTypes.Structs {
-						if GetBaseName(otherStruct.Name) == typeName {
-							imports[ns] = ns + "Types"
-							break
-						}
-					}
-				}
-			}
+	resolveImport := func(typeName string) {
+		if localTypes[typeName] {
+			return
 		}
+		if extNs, ok := typeIndex[typeName]; ok && extNs != currentNs {
+			imports[extNs] = extNs + "Types"
+		}
+	}
 
-		// Check struct fields
+	for _, s := range nsTypes.Structs {
+		if s.Extends != "" {
+			resolveImport(GetBaseName(s.Extends))
+		}
 		for _, field := range s.Fields {
 			if field.Type != nil && field.Type.IsUserDefined() {
-				typeName := GetBaseName(field.Type.UserDefined)
-				if !localTypes[typeName] {
-					for ns, nsTypes := range allNamespaceMap {
-						if ns == currentNs {
-							continue
-						}
-						for _, otherStruct := range nsTypes.Structs {
-							if GetBaseName(otherStruct.Name) == typeName {
-								imports[ns] = ns + "Types"
-								break
-							}
-						}
-						if _, ok := imports[ns]; !ok {
-							for _, otherEnum := range nsTypes.Enums {
-								if GetBaseName(otherEnum.Name) == typeName {
-									imports[ns] = ns + "Types"
-									break
-								}
-							}
-						}
-					}
-				}
+				resolveImport(GetBaseName(field.Type.UserDefined))
 			}
 		}
 	}
@@ -1268,7 +1328,7 @@ func collectCrossNamespaceImports(nsTypes *NamespaceTypes, currentNs string, all
 
 // getExtendsTypeForNamespace returns the proper TypeScript type reference for an extends clause.
 // When the parent type is from another namespace, it returns "namespace.TypeName" format.
-func getExtendsTypeForNamespace(extendsType string, _ map[string]*parser.Struct, _ map[string]*parser.Enum, currentNs string, _ map[string]*NamespaceTypes) string {
+func getExtendsTypeForNamespace(extendsType string, _ map[string]*parser.Struct, _ map[string]*parser.Enum, currentNs string, typeIndex map[string]string) string {
 	baseName := GetBaseName(extendsType)
 
 	// Check if it's a local type (no namespace or same namespace)
@@ -1297,7 +1357,7 @@ func getExtendsTypeForNamespace(extendsType string, _ map[string]*parser.Struct,
 // with support for cross-namespace type references in multi-namespace mode.
 // If useTypesPrefix is true, user-defined types are prefixed with "types." (for use in server.ts).
 // When inNamespaceSubdir is true and the type belongs to another namespace, it prefixes with that namespace.
-func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, useTypesPrefix bool, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes) string {
+func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, useTypesPrefix bool, inNamespaceSubdir bool, typeIndex map[string]string) string {
 	if t == nil {
 		return "void"
 	}
@@ -1314,10 +1374,10 @@ func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.
 		}
 	}
 	if t.IsArray() {
-		return getTypeScriptTypeForNamespace(t.Array, structMap, enumMap, useTypesPrefix, inNamespaceSubdir, allNamespaceMap) + "[]"
+		return getTypeScriptTypeForNamespace(t.Array, structMap, enumMap, useTypesPrefix, inNamespaceSubdir, typeIndex) + "[]"
 	}
 	if t.IsMap() {
-		return "Record<string, " + getTypeScriptTypeForNamespace(t.MapValue, structMap, enumMap, useTypesPrefix, inNamespaceSubdir, allNamespaceMap) + ">"
+		return "Record<string, " + getTypeScriptTypeForNamespace(t.MapValue, structMap, enumMap, useTypesPrefix, inNamespaceSubdir, typeIndex) + ">"
 	}
 	if t.IsUserDefined() {
 		typeName := t.UserDefined
@@ -1354,19 +1414,10 @@ func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.
 		}
 
 		// In multi-namespace mode, check if this type belongs to another namespace
-		if inNamespaceSubdir && allNamespaceMap != nil {
+		if inNamespaceSubdir && typeIndex != nil {
 			baseTypeName := GetBaseName(typeName)
-			for ns, nsTypes := range allNamespaceMap {
-				for _, s := range nsTypes.Structs {
-					if GetBaseName(s.Name) == baseTypeName {
-						return ns + "." + baseTypeName
-					}
-				}
-				for _, e := range nsTypes.Enums {
-					if GetBaseName(e.Name) == baseTypeName {
-						return ns + "." + baseTypeName
-					}
-				}
+			if extNs, ok := typeIndex[baseTypeName]; ok {
+				return extNs + "." + baseTypeName
 			}
 		}
 
@@ -1468,7 +1519,7 @@ func writeInterfaceStubTs(sb *strings.Builder, iface *parser.Interface, structMa
 
 // writeInterfaceStubTsForNamespace generates an abstract class for an interface
 // with support for cross-namespace type references.
-func writeInterfaceStubTsForNamespace(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ string, allNamespaceMap map[string]*NamespaceTypes) {
+func writeInterfaceStubTsForNamespace(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ string, typeIndex map[string]string) {
 	if iface.Comment != "" {
 		lines := strings.Split(strings.TrimSpace(iface.Comment), "\n")
 		for _, line := range lines {
@@ -1503,10 +1554,10 @@ func writeInterfaceStubTsForNamespace(sb *strings.Builder, iface *parser.Interfa
 			if i > 0 {
 				sb.WriteString(", ")
 			}
-			tsType := getTypeScriptTypeForNamespace(param.Type, structMap, enumMap, true, true, allNamespaceMap)
+			tsType := getTypeScriptTypeForNamespace(param.Type, structMap, enumMap, true, true, typeIndex)
 			fmt.Fprintf(sb, "%s: %s", param.Name, tsType)
 		}
-		returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, true, allNamespaceMap)
+		returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, true, typeIndex)
 		if method.ReturnOptional {
 			returnType = returnType + " | null"
 		}
@@ -1674,14 +1725,14 @@ func generateTypesTs(structMap map[string]*parser.Struct, enumMap map[string]*pa
 // generateTypesTsForNamespace generates a types.ts file with TypeScript interfaces for structs and enums
 // belonging to a single namespace. Used in multi-namespace mode.
 // When inNamespaceSubdir is true, cross-namespace type references use '../{namespace}' imports.
-func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes, moduleStyle string) string {
+func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, inNamespaceSubdir bool, typeIndex map[string]string, moduleStyle string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
 	sb.WriteString("// TypeScript interfaces and enums for all IDL types\n\n")
 
 	// Collect cross-namespace imports needed by types in this namespace
-	crossNsImports := collectCrossNamespaceImports(nsTypes, currentNs, allNamespaceMap)
+	crossNsImports := collectCrossNamespaceImports(nsTypes, currentNs, typeIndex)
 
 	// Write cross-namespace imports if any
 	if inNamespaceSubdir && len(crossNsImports) > 0 {
@@ -1750,7 +1801,7 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, stru
 		baseName := GetBaseName(structDef.Name)
 		fmt.Fprintf(&sb, "export interface %s", baseName)
 		if structDef.Extends != "" {
-			extendsRef := getExtendsTypeForNamespace(structDef.Extends, structMap, enumMap, currentNs, allNamespaceMap)
+			extendsRef := getExtendsTypeForNamespace(structDef.Extends, structMap, enumMap, currentNs, typeIndex)
 			sb.WriteString(" extends " + extendsRef)
 		}
 		sb.WriteString(" {\n")
@@ -1762,7 +1813,7 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, stru
 					fmt.Fprintf(&sb, "  // %s\n", line)
 				}
 			}
-			tsType := getTypeScriptTypeForNamespace(field.Type, structMap, enumMap, false, inNamespaceSubdir, allNamespaceMap)
+			tsType := getTypeScriptTypeForNamespace(field.Type, structMap, enumMap, false, inNamespaceSubdir, typeIndex)
 			optionalMarker := ""
 			if field.Optional {
 				optionalMarker = "?"
@@ -1777,7 +1828,7 @@ func generateTypesTsForNamespace(nsTypes *NamespaceTypes, currentNs string, stru
 
 // generateServerTsForNamespace generates the server.ts file with abstract interface classes
 // for a single namespace. Used in multi-namespace mode.
-func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes, moduleStyle string) string {
+func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, currentNs string, inNamespaceSubdir bool, typeIndex map[string]string, moduleStyle string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
@@ -1787,15 +1838,7 @@ func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 	fmt.Fprintf(&sb, "import { RPCError } from '%s';\n", tsImportPath(moduleStyle, runtimeImport+"/rpc"))
 	fmt.Fprintf(&sb, "import * as types from '%s';\n\n", tsImportPath(moduleStyle, "./types"))
 
-	currentNs := ""
-	for ns := range allNamespaceMap {
-		if allNamespaceMap[ns] == nsTypes {
-			currentNs = ns
-			break
-		}
-	}
-
-	crossNsImports := collectCrossNamespaceImports(nsTypes, currentNs, allNamespaceMap)
+	crossNsImports := collectCrossNamespaceImports(nsTypes, currentNs, typeIndex)
 	for crossNs := range crossNsImports {
 		fmt.Fprintf(&sb, "import * as %s from '%s';\n", crossNs, tsImportPath(moduleStyle, "../"+crossNs+"/types"))
 	}
@@ -1817,7 +1860,7 @@ func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 			}
 		}
 		if iface != nil {
-			writeInterfaceStubTsForNamespace(&sb, iface, structMap, enumMap, currentNs, allNamespaceMap)
+			writeInterfaceStubTsForNamespace(&sb, iface, structMap, enumMap, currentNs, typeIndex)
 		}
 	}
 
@@ -1826,7 +1869,7 @@ func generateServerTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 
 // generateClientTsForNamespace generates the client.ts file with static typed client classes
 // for a single namespace. Used in multi-namespace mode.
-func generateClientTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ string, inNamespaceSubdir bool, allNamespaceMap map[string]*NamespaceTypes, moduleStyle string) string {
+func generateClientTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ string, currentNs string, inNamespaceSubdir bool, typeIndex map[string]string, moduleStyle string) string {
 	var sb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
@@ -1838,15 +1881,7 @@ func generateClientTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 	fmt.Fprintf(&sb, "import { RPCError } from '%s';\n", tsImportPath(moduleStyle, runtimeImport+"/rpc"))
 	fmt.Fprintf(&sb, "import * as types from '%s';\n\n", tsImportPath(moduleStyle, "./types"))
 
-	currentNs := ""
-	for ns := range allNamespaceMap {
-		if allNamespaceMap[ns] == nsTypes {
-			currentNs = ns
-			break
-		}
-	}
-
-	crossNsImports := collectCrossNamespaceImports(nsTypes, currentNs, allNamespaceMap)
+	crossNsImports := collectCrossNamespaceImports(nsTypes, currentNs, typeIndex)
 	for crossNs := range crossNsImports {
 		fmt.Fprintf(&sb, "import * as %s from '%s';\n", crossNs, tsImportPath(moduleStyle, "../"+crossNs+"/types"))
 	}
@@ -1870,7 +1905,7 @@ func generateClientTsForNamespace(nsTypes *NamespaceTypes, structMap map[string]
 			}
 		}
 		if iface != nil {
-			writeInterfaceClientTs(&sb, iface, structMap, enumMap, currentNs, allNamespaceMap)
+			writeInterfaceClientTs(&sb, iface, structMap, enumMap, currentNs, typeIndex)
 		}
 	}
 
@@ -1913,7 +1948,7 @@ func generateClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 }
 
 // writeClientMethodTs generates a typed method for a TypeScript client class
-func writeClientMethodTs(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, ns string, allNamespaceMap map[string]*NamespaceTypes) {
+func writeClientMethodTs(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, ns string, typeIndex map[string]string) {
 	methodName := method.Name
 	fmt.Fprintf(sb, "  async %s(", methodName)
 
@@ -1922,14 +1957,14 @@ func writeClientMethodTs(sb *strings.Builder, iface *parser.Interface, method *p
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		tsType := getTypeScriptTypeForNamespace(param.Type, structMap, enumMap, true, ns != "", allNamespaceMap)
+		tsType := getTypeScriptTypeForNamespace(param.Type, structMap, enumMap, true, ns != "", typeIndex)
 		fmt.Fprintf(sb, "%s: %s", param.Name, tsType)
 	}
 	sb.WriteString(")")
 
 	// Return type
 	if method.ReturnType != nil {
-		returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, ns != "", allNamespaceMap)
+		returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, ns != "", typeIndex)
 		if method.ReturnOptional {
 			fmt.Fprintf(sb, ": Promise<%s | null> {\n", returnType)
 		} else {
@@ -1964,11 +1999,11 @@ func writeClientMethodTs(sb *strings.Builder, iface *parser.Interface, method *p
 	if method.ReturnType != nil {
 		if method.ReturnOptional {
 			sb.WriteString("    return _resp.result as ")
-			returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, ns != "", allNamespaceMap)
+			returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, ns != "", typeIndex)
 			fmt.Fprintf(sb, "%s | null;\n", returnType)
 		} else {
 			sb.WriteString("    return _resp.result as ")
-			returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, ns != "", allNamespaceMap)
+			returnType := getTypeScriptTypeForNamespace(method.ReturnType, structMap, enumMap, true, ns != "", typeIndex)
 			fmt.Fprintf(sb, "%s;\n", returnType)
 		}
 	} else {
@@ -1979,7 +2014,7 @@ func writeClientMethodTs(sb *strings.Builder, iface *parser.Interface, method *p
 }
 
 // writeInterfaceClientTs generates a client class for a TypeScript interface
-func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, ns string, allNamespaceMap map[string]*NamespaceTypes) {
+func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, ns string, typeIndex map[string]string) {
 	if iface.Comment != "" {
 		lines := strings.Split(strings.TrimSpace(iface.Comment), "\n")
 		for _, line := range lines {
@@ -1994,7 +2029,7 @@ func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, struct
 
 	// Generate methods
 	for _, method := range iface.Methods {
-		writeClientMethodTs(sb, iface, method, structMap, enumMap, ns, allNamespaceMap)
+		writeClientMethodTs(sb, iface, method, structMap, enumMap, ns, typeIndex)
 	}
 
 	sb.WriteString("}\n\n")
@@ -2408,7 +2443,7 @@ func generateTestClientTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 
 	sb.WriteString("  // Create client - interfaces are auto-discovered\n")
 	sb.WriteString("  const transport = new HttpTransport(serverUrl);\n")
-	sb.WriteString("  const client = new Client(transport);\n")
+	sb.WriteString("  const client = await Client.create(transport);\n")
 	sb.WriteString("  await client.ready();\n\n")
 	sb.WriteString("  const errors: string[] = [];\n\n")
 

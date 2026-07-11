@@ -11,7 +11,8 @@ import { existsSync, readFileSync } from "fs";
 import { RPCError } from "./rpc.js";
 import { Contract, Interface, ContractAuditor } from "./contract.js";
 import { Transport, JsonRpcRequest } from "./transport.js";
-import { diffIDL, extractChecksum } from "./diff.js";
+import { diffIDL } from "./diff.js";
+import { extractChecksum } from "./types.js";
 import { ContractDelta, VerificationResult } from "./types.js";
 
 export interface ClientOptions {
@@ -58,12 +59,12 @@ class InterfaceClientProxy {
  * JSON-RPC 2.0 client with automatic interface discovery
  *
  * The Client class sends JSON-RPC requests via a Transport implementation.
- * On initialization, it fetches the IDL from the server and dynamically
- * creates interface proxies.
+ * Use Client.create() to bootstrap: it fetches the IDL from the server
+ * and dynamically creates interface proxies.
  *
  * Example:
  *   const transport = new HttpTransport("http://localhost:8080");
- *   const client = new Client(transport);
+ *   const client = await Client.create(transport);
  *   const result = await client.UserService.getUser({ userId: "123" });
  */
 export class Client {
@@ -72,9 +73,6 @@ export class Client {
   validateResponse: boolean;
   contract: Contract | null = null;
 
-  // Index signature to allow dynamic interface proxies
-  // TypeScript doesn't know about these at compile time since they're
-  // added dynamically via bootstrap(), but they exist at runtime
   [key: string]: any;
 
   private requestId: number = 0;
@@ -84,7 +82,7 @@ export class Client {
   private _verifyOnBootstrap: boolean = false;
   private _localIDL: Record<string, any> | null = null;
 
-  constructor(
+  private constructor(
     transport: Transport,
     validateRequest: boolean = false,
     validateResponse: boolean = false,
@@ -98,10 +96,30 @@ export class Client {
       this._auditor = options.auditor;
       this._verifyOnBootstrap = options.verifyOnBootstrap || false;
     }
+  }
 
-    // Bootstrap: fetch IDL from server asynchronously
-    this._findIDLJson();
-    this.initPromise = this.bootstrapWithVerification();
+  /**
+   * Create and bootstrap a Client instance.
+   *
+   * Fetches the IDL from the server and creates interface proxies.
+   * The returned Promise resolves when the client is fully initialized.
+   *
+   * Example:
+   *   const transport = new HttpTransport("http://localhost:8080");
+   *   const client = await Client.create(transport);
+   *   const result = await client.UserService.getUser({ userId: "123" });
+   */
+  static async create(
+    transport: Transport,
+    validateRequest: boolean = false,
+    validateResponse: boolean = false,
+    options?: ClientOptions
+  ): Promise<Client> {
+    const client = new Client(transport, validateRequest, validateResponse, options);
+    client._findIDLJson();
+    await client.bootstrapWithVerification();
+    client.initialized = true;
+    return client;
   }
 
   /**
@@ -175,15 +193,23 @@ export class Client {
             this._localIDL = JSON.parse(content);
             return;
           }
-        } catch (e) {
-          // File doesn't exist or can't be read, try parent directory
+        } catch (e: any) {
+          if (e?.code === 'ENOENT') {
+            // File doesn't exist or was removed, try parent directory
+            continue;
+          }
+          throw e;
         }
         const parentDir = dirname(currentDir);
         if (parentDir === currentDir) break;
         currentDir = parentDir;
       }
-    } catch (e) {
-      // import.meta.url not available or other error - local IDL must be set explicitly
+    } catch (e: any) {
+      if (e instanceof TypeError) {
+        // import.meta.url not available (e.g. bundled environment)
+        return;
+      }
+      throw e;
     }
   }
 
