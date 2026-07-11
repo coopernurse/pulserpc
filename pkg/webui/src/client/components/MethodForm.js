@@ -2,6 +2,7 @@
 
 import m from 'mithril'
 import TypeInput from './TypeInput.js';
+import { resolveType, findStruct } from '../utils/types.js';
 
 export default {
     formValues: {},
@@ -49,7 +50,12 @@ export default {
             }
         });
         method.parameters.forEach(param => {
-            this.formValues[param.name] = null;
+            const resolved = resolveType(param.type);
+            if (resolved.kind === 'userDefined' && vnode.attrs.typeRegistry && findStruct(resolved.name, vnode.attrs.typeRegistry)) {
+                this.formValues[param.name] = {};
+            } else {
+                this.formValues[param.name] = null;
+            }
         });
         
         if (vnode.attrs.onFormChange) {
