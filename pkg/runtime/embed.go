@@ -17,13 +17,19 @@ import (
 //go:embed all:runtimes/python/pulserpc
 var pythonRuntimeFiles embed.FS
 
-// Embed all TypeScript runtime files (Node ESM variant)
+// Embed all TypeScript runtime files (unified ESM/CJS source tree).
+// The canonical source lives under runtimes/ts/; the generator applies
+// a per-style transform (esm-node, esm-bundler, cjs) after copying.
+//
+//go:embed all:runtimes/ts/pulserpc
+var tsRuntimeFiles embed.FS
+
+// Deprecated: embedded ts-node and ts-cjs trees kept for backward
+// compatibility until all callers migrate to the unified tree.
 //
 //go:embed all:runtimes/ts-node/pulserpc
 var tsNodeRuntimeFiles embed.FS
 
-// Embed all TypeScript runtime files (CommonJS variant)
-//
 //go:embed all:runtimes/ts-cjs/pulserpc
 var tsCjsRuntimeFiles embed.FS
 
@@ -48,12 +54,12 @@ var goRuntimeFiles embed.FS
 var python2RuntimeFiles embed.FS
 
 // runtimeMap maps language names to their embedded file systems.
-// "ts" and "ts-node" both point at the Node ESM tree; "ts-cjs" points at the
-// CommonJS tree. Style selection happens in GetRuntimeFilesForStyle.
+// "ts" points at the unified ESM/CJS source tree; "ts-node" and "ts-cjs"
+// are legacy aliases kept for backward compatibility.
 var runtimeMap = map[string]embed.FS{
 	"python":  pythonRuntimeFiles,
 	"python2": python2RuntimeFiles,
-	"ts":      tsNodeRuntimeFiles,
+	"ts":      tsRuntimeFiles,
 	"ts-node": tsNodeRuntimeFiles,
 	"ts-cjs":  tsCjsRuntimeFiles,
 	"csharp":  csharpRuntimeFiles,
@@ -71,9 +77,9 @@ func ListRuntimes() []string {
 		if seen[lang] {
 			continue
 		}
-		// Skip deprecated aliases. "ts-node" and "ts-cjs" are the
-		// canonical TS runtime names; "ts" is a backward-compat alias
-		// for "ts-node".
+		// Skip deprecated aliases. "ts" is the canonical unified TS
+		// runtime name; "ts-node" and "ts-cjs" are backward-compat
+		// aliases that map to the same tree.
 		if lang == "ts" {
 			continue
 		}
@@ -94,11 +100,12 @@ func GetRuntimeFiles(lang string) (map[string][]byte, error) {
 // For non-TypeScript languages, style must be empty.
 //
 // For lang == "ts", style selects between the runtime trees:
-//   - "" (default), "esm-node", "node", "esm" → ts-node (Node ESM) tree
-//   - "esm-bundler", "bundler"               → ts-node tree; caller must apply
+//   - "" (default), "esm-node", "node", "esm" → unified ts tree (Node ESM)
+//   - "esm-bundler", "bundler"               → unified ts tree; caller must apply
 //                                              the bundler post-process transform
 //                                              to strip the ".js" import suffix
-//   - "cjs", "commonjs"                       → ts-cjs (CommonJS) tree
+//   - "cjs", "commonjs"                       → unified ts tree; caller must apply
+//                                              the CJS transform
 //
 // Unknown styles produce an error.
 func GetRuntimeFilesForStyle(lang, style string) (map[string][]byte, error) {
@@ -106,11 +113,11 @@ func GetRuntimeFilesForStyle(lang, style string) (map[string][]byte, error) {
 	if lang == "ts" {
 		switch style {
 		case "", "esm-node", "node", "esm":
-			effectiveLang = "ts-node"
+			effectiveLang = "ts"
 		case "esm-bundler", "bundler":
-			effectiveLang = "ts-node"
+			effectiveLang = "ts"
 		case "cjs", "commonjs":
-			effectiveLang = "ts-cjs"
+			effectiveLang = "ts"
 		default:
 			return nil, fmt.Errorf("invalid module style %q for language %q (valid: esm-node, esm-bundler, cjs; aliases: esm, node, bundler, commonjs)", style, lang)
 		}
@@ -236,12 +243,14 @@ func getRuntimePackageName(lang string) string {
 
 // getRuntimeEmbedPath returns the embed filesystem path for the runtime library
 // This is the path used in //go:embed directives and must match the actual directory structure.
-// "ts" and "ts-node" share the ts-node tree; "ts-cjs" lives in its own tree (wired up in step 3).
+// "ts" points at the unified runtimes/ts/pulserpc tree; "ts-node" and "ts-cjs" are legacy paths.
 func getRuntimeEmbedPath(lang string) string {
 	switch lang {
 	case "go", "python", "python2":
 		return fmt.Sprintf("runtimes/%s/pulserpc", lang)
-	case "ts", "ts-node":
+	case "ts":
+		return "runtimes/ts/pulserpc"
+	case "ts-node":
 		return "runtimes/ts-node/pulserpc"
 	case "ts-cjs":
 		return "runtimes/ts-cjs/pulserpc"

@@ -1200,9 +1200,9 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 }
 
 // copyRuntimeFiles copies the TypeScript runtime library files to the output directory.
-// The runtime tree is selected from p.moduleStyle: "esm-node" and "esm-bundler"
-// share the ts-node tree (and the bundler transform in step 7 will rewrite
-// imports in the written files); "cjs" pulls from the ts-cjs tree.
+// All styles pull from the unified ts runtime tree. The bundler transform
+// in step 7 rewrites imports in the written files; the cjs transform
+// converts ESM imports/exports to require/module.exports.
 //
 // Each file's bytes pass through transformFileForStyle before being
 // written. For esm-node the transform is a strict no-op (byte-equal

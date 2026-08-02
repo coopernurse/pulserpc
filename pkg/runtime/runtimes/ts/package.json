@@ -2,13 +2,19 @@
   "name": "pulserpc-ts-runtime",
   "version": "1.0.0",
   "description": "TypeScript runtime for PulseRPC",
-  "type": "commonjs",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "test": "make test"
+  },
   "devDependencies": {
     "@types/node": "^18.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "@typescript-eslint/parser": "^8.0.0",
-    "eslint": "^9.0.0",
-    "ts-node": "^10.9.0",
+    "tsup": "^8.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.0.0"
   }

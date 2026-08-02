@@ -1,6 +1,8 @@
 # PulseRPC TypeScript Runtime
 
-This directory contains the TypeScript runtime library for PulseRPC-generated code.
+> **Note:** This directory is a backward-compat alias for the canonical TypeScript runtime
+> at `pkg/runtime/runtimes/ts/`. The two trees are identical; `ts-node` is kept for
+> tooling that references the legacy name.
 
 ## Overview
 
@@ -109,5 +111,6 @@ This uses Docker to run tests in a consistent Node.js 18+ environment if Docker 
 
 ## Module System
 
-Generated code uses CommonJS (`module.exports`) for maximum Node.js compatibility.
+The runtime itself is ESM but supports dual ESM+CJS distribution (via tsup) so generated
+code works in any module system: Node ESM, bundler ESM, or CommonJS.
 
