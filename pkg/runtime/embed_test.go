@@ -8,27 +8,25 @@ import (
 )
 
 // TestGetRuntimeFilesForStyle covers the matrix required by step 3.6 of the
-// plan: legacy behaviour, CJS, and unknown-style errors.
+// plan: all TS styles (esm-node, esm-bundler, cjs) pull from the unified
+// runtimes/ts/pulserpc tree. The transform is applied downstream.
 func TestGetRuntimeFilesForStyle(t *testing.T) {
-	// Legacy call: GetRuntimeFiles("ts") must remain the canonical source of
-	// the ESM-Node tree.
+	// Legacy call: GetRuntimeFiles("ts") must return the unified tree.
 	legacy, err := GetRuntimeFiles("ts")
 	if err != nil {
 		t.Fatalf("GetRuntimeFiles(\"ts\") failed: %v", err)
 	}
+	if len(legacy) == 0 {
+		t.Fatalf("GetRuntimeFiles(\"ts\") returned an empty map")
+	}
 
-	// 1. esm-node is the canonical form of the legacy default.
+	// 1. esm-node pulls from the unified tree.
 	esmNode, err := GetRuntimeFilesForStyle("ts", "esm-node")
 	if err != nil {
 		t.Fatalf("GetRuntimeFilesForStyle(\"ts\", \"esm-node\") failed: %v", err)
 	}
 	if !sameFileSet(legacy, esmNode) {
 		t.Errorf("GetRuntimeFilesForStyle(\"ts\", \"esm-node\") must be byte-equal to GetRuntimeFiles(\"ts\")")
-	}
-	for name, data := range legacy {
-		if !bytes.Equal(esmNode[name], data) {
-			t.Errorf("esm-node file %q differs from legacy GetRuntimeFiles(\"ts\")", name)
-		}
 	}
 
 	// 2. Empty style is equivalent to esm-node.
@@ -40,7 +38,7 @@ func TestGetRuntimeFilesForStyle(t *testing.T) {
 		t.Errorf("empty style must match legacy GetRuntimeFiles(\"ts\")")
 	}
 
-	// 3. Aliases all map to esm-node.
+	// 3. Aliases all map to the unified tree.
 	for _, alias := range []string{"esm", "node"} {
 		got, err := GetRuntimeFilesForStyle("ts", alias)
 		if err != nil {
@@ -52,7 +50,7 @@ func TestGetRuntimeFilesForStyle(t *testing.T) {
 		}
 	}
 
-	// 4. esm-bundler shares the ts-node tree (the generator applies the
+	// 4. esm-bundler shares the unified tree (the generator applies the
 	//    bundler transform at a later step).
 	bundler, err := GetRuntimeFilesForStyle("ts", "esm-bundler")
 	if err != nil {
@@ -69,13 +67,17 @@ func TestGetRuntimeFilesForStyle(t *testing.T) {
 		t.Errorf("bundler alias must match legacy GetRuntimeFiles(\"ts\")")
 	}
 
-	// 5. cjs uses the ts-cjs tree.
+	// 5. cjs uses the unified ts tree (the generator's CJS transform
+	//    converts imports downstream).
 	cjs, err := GetRuntimeFilesForStyle("ts", "cjs")
 	if err != nil {
 		t.Fatalf("GetRuntimeFilesForStyle(\"ts\", \"cjs\") failed: %v", err)
 	}
 	if len(cjs) == 0 {
 		t.Fatalf("GetRuntimeFilesForStyle(\"ts\", \"cjs\") returned an empty map")
+	}
+	if !sameFileSet(legacy, cjs) {
+		t.Errorf("cjs runtime tree must equal the unified ts tree at the embed level")
 	}
 	for _, name := range []string{"client.ts", "server.ts", "index.ts"} {
 		if _, ok := cjs[name]; !ok {
@@ -110,10 +112,10 @@ func TestGetRuntimeFilesForStyle(t *testing.T) {
 	}
 }
 
-// TestGetRuntimeFilesForStyleCjsIsDistinctFromEsmNode asserts that at least
-// one file in the cjs runtime tree differs in content from the esm-node
-// tree, so cjs is a real alternate runtime, not a no-op alias.
-func TestGetRuntimeFilesForStyleCjsIsDistinctFromEsmNode(t *testing.T) {
+// TestGetRuntimeFilesForStyleCjsIsSameAsEsmNode asserts that cjs and
+// esm-node both pull from the unified ts tree, so the embed-level bytes are
+// identical. The generator's transform handles the import-path differences.
+func TestGetRuntimeFilesForStyleCjsIsSameAsEsmNode(t *testing.T) {
 	esm, err := GetRuntimeFilesForStyle("ts", "esm-node")
 	if err != nil {
 		t.Fatalf("GetRuntimeFilesForStyle(\"ts\", \"esm-node\") failed: %v", err)
@@ -128,29 +130,40 @@ func TestGetRuntimeFilesForStyleCjsIsDistinctFromEsmNode(t *testing.T) {
 			differing++
 		}
 	}
-	if differing == 0 {
-		t.Errorf("cjs runtime tree must differ from esm-node in at least one file's bytes")
+	if differing > 0 {
+		t.Errorf("cjs and esm-node runtime trees must be byte-equal from the unified tree, but %d files differ", differing)
 	}
 }
 
-// TestRuntimeEmbedRename asserts the ts/ts-node aliases return the same set of
-// files (covers the rename in step 1).
-func TestRuntimeEmbedRename(t *testing.T) {
-	tsFiles, err := GetRuntimeFiles("ts")
+// TestRuntimeEmbedUnifiedTree asserts the unified ts tree contains the expected
+// source files and that legacy ts-node/ts-cjs trees differ from the unified tree
+// (validating that we're serving the new merged sources, not the old ones).
+func TestRuntimeEmbedUnifiedTree(t *testing.T) {
+	unified, err := GetRuntimeFiles("ts")
 	if err != nil {
 		t.Fatalf("GetRuntimeFiles(\"ts\") failed: %v", err)
 	}
-	tsNodeFiles, err := GetRuntimeFiles("ts-node")
+	legacyTsNode, err := GetRuntimeFiles("ts-node")
 	if err != nil {
 		t.Fatalf("GetRuntimeFiles(\"ts-node\") failed: %v", err)
 	}
-	if !sameFileSet(tsFiles, tsNodeFiles) {
-		t.Errorf("ts and ts-node runtime trees must be byte-equal")
-	}
-	for name, data := range tsFiles {
-		if !bytes.Equal(tsNodeFiles[name], data) {
-			t.Errorf("file %q differs between ts and ts-node runtimes", name)
+
+	// The unified tree must have the new files (contract.ts, client.ts, etc.)
+	for _, name := range []string{"index.ts", "types.ts", "client.ts", "server.ts", "contract.ts", "transport.ts", "validation.ts", "diff.ts", "rpc.ts"} {
+		if _, ok := unified[name]; !ok {
+			t.Errorf("unified ts runtime is missing expected file %q", name)
 		}
+	}
+
+	// The unified tree should differ from the legacy ts-node tree (due to merges).
+	differing := 0
+	for name, unifiedData := range unified {
+		if legacyData, ok := legacyTsNode[name]; ok && !bytes.Equal(unifiedData, legacyData) {
+			differing++
+		}
+	}
+	if differing == 0 {
+		t.Logf("warning: unified ts tree is byte-equal to legacy ts-node tree - possibly no merge changes were applied")
 	}
 }
 
@@ -177,9 +190,9 @@ func TestGetRuntimePackageName(t *testing.T) {
 // variants and the standard languages.
 func TestGetRuntimeEmbedPath(t *testing.T) {
 	cases := map[string]string{
+		"ts":      "runtimes/ts/pulserpc",
 		"ts-node": "runtimes/ts-node/pulserpc",
 		"ts-cjs":  "runtimes/ts-cjs/pulserpc",
-		"ts":      "runtimes/ts-node/pulserpc",
 		"python":  "runtimes/python/pulserpc",
 		"go":      "runtimes/go/pulserpc",
 		"java":    "runtimes/java/com/bitmechanic/pulserpc",

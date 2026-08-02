@@ -112,14 +112,14 @@ test-runtime-python2: build
 	@rm -rf /tmp/pulserpc_py2_test
 	@echo "Python 2 runtime tests passed"
 
-# Test TypeScript runtime (ESM)
+# Test TypeScript runtime (unified ESM/CJS source tree)
 test-runtime-ts:
-	@echo "Testing TypeScript ESM runtime..."
-	@cd pkg/runtime/runtimes/ts-node && $(MAKE) test
+	@echo "Testing TypeScript runtime..."
+	@cd pkg/runtime/runtimes/ts && $(MAKE) test
 
-# Test TypeScript runtime (CJS)
+# Test TypeScript runtime (deprecated CJS tree — still tested for backward compat)
 test-runtime-ts-cjs:
-	@echo "Testing TypeScript CJS runtime..."
+	@echo "Testing TypeScript legacy CJS runtime..."
 	@cd pkg/runtime/runtimes/ts-cjs && $(MAKE) test
 
 # Test C# runtime
@@ -149,7 +149,7 @@ test-generator-python:
 # Test TypeScript generator integration
 test-generator-ts:
 	@echo "Testing TypeScript generator integration..."
-	@cd pkg/runtime/runtimes/ts-node && $(MAKE) test-integration
+	@cd pkg/runtime/runtimes/ts && $(MAKE) test-integration
 
 # Test C# generator integration
 test-generator-csharp:

@@ -3013,20 +3013,16 @@ func TestTsCjsOutputIsCjsParseable(t *testing.T) {
 	})
 }
 
-// TestTsCjsRuntimeUsesFilename covers step 12.3: the CJS runtime's
-// client.ts must use __dirname (not import.meta.url or fileURLToPath
-// in non-comment code).
-func TestTsCjsRuntimeUsesFilename(t *testing.T) {
+// TestTsCjsOutputSupportsLocalIDL covers step 14.1: the CJS output's
+// client.ts must include localIDL support in ClientOptions.
+func TestTsCjsOutputSupportsLocalIDL(t *testing.T) {
 	withTempOutputDir(t, func(outputDir string) {
 		idl := tsFlatSingleInterfaceIDL()
 		runWithStyle(t, "cjs", idl, outputDir)
 
 		content := tsReadFile(t, outputDir, "pulserpc/client.ts")
-		if !strings.Contains(content, "__dirname") {
-			t.Error("CJS runtime client.ts must contain __dirname")
-		}
-		if !strings.Contains(content, "_findIDLJson()") {
-			t.Error("CJS runtime client.ts must call _findIDLJson()")
+		if !strings.Contains(content, "localIDL") {
+			t.Error("CJS runtime client.ts must support localIDL")
 		}
 		if !strings.Contains(content, "static async create") {
 			t.Error("CJS runtime client.ts must have static async create method")
