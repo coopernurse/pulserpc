@@ -5,7 +5,7 @@ When generating code from .pulse IDL files, clients need a way to detect whether
 ## What Changes
 
 - Add a `checksum` field to the top-level `idl.json` output
-- The checksum is a SHA-256 hash encoded as base64url (44 characters)
+- The checksum is a SHA-256 hash encoded as unpadded base64url (43 characters; no `=` padding)
 - The checksum is computed from structural elements only (whitespace and comments excluded)
 - Element ordering is normalized so file reorganization doesn't affect the checksum
 - Namespace-qualified names are used throughout for disambiguation

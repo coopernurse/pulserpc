@@ -807,12 +807,19 @@ Choose appropriate official Docker images:
 
 ### 1. JSON-RPC 2.0 Compliance
 
-Both server and client must fully comply with JSON-RPC 2.0 specification:
+Servers and clients must implement the core JSON-RPC 2.0 envelope:
 - Request format: `{jsonrpc: "2.0", method: "...", params: [...], id: "..."}`
-- Response format: `{jsonrpc: "2.0", result: ..., id: "..."}` or `{jsonrpc: "2.0", error: {...}, id: "..."}`
-- Batch requests: Array of requests
+- Response format: `{jsonrpc: "2.0", result: ..., id: "..."}` or `{jsonrpc: "2.0", error: {...}, id: "..."}`. A
+  client MUST check `error` before reading `result`; both keys together are invalid.
 - Notifications: Requests without `id` field (no response sent)
 - Error codes: Standard JSON-RPC error codes (-32700, -32600, -32601, -32602, -32603)
+
+Batch requests (an array of requests) are **optional** for generated adapters. The
+generated Go and C# servers support them; generated Java, TypeScript and Python
+servers do not. Batch support is therefore not part of the generated-server
+compliance checklist. Parse errors (-32700) are emitted by the generated Go,
+Python, TypeScript and C# servers; the generated Java server emits -32700 for a
+malformed JSON body.
 
 ### 2. Type System Integration
 
@@ -1209,7 +1216,7 @@ When implementing a new runtime, ensure:
 - [ ] Client validates parameters and responses
 - [ ] HTTP transport supports custom headers
 - [ ] Server handles `pulserpc-idl` method
-- [ ] Server handles batch requests
+- [ ] Server handles batch requests (optional; only Go and C# generated servers do)
 - [ ] Server handles notifications
 - [ ] Makefile targets for testing
 - [ ] Docker testing setup

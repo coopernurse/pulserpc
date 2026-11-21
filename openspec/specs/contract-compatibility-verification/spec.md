@@ -114,8 +114,13 @@ The client SHALL accept `VerifyOnBootstrap()` as a dial option that triggers aut
 
 #### Scenario: Compatibility verification with breaking changes
 
-- **WHEN** client calls `VerifyCompatibility()` and server has removed a required field
-- **THEN** result is returned with `Compatible=false` and `Deltas` containing Error-level entry
+- **WHEN** client calls `VerifyCompatibility()` and the server has added a required field that the client does not send (a `Required field added` / `ClientHasLess` delta)
+- **THEN** result is returned with `Compatible=false` and `Deltas` containing an Error-level entry
+
+#### Scenario: Compatibility verification with a removed field
+
+- **WHEN** client calls `VerifyCompatibility()` and the server has removed a required field the client still has (`Field removed` / `ClientHasMore`)
+- **THEN** result is returned with `Compatible=true` and `Deltas` containing an Info-level entry
 
 #### Scenario: Auditor is called on every verification
 

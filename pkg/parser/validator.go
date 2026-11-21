@@ -95,6 +95,20 @@ func ValidateIDL(idl *IDL) error {
 			typeRegistry[enum.Name] = enum.Pos
 			typeNames[enum.Name] = "enum"
 		}
+
+		// Enum value names must be unique within the enum (core-07).
+		valueNames := make(map[string]bool)
+		for _, value := range enum.Values {
+			if valueNames[value.Name] {
+				errors.Add(&ValidationError{
+					Line:   enum.Pos.Line,
+					Column: enum.Pos.Column,
+					Msg:    fmt.Sprintf("duplicate enum value name: %s", value.Name),
+				})
+			} else {
+				valueNames[value.Name] = true
+			}
+		}
 	}
 
 	// Register all errors and check for duplicate codes
@@ -129,15 +143,37 @@ func ValidateIDL(idl *IDL) error {
 
 	// Second pass: validate everything now that all types are registered
 	for _, iface := range idl.Interfaces {
+		// Method names must be unique within the interface (core-07).
+		methodNames := make(map[string]bool)
 		// Validate method names and types
 		for _, method := range iface.Methods {
 			if !validateIdentifierName(method.Name, errors, method.Pos.Line, method.Pos.Column) {
 				continue
 			}
+			if methodNames[method.Name] {
+				errors.Add(&ValidationError{
+					Line:   method.Pos.Line,
+					Column: method.Pos.Column,
+					Msg:    fmt.Sprintf("duplicate method name: %s", method.Name),
+				})
+			} else {
+				methodNames[method.Name] = true
+			}
 			validateType(method.ReturnType, typeRegistry, errors, iface.Namespace)
+			// Parameter names must be unique within the method (core-07).
+			paramNames := make(map[string]bool)
 			for _, param := range method.Parameters {
 				if !validateIdentifierName(param.Name, errors, param.Pos.Line, param.Pos.Column) {
 					continue
+				}
+				if paramNames[param.Name] {
+					errors.Add(&ValidationError{
+						Line:   param.Pos.Line,
+						Column: param.Pos.Column,
+						Msg:    fmt.Sprintf("duplicate parameter name: %s", param.Name),
+					})
+				} else {
+					paramNames[param.Name] = true
 				}
 				validateType(param.Type, typeRegistry, errors, iface.Namespace)
 			}
@@ -159,22 +195,41 @@ func ValidateIDL(idl *IDL) error {
 
 	for _, s := range idl.Structs {
 		if s.Extends != "" {
-			_, exists := typeRegistry[s.Extends]
-			if !exists && !builtInTypes[s.Extends] {
+			// `extends` must name a struct - built-ins, enums, interfaces and
+			// errors are not valid parents (core-03).
+			resolved := resolveTypeName(s.Extends, typeRegistry, s.Namespace)
+			kind, exists := typeNames[resolved]
+			if !exists && !builtInTypes[resolved] {
 				errors.Add(&ValidationError{
 					Line:   s.Pos.Line,
 					Column: s.Pos.Column,
 					Msg:    fmt.Sprintf("struct %s extends unknown type %s", s.Name, s.Extends),
 				})
+			} else if builtInTypes[resolved] || kind != "struct" {
+				errors.Add(&ValidationError{
+					Line:   s.Pos.Line,
+					Column: s.Pos.Column,
+					Msg:    fmt.Sprintf("struct %s extends %s: parent must be a struct", s.Name, s.Extends),
+				})
 			}
 		}
+		fieldNames := make(map[string]bool)
 		for _, field := range s.Fields {
 			validateType(field.Type, typeRegistry, errors, s.Namespace)
+			if fieldNames[field.Name] {
+				errors.Add(&ValidationError{
+					Line:   field.Pos.Line,
+					Column: field.Pos.Column,
+					Msg:    fmt.Sprintf("duplicate field name: %s", field.Name),
+				})
+			} else {
+				fieldNames[field.Name] = true
+			}
 		}
 	}
 
 	// Third pass: cycle detection
-	detectCycles(idl, errors)
+	detectCycles(idl, errors, typeRegistry)
 
 	if errors.HasErrors() {
 		return errors
@@ -321,8 +376,12 @@ func getReferencedTypes(t *Type) []string {
 	return nil
 }
 
-// detectCycles detects circular type references in structs
-func detectCycles(idl *IDL, errors *ValidationErrors) {
+// detectCycles detects circular type references in structs.
+// References are resolved against the declaring namespace before lookup so that
+// cycles spanning imported (namespace-prefixed) structs are detected. All DFS
+// state is restored on every return path (core-16) to avoid false positives for
+// later roots.
+func detectCycles(idl *IDL, errors *ValidationErrors, typeRegistry map[string]lexer.Position) {
 	// Build a map of struct name to struct for quick lookup
 	structMap := make(map[string]*Struct)
 	for _, s := range idl.Structs {
@@ -375,16 +434,22 @@ func detectCycles(idl *IDL, errors *ValidationErrors) {
 			return false
 		}
 
-		// Mark as being processed in current path
+		// Mark as being processed in current path. Restore state on EVERY return
+		// path (including early cycle returns) so later DFS roots are unaffected.
 		recursionStack[structName] = true
 		path = append(path, structName)
+		defer func() {
+			delete(recursionStack, structName)
+			visited[structName] = true
+		}()
 
 		// Check extends relationship
 		s := structMap[structName]
 		if s != nil {
 			if s.Extends != "" {
-				if _, isStruct := structMap[s.Extends]; isStruct {
-					if dfs(s.Extends, path) {
+				resolved := resolveTypeName(s.Extends, typeRegistry, s.Namespace)
+				if _, isStruct := structMap[resolved]; isStruct {
+					if dfs(resolved, path) {
 						return true
 					}
 				}
@@ -392,14 +457,15 @@ func detectCycles(idl *IDL, errors *ValidationErrors) {
 
 			// Check all fields
 			for _, field := range s.Fields {
+				// Optional fields break cycles
+				if field.Optional {
+					continue
+				}
 				refTypes := getReferencedTypes(field.Type)
 				for _, refType := range refTypes {
-					if _, isStruct := structMap[refType]; isStruct {
-						// Optional fields break cycles
-						if field.Optional {
-							continue
-						}
-						if dfs(refType, path) {
+					resolved := resolveTypeName(refType, typeRegistry, s.Namespace)
+					if _, isStruct := structMap[resolved]; isStruct {
+						if dfs(resolved, path) {
 							return true
 						}
 					}
@@ -407,9 +473,6 @@ func detectCycles(idl *IDL, errors *ValidationErrors) {
 			}
 		}
 
-		// Remove from recursion stack and mark as visited
-		delete(recursionStack, structName)
-		visited[structName] = true
 		return false
 	}
 

@@ -18,11 +18,15 @@ TEST_SERVERS_SCRIPT="$PROJECT_ROOT/scripts/test-servers.sh"
 HTTP_TEST_SCRIPT="$SCRIPT_DIR/test_http_api.sh"
 
 # Runtime ports (matching test-servers.sh configuration)
+# All seven runtimes advertised in docs/RUNTIME_IMPLEMENTATION_GUIDE.md.
 declare -A RUNTIME_PORTS=(
     ["python"]="9000"
     ["ts"]="9001"
     ["csharp"]="9002"
     ["java"]="9003"
+    ["go"]="9004"
+    ["python2"]="9005"
+    ["ts-cjs"]="9006"
 )
 
 # Cleanup function
@@ -67,11 +71,18 @@ PASSED_RUNTIMES=0
 FAILED_RUNTIMES=()
 
 # Test each runtime
-for runtime in python ts csharp; do
+for runtime in python ts csharp java go python2 ts-cjs; do
     port="${RUNTIME_PORTS[$runtime]}"
     url="http://localhost:$port"
-    
+
     TOTAL_RUNTIMES=$((TOTAL_RUNTIMES + 1))
+
+    # Variants not launched by test-servers.sh are reported as skipped rather
+    # than silently omitted from the matrix.
+    if ! grep -q "\"$runtime:" "$TEST_SERVERS_SCRIPT"; then
+        echo -e "${YELLOW}SKIP: $runtime has no test server configured in test-servers.sh${NC}"
+        continue
+    fi
     
     echo ""
     echo -e "${BLUE}========================================${NC}"

@@ -237,13 +237,14 @@ When validation fails, PulseRPC returns an RPC error:
   "error": {
     "code": -32602,
     "message": "Invalid params",
-    "data": {
-      "field": "email",
-      "message": "Required field 'email' is missing"
-    }
+    "data": "function 'Svc.Create' invalid param 'user': missing required field 'email' in struct User"
   }
 }
 ```
+
+`data` is a plain string in the Go, Java and C# runtimes; the TypeScript and
+Python runtimes expose a structured validation result instead. The example above
+shows the exact string emitted by the Go runtime for a missing required field.
 
 ## Custom Validation
 

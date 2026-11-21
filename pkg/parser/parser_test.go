@@ -511,21 +511,7 @@ func TestCycleDetectionSelfReferenceWithoutOptional(t *testing.T) {
   value string
   next Node
 }`
-	// This should fail validation due to cycle
-	idl, err := ParseIDL("test.pulse", input)
-	if err != nil {
-		t.Fatalf("Unexpected parse error: %v", err)
-	}
-	err = ValidateIDL(idl)
-	// Note: Cycle detection may not be implemented yet, so this test documents expected behavior
-	if err == nil {
-		t.Log("WARNING: Cycle detection not implemented - self-reference without optional should fail")
-	} else {
-		// If cycle detection is implemented, it should catch this
-		if !strings.Contains(err.Error(), "cycle") {
-			t.Logf("Got validation error but not cycle-related: %v", err)
-		}
-	}
+	assertValidationError(t, input, "circular type reference")
 }
 
 func TestCycleDetectionSelfReferenceWithOptional(t *testing.T) {
@@ -544,20 +530,7 @@ func TestCycleDetectionIndirectCycle(t *testing.T) {
 struct B {
   a A
 }`
-	// This should fail validation due to indirect cycle
-	idl, err := ParseIDL("test.pulse", input)
-	if err != nil {
-		t.Fatalf("Unexpected parse error: %v", err)
-	}
-	err = ValidateIDL(idl)
-	// Note: Cycle detection may not be implemented yet
-	if err == nil {
-		t.Log("WARNING: Cycle detection not implemented - indirect cycle should fail")
-	} else {
-		if !strings.Contains(err.Error(), "cycle") {
-			t.Logf("Got validation error but not cycle-related: %v", err)
-		}
-	}
+	assertValidationError(t, input, "circular type reference")
 }
 
 func TestCycleDetectionIndirectCycleWithOptional(t *testing.T) {
@@ -578,15 +551,7 @@ func TestCycleDetectionThroughExtends(t *testing.T) {
 struct Child extends Base {
   value string
 }`
-	// This creates a cycle through extends
-	idl, err := ParseIDL("test.pulse", input)
-	if err != nil {
-		t.Fatalf("Unexpected parse error: %v", err)
-	}
-	err = ValidateIDL(idl)
-	if err == nil {
-		t.Log("WARNING: Cycle detection through extends not implemented")
-	}
+	assertValidationError(t, input, "circular type reference")
 }
 
 func TestCycleDetectionInArray(t *testing.T) {
@@ -594,15 +559,7 @@ func TestCycleDetectionInArray(t *testing.T) {
   value string
   children []Node
 }`
-	// This should fail - array of self without optional
-	idl, err := ParseIDL("test.pulse", input)
-	if err != nil {
-		t.Fatalf("Unexpected parse error: %v", err)
-	}
-	err = ValidateIDL(idl)
-	if err == nil {
-		t.Log("WARNING: Cycle detection in arrays not implemented")
-	}
+	assertValidationError(t, input, "circular type reference")
 }
 
 func TestCycleDetectionInArrayWithOptional(t *testing.T) {
@@ -619,15 +576,7 @@ func TestCycleDetectionInMap(t *testing.T) {
   value string
   children map[string]Node
 }`
-	// This should fail - map value of self without optional
-	idl, err := ParseIDL("test.pulse", input)
-	if err != nil {
-		t.Fatalf("Unexpected parse error: %v", err)
-	}
-	err = ValidateIDL(idl)
-	if err == nil {
-		t.Log("WARNING: Cycle detection in maps not implemented")
-	}
+	assertValidationError(t, input, "circular type reference")
 }
 
 func TestCycleDetectionInMapWithOptional(t *testing.T) {
@@ -635,16 +584,74 @@ func TestCycleDetectionInMapWithOptional(t *testing.T) {
   value string
   children map[string]Node [optional]
 }`
-	// This should pass because optional
-	// Note: May fail parsing if map[string]Node isn't supported
+	// Optional fields break cycles - this must validate without error.
+	assertValid(t, input)
+}
+
+// core-04: a cycle that spans imported (namespace-prefixed) structs must be rejected.
+func TestCycleDetectionAcrossImports(t *testing.T) {
+	tmpDir := t.TempDir()
+	createTestFile(t, tmpDir, "b.pulse", `namespace b
+struct B {
+  a a.A
+}
+`)
+	createTestFile(t, tmpDir, "a.pulse", `namespace a
+import "b.pulse"
+struct A {
+  b b.B
+}
+`)
+	createTestFile(t, tmpDir, "root.pulse", `namespace root
+import "a.pulse"
+struct Root {
+  value string
+}
+`)
+
+	idl, err := parseIDLFromFile(t, filepath.Join(tmpDir, "root.pulse"))
+	if err != nil {
+		t.Fatalf("parseIDLFromFile: %v", err)
+	}
+	if err := ValidateIDL(idl); err == nil || !strings.Contains(err.Error(), "circular type reference") {
+		t.Fatalf("expected cross-import circular type reference error, got: %v", err)
+	}
+}
+
+// core-16: a detected cycle must not pollute the DFS stack, so a later root
+// that merely references a node on the cycle path is not a false positive.
+func TestCycleDetectionDoesNotReportDuplicateOrFalseCycles(t *testing.T) {
+	input := `namespace test
+struct CycleA {
+  b CycleB
+}
+struct CycleB {
+  a CycleA
+}
+struct Other {
+  c CycleB
+}
+`
 	idl, err := ParseIDL("test.pulse", input)
 	if err != nil {
-		t.Logf("Map parsing may have issues: %v", err)
-		return
+		t.Fatalf("ParseIDL: %v", err)
 	}
 	err = ValidateIDL(idl)
-	if err != nil {
-		t.Logf("Map validation issue: %v", err)
+	if err == nil {
+		t.Fatal("expected a circular type reference error")
+	}
+	verrs, ok := err.(*ValidationErrors)
+	if !ok {
+		t.Fatalf("expected *ValidationErrors, got %T: %v", err, err)
+	}
+	count := 0
+	for _, ve := range verrs.Errors {
+		if strings.Contains(ve.Msg, "circular type reference") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 circular type reference error, got %d: %v", count, err)
 	}
 }
 
@@ -716,16 +723,7 @@ func TestDuplicateTypeNames(t *testing.T) {
 struct User {
   id string
 }`
-	// This should be caught during validation or parsing
-	idl, err := ParseIDL("test.pulse", input)
-	if err != nil {
-		return // Parse error is acceptable
-	}
-	err = ValidateIDL(idl)
-	// Duplicate names might not be caught, but it's worth testing
-	if err == nil {
-		t.Log("WARNING: Duplicate type name validation not implemented")
-	}
+	assertValidationError(t, input, "duplicate type name")
 }
 
 func TestInvalidExtendsNonExistentType(t *testing.T) {
@@ -1478,38 +1476,45 @@ struct Test {
 	}
 }
 
-// Test import file without namespace
+// core-08: an imported file with declarations but no namespace must be rejected.
 func TestImportFileWithoutNamespace(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// File without namespace
 	importedContent := `struct ImportedStruct {
     value string
 }`
 	createTestFile(t, tmpDir, "imported.pulse", importedContent)
 
-	mainContent := `import "imported.pulse"
+	mainContent := `namespace main
+import "imported.pulse"
 
 struct MainStruct {
-    imported ImportedStruct
+    value string
 }`
 	mainFile := createTestFile(t, tmpDir, "main.pulse", mainContent)
 
-	idl, err := parseIDLFromFile(t, mainFile)
-	if err != nil {
-		t.Fatalf("Expected valid parse, got error: %v", err)
+	_, err := parseIDLFromFile(t, mainFile)
+	if err == nil {
+		t.Fatal("Expected an error for imported file without namespace")
 	}
-
-	// Verify imported type is accessible without prefix
-	foundImported := false
-	for _, s := range idl.Structs {
-		if s.Name == "ImportedStruct" && s.Namespace == "" {
-			foundImported = true
-		}
+	if !strings.Contains(err.Error(), "imported.pulse") {
+		t.Errorf("Error must name the offending file, got: %v", err)
 	}
+}
 
-	if !foundImported {
-		t.Error("Expected to find ImportedStruct without namespace prefix")
+// core-08 acceptance: empty imported files remain acceptable.
+func TestEmptyImportFileWithoutNamespaceIsAllowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	createTestFile(t, tmpDir, "empty.pulse", "// no declarations\n")
+	mainFile := createTestFile(t, tmpDir, "main.pulse", `namespace main
+import "empty.pulse"
+
+struct MainStruct {
+    value string
+}`)
+
+	if _, err := parseIDLFromFile(t, mainFile); err != nil {
+		t.Fatalf("empty import without namespace should be allowed: %v", err)
 	}
 }
 
@@ -2142,20 +2147,19 @@ errors {
 
 struct Dummy {}
 `
-	// Should parse - users can override standard codes
-	// Negative numbers may not parse with IntLiteral pattern
-	_, err := ParseIDL("test.pulse", input)
-	if err != nil {
-		t.Logf("Negative error codes not supported (expected): %v", err)
-		return
-	}
-	// If they parse, validate them
 	idl, err := parseAndValidate(input)
-	if err == nil {
-		err = ValidateIDL(idl)
-	}
 	if err != nil {
-		t.Errorf("Expected validation to pass for reserved error codes: %v", err)
+		t.Fatalf("expected reserved negative error codes to parse and validate: %v", err)
+	}
+	codes := make(map[string]int)
+	for _, e := range idl.Errors {
+		codes[e.Name] = e.Code
+	}
+	if got := codes["test.ParseError"]; got != -32700 {
+		t.Errorf("ParseError code = %d, want -32700", got)
+	}
+	if got := codes["test.InvalidRequest"]; got != -32600 {
+		t.Errorf("InvalidRequest code = %d, want -32600", got)
 	}
 }
 

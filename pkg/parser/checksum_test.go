@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -307,8 +309,15 @@ func TestChecksumNamespaceResolution(t *testing.T) {
 }
 
 func TestChecksumBookPulse(t *testing.T) {
-	// Read book.pulse and compute checksum
-	idl, err := ParseIDL("book.pulse", "")
+	// core-06: parse the real fixture rather than an empty string.
+	data, err := os.ReadFile(filepath.Join("..", "..", "examples", "book.pulse"))
+	if err != nil {
+		t.Fatalf("Failed to read book.pulse fixture: %v", err)
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		t.Fatal("book.pulse fixture is empty")
+	}
+	idl, err := ParseIDL("book.pulse", string(data))
 	if err != nil {
 		t.Fatalf("Failed to parse book.pulse: %v", err)
 	}
@@ -318,14 +327,14 @@ func TestChecksumBookPulse(t *testing.T) {
 		t.Fatalf("ComputeChecksum failed: %v", err)
 	}
 
-	// Verify checksum format
 	if len(checksum) != 43 {
 		t.Errorf("Expected checksum length 43, got %d", len(checksum))
 	}
 
-	// This is a regression test - the checksum should be deterministic
-	// Expected checksum for book.pulse (we'll capture this after first run)
-	t.Logf("book.pulse checksum: %s", checksum)
+	const golden = "_H4LqMgNgi6YYDtOji2qUbEqclgqwSVxvJlCprSpkgc"
+	if checksum != golden {
+		t.Errorf("book.pulse checksum = %q, want golden %q", checksum, golden)
+	}
 }
 
 func TestChecksumEnumValueSort(t *testing.T) {

@@ -175,7 +175,7 @@ errors {
 The parser enforces these rules:
 
 1. **Namespace required**: Errors must be in a namespace
-2. **Unique codes**: Each error code must be unique within a file
+2. **Unique codes**: Each error code must be unique across the merged IDL (the root file plus all imported files), not merely within a single file
 3. **Unique names**: Error names cannot conflict with types (structs, enums, interfaces)
 4. **Valid references**: `raises()` can only reference declared errors
 5. **Integer codes**: Error codes must be integer literals

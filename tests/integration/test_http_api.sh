@@ -124,16 +124,19 @@ test_validation_error() {
                 fi
             fi
             
-            # If actual_code is empty or unknown, print full response for debugging
+            # A wrong error code is a real failure, not a warning (core-11).
             if [ -z "$actual_code" ] || [ "$actual_code" = "unknown" ]; then
-                echo -e "${YELLOW}⚠ WARN${NC}: $description (got error but wrong code: expected $expected_error_code, got empty/unknown)"
+                echo -e "${RED}✗ FAIL${NC}: $description (got error but wrong code: expected $expected_error_code, got empty/unknown)"
                 echo "  Request: $request_json"
                 echo "  Full response: $response"
             else
-                echo -e "${YELLOW}⚠ WARN${NC}: $description (got error but wrong code: expected $expected_error_code, got $actual_code)"
+                echo -e "${RED}✗ FAIL${NC}: $description (got error but wrong code: expected $expected_error_code, got $actual_code)"
                 echo "  Request: $request_json"
                 echo "  Response: $response"
             fi
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            FAILED_TESTS+=("$description (expected error code $expected_error_code)")
+            return 1
         fi
     fi
     

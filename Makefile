@@ -141,6 +141,11 @@ test-runtime-go:
 test-runtimes: test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-ts-cjs test-runtime-csharp test-runtime-java test-runtime-go
 	@echo "All runtime tests passed"
 
+# Run the multi-runtime HTTP API integration harness (all advertised servers)
+test-all-runtimes:
+	@echo "Running HTTP API integration tests against all runtimes..."
+	@bash tests/integration/test_all_runtimes.sh
+
 # Test Python generator integration
 test-generator-python:
 	@echo "Testing Python generator integration..."

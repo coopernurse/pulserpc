@@ -57,6 +57,10 @@ func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 		return fmt.Errorf("failed to compute checksum: %w", err)
 	}
 
+	// core-14: persist the checksum on the IDL itself so every serialized form
+	// (idl.json and the generated IDL_JSON constant) carries it.
+	idl.Checksum = checksum
+
 	output := map[string]interface{}{
 		"interfaces": idl.Interfaces,
 		"structs":    idl.Structs,
@@ -1179,6 +1183,7 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	sb.WriteString("	transport         Transport\n")
 	sb.WriteString("	contract         *pulserpc.Contract\n")
 	sb.WriteString("	localIDL         interface{}\n")
+	sb.WriteString("	serverIDL        interface{}\n")
 	sb.WriteString("	validateRequests  bool\n")
 	sb.WriteString("	validateResponses bool\n")
 	sb.WriteString("	auditor          pulserpc.ContractAuditor\n")
@@ -1212,6 +1217,11 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 
 	fmt.Fprintf(sb, "func (c *%s) SetContract(contract *pulserpc.Contract) {\n", clientName)
 	sb.WriteString("	c.contract = contract\n")
+	sb.WriteString("}\n\n")
+
+	sb.WriteString("// SetServerIDL injects the server's IDL (fetched at bootstrap via the pulserpc-idl RPC).\n")
+	fmt.Fprintf(sb, "func (c *%s) SetServerIDL(idl interface{}) {\n", clientName)
+	sb.WriteString("	c.serverIDL = idl\n")
 	sb.WriteString("}\n\n")
 
 	fmt.Fprintf(sb, "func (c *%s) SetAuditor(auditor pulserpc.ContractAuditor) {\n", clientName)
@@ -1319,10 +1329,16 @@ func writeVerifyCompatibilityMethod(sb *strings.Builder, clientName string) {
 	sb.WriteString("	} else if c.contract != nil {\n")
 	sb.WriteString("		clientIDL = c.contract.GetIDLParsed()\n")
 	sb.WriteString("	}\n\n")
-	sb.WriteString("	var serverIDL interface{}\n")
-	sb.WriteString("	if c.contract != nil {\n")
-	sb.WriteString("		serverIDL = c.contract.GetIDLParsed()\n")
-	sb.WriteString("	}\n\n")
+	sb.WriteString("	// The server IDL is fetched from the remote server via the pulserpc-idl RPC.\n")
+	sb.WriteString("	// Never compare the embedded local IDL against itself.\n")
+	sb.WriteString("	if c.serverIDL == nil && c.transport != nil {\n")
+	sb.WriteString("		if resp, err := c.transport.Call(\"pulserpc-idl\", []interface{}{}); err == nil {\n")
+	sb.WriteString("			if _, hasError := resp[\"error\"]; !hasError {\n")
+	sb.WriteString("				c.serverIDL = resp[\"result\"]\n")
+	sb.WriteString("			}\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("	serverIDL := c.serverIDL\n\n")
 	sb.WriteString("	var clientChecksum string\n")
 	sb.WriteString("	if dict, ok := clientIDL.(map[string]interface{}); ok {\n")
 	sb.WriteString("		clientChecksum, _ = dict[\"checksum\"].(string)\n")
@@ -1406,8 +1422,9 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("\t})\n\n")
 	sb.WriteString("\tmux.HandleFunc(\"/idl.json\", func(w http.ResponseWriter, r *http.Request) {\n")
 	sb.WriteString("\t\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-	sb.WriteString("\t\tdata, _ := json.Marshal(IDL_JSON)\n")
-	sb.WriteString("\t\tw.Write(data)\n")
+	sb.WriteString("\t\t// IDL_JSON is already JSON text - marshal it would produce a quoted\n")
+	sb.WriteString("\t\t// JSON string instead of an IDL object.\n")
+	sb.WriteString("\t\tw.Write([]byte(IDL_JSON))\n")
 	sb.WriteString("\t})\n\n")
 	sb.WriteString("\taddr := fmt.Sprintf(\"0.0.0.0:%d\", port)\n")
 	sb.WriteString("\tfmt.Printf(\"Test server listening on http://%s\\n\", addr)\n")

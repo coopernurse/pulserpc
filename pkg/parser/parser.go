@@ -17,7 +17,7 @@ var (
 		{Name: "Whitespace", Pattern: `[ \t\r\n]+`},
 		{Name: "Optional", Pattern: `\[optional\]`},
 		{Name: "StringLiteral", Pattern: `"[^"]*"`},
-		{Name: "IntLiteral", Pattern: `[0-9]+`},
+		{Name: "IntLiteral", Pattern: `-?[0-9]+`},
 		// Keywords must use word boundaries to avoid matching prefixes of identifiers
 		// e.g., "strings" should be Ident, not String + "s"
 		{Name: "Namespace", Pattern: `\bnamespace\b`},
@@ -426,6 +426,16 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 		importedIDL, err := parseIDLWithImports(resolvedPath, string(importedContent), visited)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse imported file %s: %w", resolvedPath, err)
+		}
+
+		// Every non-empty IDL file must declare a namespace, including imported
+		// files. Empty imports are still allowed (core-08).
+		if importedIDL.RootNamespace == "" {
+			hasDeclarations := len(importedIDL.Interfaces) > 0 || len(importedIDL.Structs) > 0 ||
+				len(importedIDL.Enums) > 0 || len(importedIDL.Errors) > 0
+			if hasDeclarations {
+				return nil, fmt.Errorf("imported file %s (%s) must declare a namespace", resolvedPath, importPath)
+			}
 		}
 
 		// Get namespace from imported file

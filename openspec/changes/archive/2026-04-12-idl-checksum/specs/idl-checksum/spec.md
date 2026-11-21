@@ -10,7 +10,7 @@ The parser SHALL compute a SHA-256 checksum of the structural IDL content and in
 
 #### Scenario: Checksum is non-empty string
 - **WHEN** IDL is parsed
-- **THEN** the checksum field is a non-empty string of 44 base64url characters
+- **THEN** the checksum field is a non-empty string of 43 base64url characters (unpadded base64url of the 32-byte SHA-256 digest; `=` padding is omitted)
 
 ### Requirement: Whitespace and comments excluded
 
