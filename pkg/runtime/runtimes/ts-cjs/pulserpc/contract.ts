@@ -6,6 +6,7 @@
  */
 
 import * as fs from "fs";
+import { Severity } from "./types";
 import type { StructMap, EnumMap, FieldDef, ValidationError, ValidationResult } from "./types";
 import { validateType } from "./validation";
 import { RPCError } from "./rpc";
@@ -30,11 +31,11 @@ export class LoggingAuditor implements ContractAuditor {
       );
     }
     for (const delta of result.deltas) {
-      if (delta.severity === "Error") {
+      if (delta.severity === Severity.Error) {
         console.error(`${delta.entityType}: ${delta.description}`);
-      } else if (delta.severity === "Warning") {
+      } else if (delta.severity === Severity.Warning) {
         console.warn(`${delta.entityType}: ${delta.description}`);
-      } else if (delta.severity === "Info") {
+      } else if (delta.severity === Severity.Info) {
         console.info(`${delta.entityType}: ${delta.description}`);
       }
     }
@@ -52,7 +53,7 @@ export class LoggingAuditor implements ContractAuditor {
 export class FailFastAuditor implements ContractAuditor {
   audit(result: any): void {
     if (!result.compatible) {
-      const errorDeltas = result.deltas.filter((d: any) => d.severity === "Error");
+      const errorDeltas = result.deltas.filter((d: any) => d.severity === Severity.Error);
       const messages = errorDeltas
         .map((d: any) => `${d.entityType}: ${d.description}`)
         .join("; ");
@@ -110,12 +111,15 @@ export class Contract {
   interfaces: Map<string, InterfaceImpl>;
   structs: StructMap;
   enums: EnumMap;
+  /** Metadata from `meta` IDL items, keyed by name (R12). */
+  meta: Record<string, any>;
 
   constructor(idlParsed: any) {
     this.idlParsed = idlParsed;
     this.interfaces = new Map();
     this.structs = {};
     this.enums = {};
+    this.meta = {};
 
     if (typeof idlParsed === "object" && !Array.isArray(idlParsed)) {
       for (const ifaceData of idlParsed.interfaces || []) {
@@ -129,6 +133,8 @@ export class Contract {
       for (const enumData of idlParsed.enums || []) {
         this.enums[enumData.name] = enumData;
       }
+
+      this.addMetaItems(idlParsed.meta);
     } else if (Array.isArray(idlParsed)) {
       for (const item of idlParsed) {
         const itemType = item.type;
@@ -138,7 +144,43 @@ export class Contract {
           this.enums[item.name] = item;
         } else if (itemType === "interface") {
           this.interfaces.set(item.name, new InterfaceImpl(item));
+        } else if (itemType === "meta") {
+          this.addMetaItem(item);
         }
+      }
+    }
+  }
+
+  private addMetaItems(meta: any): void {
+    if (!meta) {
+      return;
+    }
+    if (Array.isArray(meta)) {
+      for (const item of meta) {
+        this.addMetaItem(item);
+      }
+    } else if (typeof meta === "object") {
+      for (const [key, value] of Object.entries(meta)) {
+        if (key !== "type") {
+          this.meta[key] = value;
+        }
+      }
+    }
+  }
+
+  private addMetaItem(item: any): void {
+    if (!item || typeof item !== "object") {
+      return;
+    }
+    // Both `{ key: "k", value: "v" }` and the flat Barrister/Go form
+    // `{ type: "meta", k: "v" }` occur in generated idl.json files.
+    if (typeof item.key === "string" && "value" in item) {
+      this.meta[item.key] = item.value;
+      return;
+    }
+    for (const [key, value] of Object.entries(item)) {
+      if (key !== "type") {
+        this.meta[key] = value;
       }
     }
   }
@@ -181,10 +223,13 @@ export class Contract {
 
     const paramDefs: FieldDef[] = func.parameters || [];
 
-    if (params.length !== paramDefs.length) {
+    // M9: trailing optional parameters may be omitted, but required parameters
+    // must be present and extra parameters are still rejected.
+    const requiredCount = paramDefs.filter((p: FieldDef) => !p.optional).length;
+    if (params.length < requiredCount || params.length > paramDefs.length) {
       throw new RPCError(
         -32602,
-        `Function '${ifaceName}.${funcName}' expects ${paramDefs.length} param(s). ${params.length} given.`
+        `Function '${ifaceName}.${funcName}' expects ${paramDefs.length} param(s) (${requiredCount} required). ${params.length} given.`
       );
     }
 

@@ -89,12 +89,33 @@ export interface VerificationResult {
   timestamp: Date;
 }
 
+function baseTypeName(name: string): string {
+  return name.substring(name.lastIndexOf(".") + 1);
+}
+
+function findByTypeName<T>(name: string, types: { [key: string]: T }): T | undefined {
+  // Prefer an exact match. Generated idl.json files store imported types under
+  // their qualified names ("inc.Status") while type references inside the
+  // entry-point namespace are unqualified ("Status"), so fall back to the last
+  // name component — the same suffix resolution other runtimes use.
+  if (types[name]) {
+    return types[name];
+  }
+  const base = baseTypeName(name);
+  for (const [key, value] of Object.entries(types)) {
+    if (baseTypeName(key) === base) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 export function findStruct(structName: string, allStructs: StructMap): StructDef | undefined {
-  return allStructs[structName];
+  return findByTypeName(structName, allStructs);
 }
 
 export function findEnum(enumName: string, allEnums: EnumMap): EnumDef | undefined {
-  return allEnums[enumName];
+  return findByTypeName(enumName, allEnums);
 }
 
 export function getStructFields(structName: string, allStructs: StructMap): FieldDef[] {

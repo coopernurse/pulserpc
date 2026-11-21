@@ -7,6 +7,7 @@
 
 const { strict: assert } = require("assert");
 const { HttpTransport } = require("../transport");
+const { RPCError } = require("../rpc");
 
 // Builds a fake fetch that records the URL it was called with and returns a
 // minimal, valid JSON-RPC response.
@@ -46,7 +47,43 @@ async function testUrlUsedVerbatim() {
   console.log("✓ testUrlUsedVerbatim");
 }
 
+async function testTransportErrorsUseStandardCodes() {
+  // R8: transport/parse failures must use documented JSON-RPC codes.
+  const cases = [
+    {
+      name: "non-OK response",
+      fetchFn: async () => ({ ok: false, status: 500, statusText: "Server Error", text: async () => "" }),
+      message: /HTTP 500/,
+    },
+    {
+      name: "empty body",
+      fetchFn: async () => ({ ok: true, status: 200, statusText: "OK", text: async () => "" }),
+      message: /Empty response body/,
+    },
+    {
+      name: "invalid JSON",
+      fetchFn: async () => ({ ok: true, status: 200, statusText: "OK", text: async () => "not json" }),
+      message: /Invalid JSON response/,
+    },
+  ];
+
+  for (const { name, fetchFn, message } of cases) {
+    const transport = new HttpTransport("http://localhost:8080", {}, fetchFn);
+    let caught = null;
+    try {
+      await transport.request(req);
+    } catch (e) {
+      caught = e;
+    }
+    assert.ok(caught instanceof RPCError, `${name}: expected RPCError, got ${caught}`);
+    assert.strictEqual(caught.code, -32603, `${name}: expected standard code -32603, got ${caught.code}`);
+    assert.ok(message.test(caught.message), `${name}: unexpected message ${caught.message}`);
+  }
+  console.log("✓ testTransportErrorsUseStandardCodes");
+}
+
 testUrlUsedVerbatim()
+  .then(testTransportErrorsUseStandardCodes)
   .then(() => console.log("\nAll transport tests passed!"))
   .catch((e) => {
     console.error(e);

@@ -39,6 +39,20 @@ function test_shared_validateType_covers_all_builtins() {
   console.log("  ✓ validateType covers all builtins");
 }
 
+function test_shared_validateInt_rejects_non_finite() {
+  // R2 parity: both TS variants reject non-finite integers, including values
+  // that arrive through ordinary JSON parsing (JSON.parse("1e999") === Infinity).
+  const s: StructMap = {};
+  const e: EnumMap = {};
+  for (const value of [Infinity, -Infinity, NaN, JSON.parse("1e999")]) {
+    const errs = validateInt(value);
+    assert.strictEqual(errs.length, 1, `expected one error for ${value}`);
+    assert.ok(errs[0].message.includes("Expected integer"), errs[0].message);
+    assert.strictEqual(validateType(value, { builtIn: "int" }, s, e).length, 1);
+  }
+  console.log("  ✓ validateInt rejects Infinity/-Infinity/NaN/1e999");
+}
+
 function test_shared_validateType_array() {
   const s: StructMap = {};
   const e: EnumMap = {};
@@ -257,6 +271,7 @@ function run(label: string, fn: () => void) {
 }
 
 run("test_shared_validateType_covers_all_builtins", test_shared_validateType_covers_all_builtins);
+run("test_shared_validateInt_rejects_non_finite", test_shared_validateInt_rejects_non_finite);
 run("test_shared_validateType_array", test_shared_validateType_array);
 run("test_shared_validateType_map", test_shared_validateType_map);
 run("test_shared_validateType_optional_null", test_shared_validateType_optional_null);

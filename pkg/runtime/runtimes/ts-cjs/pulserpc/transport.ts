@@ -12,10 +12,8 @@ import { RPCError } from "./rpc";
 /**
  * Abstract transport base class
  */
-export class Transport {
-  async request(_req: JsonRpcRequest): Promise<JsonRpcResponse> {
-    throw new Error("Transport.request must be implemented by subclass");
-  }
+export abstract class Transport {
+  abstract request(_req: JsonRpcRequest): Promise<JsonRpcResponse>;
 
   close(): void {
     // Default implementation does nothing
@@ -52,18 +50,18 @@ export class HttpTransport extends Transport {
     });
 
     if (!response.ok) {
-      throw new RPCError(-32000, `HTTP ${response.status}: ${response.statusText}`, { status: response.status });
+      throw new RPCError(-32603, `HTTP ${response.status}: ${response.statusText}`, { status: response.status });
     }
 
     const text = await response.text();
     if (!text) {
-      throw new RPCError(-32000, "Empty response body");
+      throw new RPCError(-32603, "Empty response body");
     }
 
     try {
       return JSON.parse(text);
     } catch (e: any) {
-      throw new RPCError(-32000, `Invalid JSON response: ${e.message}`);
+      throw new RPCError(-32603, `Invalid JSON response: ${e.message}`);
     }
   }
 }

@@ -16,7 +16,17 @@ export {
 export { Client, ClientOptions } from "./client";
 export { Server, ServerOptions, HandlerCtx, Handler } from "./server";
 export { Transport, HttpTransport, InProcTransport } from "./transport";
-export { validateType } from "./validation";
+export {
+  validateType,
+  validateString,
+  validateInt,
+  validateFloat,
+  validateBool,
+  validateArray,
+  validateMap,
+  validateEnum,
+  validateStruct,
+} from "./validation";
 export { diffIDL, classifySeverity } from "./diff";
 export {
   EntityType,

@@ -29,6 +29,21 @@ function testFindEnum() {
   console.log("✓ testFindEnum");
 }
 
+function testFindQualifiedTypesByBaseName() {
+  // Generated idl.json keeps imported names qualified while local references
+  // are unqualified; lookups must resolve both forms.
+  const allStructs = {
+    "inc.Response": { fields: [{ name: "status", type: { userDefined: "Status" } }] },
+  };
+  const allEnums = { "inc.Status": { values: [{ name: "ok" }] } };
+  assert.deepStrictEqual(findStruct("Response", allStructs), allStructs["inc.Response"]);
+  assert.deepStrictEqual(findStruct("inc.Response", allStructs), allStructs["inc.Response"]);
+  assert.deepStrictEqual(findEnum("Status", allEnums), allEnums["inc.Status"]);
+  assert.strictEqual(findStruct("Missing", allStructs), undefined);
+  assert.strictEqual(findEnum("Missing", allEnums), undefined);
+  console.log("✓ testFindQualifiedTypesByBaseName");
+}
+
 function testGetStructFieldsSimple() {
   const allStructs = {
     User: {
@@ -84,6 +99,7 @@ function testGetStructFieldsOverrideParent() {
 
 testFindStruct();
 testFindEnum();
+testFindQualifiedTypesByBaseName();
 testGetStructFieldsSimple();
 testGetStructFieldsWithExtends();
 testGetStructFieldsOverrideParent();

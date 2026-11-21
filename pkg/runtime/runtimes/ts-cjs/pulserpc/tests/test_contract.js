@@ -1,5 +1,6 @@
 const { strict: assert } = require("assert");
 const { Contract, InterfaceImpl, NoOpAuditor, LoggingAuditor, FailFastAuditor } = require("../contract");
+const { Severity } = require("../types");
 
 function testContractConstructsWithEmptyIDL() {
   const c = new Contract({ interfaces: [], structs: [], enums: [], errors: [] });
@@ -66,6 +67,39 @@ function testContractParsesEnums() {
   console.log("✓ testContractParsesEnums");
 }
 
+function testContractParsesMeta() {
+  // R12: metadata must survive both IDL JSON shapes.
+  const objectForm = new Contract({
+    interfaces: [],
+    structs: [],
+    enums: [],
+    errors: [],
+    meta: [{ key: "k", value: "v" }, { type: "meta", author: "me" }],
+  });
+  assert.strictEqual(objectForm.meta.k, "v");
+  assert.strictEqual(objectForm.meta.author, "me");
+
+  const objectMapForm = new Contract({
+    interfaces: [],
+    structs: [],
+    enums: [],
+    errors: [],
+    meta: { version: "1", type: "meta" },
+  });
+  assert.strictEqual(objectMapForm.meta.version, "1");
+  assert.strictEqual(objectMapForm.meta.type, undefined);
+
+  const arrayForm = new Contract([
+    { type: "meta", key: "k", value: "v" },
+    { type: "meta", owner: "team" },
+    { type: "interface", name: "Svc", methods: [] },
+  ]);
+  assert.strictEqual(arrayForm.meta.k, "v");
+  assert.strictEqual(arrayForm.meta.owner, "team");
+  assert.ok(arrayForm.hasInterface("Svc"));
+  console.log("✓ testContractParsesMeta");
+}
+
 function testContractValidateRequestPasses() {
   const idl = {
     interfaces: [
@@ -117,6 +151,35 @@ function testContractValidateRequestFailsOnWrongParamCount() {
   assert.throws(() => c.validateRequest("Calc", "add", [1]), /expects 2 param/);
   assert.throws(() => c.validateRequest("Calc", "add", [1, 2, 3]), /expects 2 param/);
   console.log("✓ testContractValidateRequestFailsOnWrongParamCount");
+}
+
+function testContractValidateRequestTrailingOptionalParams() {
+  const idl = {
+    interfaces: [
+      {
+        name: "Calc",
+        methods: [
+          {
+            name: "greet",
+            parameters: [
+              { name: "name", type: { builtIn: "string" } },
+              { name: "times", type: { builtIn: "int" }, optional: true },
+            ],
+            returnType: { builtIn: "string" },
+          },
+        ],
+      },
+    ],
+    structs: [],
+    enums: [],
+    errors: [],
+  };
+  const c = new Contract(idl);
+  assert.doesNotThrow(() => c.validateRequest("Calc", "greet", ["Ann"]));
+  assert.doesNotThrow(() => c.validateRequest("Calc", "greet", ["Ann", 2]));
+  assert.throws(() => c.validateRequest("Calc", "greet", []), /expects 2 param/);
+  assert.throws(() => c.validateRequest("Calc", "greet", ["Ann", 2, 3]), /expects 2 param/);
+  console.log("✓ testContractValidateRequestTrailingOptionalParams");
 }
 
 function testContractValidateRequestFailsOnUnknownInterface() {
@@ -184,9 +247,60 @@ function testNoOpAuditor() {
 
 function testFailFastAuditorThrowsOnIncompatible() {
   const a = new FailFastAuditor();
-  assert.throws(() => a.audit({ compatible: false, deltas: [{ severity: "Error", entityType: "test", description: "boom" }] }), /Contract compatibility/);
+  assert.throws(() => a.audit({ compatible: false, deltas: [{ severity: Severity.Error, entityType: "test", description: "boom" }] }), /Contract compatibility/);
   assert.doesNotThrow(() => a.audit({ compatible: true, deltas: [] }));
   console.log("✓ testFailFastAuditorThrowsOnIncompatible");
+}
+
+function testLoggingAuditorDispatchesBySeverity() {
+  const a = new LoggingAuditor();
+  const calls = { error: [], warn: [], info: [] };
+  const originals = {
+    error: console.error,
+    warn: console.warn,
+    info: console.info,
+  };
+
+  try {
+    console.error = (...args) => calls.error.push(args.join(" "));
+    console.warn = (...args) => calls.warn.push(args.join(" "));
+    console.info = (...args) => calls.info.push(args.join(" "));
+
+    const delta = (severity, description) => ({
+      severity,
+      entityType: "Field",
+      description,
+    });
+    a.audit({
+      compatible: false,
+      deltas: [
+        delta(Severity.Error, "error-delta"),
+        delta(Severity.Warning, "warning-delta"),
+        delta(Severity.Info, "info-delta"),
+      ],
+    });
+    assert.strictEqual(calls.error.length, 2, "incompatible header + Error delta");
+    assert.ok(calls.error.some((m) => m.includes("error-delta")));
+    assert.strictEqual(calls.warn.length, 1);
+    assert.ok(calls.warn[0].includes("warning-delta"));
+    assert.strictEqual(calls.info.length, 1);
+    assert.ok(calls.info[0].includes("info-delta"));
+
+    // A compatible, zero-delta result logs exactly the success message.
+    calls.error.length = 0;
+    calls.warn.length = 0;
+    calls.info.length = 0;
+    a.audit({ compatible: true, deltas: [] });
+    assert.strictEqual(calls.error.length, 0);
+    assert.strictEqual(calls.warn.length, 0);
+    assert.strictEqual(calls.info.length, 1);
+    assert.ok(calls.info[0].includes("identical"), calls.info[0]);
+  } finally {
+    console.error = originals.error;
+    console.warn = originals.warn;
+    console.info = originals.info;
+  }
+  console.log("✓ testLoggingAuditorDispatchesBySeverity");
 }
 
 function main() {
@@ -194,14 +308,17 @@ function main() {
   testContractParsesInterfaces();
   testContractParsesStructs();
   testContractParsesEnums();
+  testContractParsesMeta();
   testContractValidateRequestPasses();
   testContractValidateRequestFailsOnWrongParamCount();
+  testContractValidateRequestTrailingOptionalParams();
   testContractValidateRequestFailsOnUnknownInterface();
   testContractValidateRequestFailsOnUnknownFunction();
   testContractValidateResponsePasses();
   testContractValidateResponseFailsOnWrongType();
   testNoOpAuditor();
   testFailFastAuditorThrowsOnIncompatible();
+  testLoggingAuditorDispatchesBySeverity();
   console.log("\nAll contract tests passed!");
 }
 

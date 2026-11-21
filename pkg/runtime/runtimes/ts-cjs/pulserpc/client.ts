@@ -11,7 +11,7 @@ import { RPCError } from "./rpc";
 import { Contract } from "./contract";
 import { Transport } from "./transport";
 import { diffIDL } from "./diff";
-import { extractChecksum } from "./types";
+import { extractChecksum, Severity } from "./types";
 import type { JsonRpcRequest, JsonRpcResponse, VerificationResult } from "./types";
 
 /**
@@ -195,7 +195,7 @@ export class Client {
     }
 
     const deltas = diffIDL(clientIDL, serverIDL);
-    const hasError = deltas.some((d: any) => d.severity === "Error");
+    const hasError = deltas.some((d: any) => d.severity === Severity.Error);
     const compatible = !hasError;
 
     const serverChecksum = extractChecksum(serverIDL);
@@ -264,10 +264,29 @@ export class Client {
       return null;
     }
 
+    if (!response || typeof response !== "object") {
+      throw new Error("Response validation failed: response must be an object");
+    }
+    if (response.jsonrpc !== "2.0") {
+      throw new Error(`Response validation failed: invalid jsonrpc version: ${response.jsonrpc}`);
+    }
+    if (response.id !== reqId) {
+      throw new Error(`Response validation failed: mismatched id (expected ${reqId}, got ${response.id})`);
+    }
+
+    const hasResult = Object.prototype.hasOwnProperty.call(response, "result");
+    const hasError = Object.prototype.hasOwnProperty.call(response, "error");
+    if (hasResult && hasError) {
+      throw new Error("Response validation failed: response has both result and error");
+    }
+    if (!hasResult && !hasError) {
+      throw new Error("Response validation failed: response has neither result nor error");
+    }
+
     if (response.error) {
       const error = response.error;
       throw new RPCError(
-        error.code || -32603,
+        error.code ?? -32603,
         error.message || "Unknown error",
         error.data
       );
@@ -275,7 +294,11 @@ export class Client {
 
     const result = response.result;
 
-    if (this.validateResponse && this.contract && result !== undefined && result !== null) {
+    // M14: `null` is a value too — let validateResponse apply the return type's
+    // optionality rules instead of skipping validation for null results. Only
+    // an absent result (e.g. a transport's empty notification response) is
+    // skipped. Void returns are handled by validateResponse itself.
+    if (this.validateResponse && this.contract && result !== undefined) {
       try {
         this.contract.validateResponse(ifaceName, funcName, result);
       } catch (e: any) {
