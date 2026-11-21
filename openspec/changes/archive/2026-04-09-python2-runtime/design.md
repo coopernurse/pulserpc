@@ -140,4 +140,6 @@ Py3 `server.py` (lines 108-137) already handles both positional and named params
 
 1. **simplejson fallback**: Barrister used `try: import json; except: import simplejson`. Should Py2 runtime include this fallback, or assume `json` is available?
 2. **Error handling parity**: Py3 raises `TypeError`/`ValueError`, Barrister raises `RpcException`. Should Py2 runtime use `RpcException` for validation errors too?
+   - **Decision (resolved):** Use `RPCError` for contract-level validation failures, with code `-32602` (request) / `-32603` (response) and a plain-dict `data` payload, matching Py3's error contract. Low-level `validate_*` helpers keep raising `TypeError`/`ValueError`, also matching Py3. No `RpcException` class. Documented in `docs/languages/python/python2.md`.
 3. **Batch requests**: Barrister supports batch requests. Py3 implementation does not. Include in Py2?
+   - **Decision (resolved):** No. Batch requests are intentionally waived for Python 2, consistent with Python 3 and with the documented support policy in `docs/languages/python/python2.md`.

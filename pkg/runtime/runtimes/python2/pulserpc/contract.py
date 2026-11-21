@@ -7,6 +7,22 @@ and provides validation for requests and responses.
 import json
 
 from validation import validate_type
+from rpc import RPCError
+
+
+def _validation_error(code, message, invalid_fields=None):
+    """Build an RPCError with structured, Python-2-compatible data.
+
+    ``ValidationResult``/``ValidationError`` are Python-3-only, so the
+    structured payload uses plain dicts/lists here.
+    """
+    if invalid_fields is None:
+        invalid_fields = []
+    return RPCError(
+        code,
+        message,
+        {"error": message, "invalid_fields": invalid_fields},
+    )
 
 
 class Interface(object):
@@ -91,23 +107,31 @@ class Contract(object):
         return self.interfaces.get(iface_name)
 
     def validate_request(self, iface_name, func_name, params):
-        """Validate request parameters against IDL"""
+        """Validate request parameters against IDL.
+
+        Raises:
+            RPCError: with code -32602 and structured ``data`` on any violation.
+        """
         interface = self.get_interface(iface_name)
         if not interface:
-            raise ValueError("Unknown interface: '%s'" % iface_name)
+            message = "Unknown interface: '%s'" % iface_name
+            raise _validation_error(-32602, message)
 
         func = interface.get_function(func_name)
         if not func:
-            raise ValueError("%s: Unknown function: '%s'" % (iface_name, func_name))
+            message = "%s: Unknown function: '%s'" % (iface_name, func_name)
+            raise _validation_error(-32602, message)
 
         param_defs = func.get("parameters", [])
 
         if len(params) != len(param_defs):
-            raise ValueError(
+            message = (
                 "Function '%s.%s' expects %d param(s). %d given."
                 % (iface_name, func_name, len(param_defs), len(params))
             )
+            raise _validation_error(-32602, message)
 
+        invalid_fields = []
         for i, param_value in enumerate(params):
             param_def = param_defs[i]
             param_name = param_def["name"]
@@ -119,27 +143,39 @@ class Contract(object):
                     param_value, param_type, self.structs, self.enums, is_optional
                 )
             except (TypeError, ValueError) as e:
-                raise ValueError(
-                    "Function '%s.%s' invalid param '%s'. %s"
-                    % (iface_name, func_name, param_name, e)
+                invalid_fields.append(
+                    {"field": "param[%d].%s" % (i, param_name), "message": str(e)}
                 )
 
+        if invalid_fields:
+            message = "Function '%s.%s' invalid params" % (iface_name, func_name)
+            raise _validation_error(-32602, message, invalid_fields)
+
     def validate_response(self, iface_name, func_name, result):
-        """Validate response result against IDL"""
+        """Validate response result against IDL.
+
+        Raises:
+            RPCError: with code -32603 and structured ``data`` on any violation.
+        """
         interface = self.get_interface(iface_name)
         if not interface:
-            raise ValueError("Unknown interface: '%s'" % iface_name)
+            message = "Unknown interface: '%s'" % iface_name
+            raise _validation_error(-32603, message)
 
         func = interface.get_function(func_name)
         if not func:
-            raise ValueError("%s: Unknown function: '%s'" % (iface_name, func_name))
+            message = "%s: Unknown function: '%s'" % (iface_name, func_name)
+            raise _validation_error(-32603, message)
 
         return_type = func.get("returnType")
         if not return_type:
             if result is not None:
-                raise ValueError(
+                message = (
                     "Function '%s.%s' invalid response: '%s'. Expected None"
                     % (iface_name, func_name, result)
+                )
+                raise _validation_error(
+                    -32603, message, [{"field": "result", "message": message}]
                 )
             return
 
@@ -147,7 +183,7 @@ class Contract(object):
         try:
             validate_type(result, return_type, self.structs, self.enums, is_optional)
         except (TypeError, ValueError) as e:
-            raise ValueError(
-                "Function '%s.%s' invalid response: '%s'. %s"
-                % (iface_name, func_name, result, e)
+            message = "Function '%s.%s' invalid response" % (iface_name, func_name)
+            raise _validation_error(
+                -32603, message, [{"field": "result", "message": str(e)}]
             )

@@ -86,6 +86,8 @@ class Client(object):
 
             try:
                 self.contract.validate_request(iface_name, func_name, param_list)
+            except RPCError:
+                raise
             except (TypeError, ValueError) as e:
                 raise ValueError("Request validation failed: %s" % e)
 
@@ -106,6 +108,8 @@ class Client(object):
         if not expect_response:
             return None
 
+        self._validate_envelope(response, req_id)
+
         if "error" in response:
             error = response["error"]
             raise RPCError(
@@ -116,13 +120,40 @@ class Client(object):
 
         result = response.get("result")
 
-        if self.validate_response and self.contract and result is not None:
+        if self.validate_response and self.contract:
             try:
                 self.contract.validate_response(iface_name, func_name, result)
+            except RPCError:
+                raise
             except (TypeError, ValueError) as e:
                 raise ValueError("Response validation failed: %s" % e)
 
         return result
+
+    def _validate_envelope(self, response, req_id):
+        """Check the JSON-RPC 2.0 response envelope before reading the result."""
+        if not isinstance(response, dict):
+            raise RPCError(-32600, "Invalid Response", "Response must be an object")
+        if response.get("jsonrpc") != "2.0":
+            raise RPCError(
+                -32600, "Invalid Response", "jsonrpc version must be '2.0'"
+            )
+
+        has_result = "result" in response
+        has_error = "error" in response
+        if has_result == has_error:
+            raise RPCError(
+                -32600,
+                "Invalid Response",
+                "Response must contain exactly one of 'result' or 'error'",
+            )
+        if response.get("id") != req_id:
+            raise RPCError(
+                -32600,
+                "Invalid Response",
+                "Response id %r does not match request id %r"
+                % (response.get("id"), req_id),
+            )
 
     def notify(self, method, params=None):
         """Send a JSON-RPC notification (no response expected)"""
