@@ -1106,6 +1106,11 @@ func writeTransportInterfaceGo(sb *strings.Builder) {
 
 // writeHTTPTransportGo generates the HTTPTransport struct
 func writeHTTPTransportGo(sb *strings.Builder) {
+	// Bound response bodies so a malicious or misbehaving server cannot make the
+	// client allocate an unbounded amount of memory.
+	sb.WriteString("// maxResponseSize is the maximum number of bytes read from an HTTP response body.\n")
+	sb.WriteString("const maxResponseSize = 10 * 1024 * 1024 // 10 MiB\n\n")
+
 	sb.WriteString("// HTTPTransport implements Transport using HTTP\n")
 	sb.WriteString("type HTTPTransport struct {\n")
 	sb.WriteString("	baseURL   string\n")
@@ -1169,9 +1174,13 @@ func writeHTTPTransportGo(sb *strings.Builder) {
 	sb.WriteString("	}\n")
 	sb.WriteString("	defer resp.Body.Close()\n\n")
 
-	sb.WriteString("	jsonDataResp, err := io.ReadAll(resp.Body)\n")
+	sb.WriteString("	// Read one byte past the limit so oversized bodies are detectable.\n")
+	sb.WriteString("	jsonDataResp, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))\n")
 	sb.WriteString("	if err != nil {\n")
 	sb.WriteString("		return nil, fmt.Errorf(\"failed to read response: %w\", err)\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("	if len(jsonDataResp) > maxResponseSize {\n")
+	sb.WriteString("		return nil, fmt.Errorf(\"failed to decode response: response exceeds %d bytes\", maxResponseSize)\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("	if len(jsonDataResp) == 0 {\n")
 	sb.WriteString("		if id == nil {\n")

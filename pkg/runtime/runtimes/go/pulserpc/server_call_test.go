@@ -2,6 +2,7 @@ package pulserpc
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -153,6 +154,35 @@ func TestHandlerPanicBecomesInternalError(t *testing.T) {
 	})
 	if code := errorCode(t, response); code != -32603 {
 		t.Errorf("panic code = %d, want -32603", code)
+	}
+}
+
+// audit-go-1: the recover() path must return a fixed generic message and must
+// never reflect the raw panic value into error.data, which the generated HTTP
+// adapter serializes straight to clients.
+func TestHandlerPanicDetailIsNotReturnedToClient(t *testing.T) {
+	server := newTestServer(t, true, true)
+	response := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.panics", "params": []interface{}{}, "id": 7,
+	})
+	if code := errorCode(t, response); code != -32603 {
+		t.Errorf("panic code = %d, want -32603", code)
+	}
+
+	errObj := response["error"].(map[string]interface{})
+	if message, _ := errObj["message"].(string); message != internalErrorMessage {
+		t.Errorf("error message = %q, want the fixed %q", message, internalErrorMessage)
+	}
+	if data, ok := errObj["data"].(string); !ok || data != internalErrorMessage {
+		t.Errorf("error data = %#v, want the fixed generic message %q", errObj["data"], internalErrorMessage)
+	}
+
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal error response: %v", err)
+	}
+	if strings.Contains(string(encoded), "handler exploded") {
+		t.Errorf("panic detail leaked into the serialized error response: %s", encoded)
 	}
 }
 

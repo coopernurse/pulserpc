@@ -108,6 +108,25 @@ func TestGoGeneratedTransportNotificationAndIDs(t *testing.T) {
 	}
 }
 
+// audit-go-3: the generated client must bound the HTTP response body read so a
+// misbehaving server cannot force unbounded allocations.
+func TestGoGeneratedClientBoundsResponseRead(t *testing.T) {
+	code := generatedGoClient(t, "namespace test\ninterface Svc { Ping() string }\n")
+
+	for _, marker := range []string{
+		"const maxResponseSize = 10 * 1024 * 1024",
+		"io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))",
+		"response exceeds %d bytes",
+	} {
+		if !strings.Contains(code, marker) {
+			t.Errorf("generated client is missing %q", marker)
+		}
+	}
+	if strings.Contains(code, "io.ReadAll(resp.Body)") {
+		t.Error("generated client still uses an unbounded io.ReadAll(resp.Body)")
+	}
+}
+
 // go-15: the generated HTTP adapter implements batching. Assert the generated
 // code covers mixed batches, empty batches and notification-only batches.
 func TestGoGeneratedServerBatchHandling(t *testing.T) {
