@@ -39,46 +39,48 @@ namespace PulseRPC
         /// </summary>
         public Dictionary<string, object>? Call(Dictionary<string, object> request)
         {
+            // Parse the id first: a notification (no id) must never receive a
+            // response, including an error response (M4/R11).
+            var reqId = request == null ? null : (request.TryGetValue("id", out var idVal) ? idVal : null);
+            var isNotification = reqId == null;
+
+            Dictionary<string, object>? Fail(int code, string message, object? data = null)
+                => isNotification ? null : ErrorResponse(reqId, code, message, data);
+
             // Validate request format
             if (request == null)
             {
-                return ErrorResponse(null, -32600, "Invalid Request", "Request must be an object");
+                return Fail(-32600, "Invalid Request", "Request must be an object");
             }
 
             // Check JSON-RPC version
             if (!request.TryGetValue("jsonrpc", out var jsonrpc) || jsonrpc?.ToString() != "2.0")
             {
-                return ErrorResponse(request.TryGetValue("id", out var id) ? id : null, -32600, "Invalid Request",
-                    "jsonrpc version must be '2.0'");
+                return Fail(-32600, "Invalid Request", "jsonrpc version must be '2.0'");
             }
 
             // Check for method
             if (!request.TryGetValue("method", out var methodObj) || methodObj is not string method || string.IsNullOrEmpty(method))
             {
-                return ErrorResponse(request.TryGetValue("id", out var id) ? id : null, -32600, "Invalid Request",
-                    "Method must be a string");
+                return Fail(-32600, "Invalid Request", "Method must be a string");
             }
 
             // Handle pulserpc-idl request
             if (method == "pulserpc-idl")
             {
-                return SuccessResponse(request.TryGetValue("id", out var reqIdForIdl) ? reqIdForIdl : null, _contract.IdlParsed);
+                return isNotification ? null : SuccessResponse(reqId, _contract.IdlParsed);
             }
-
-            // Check for notification (no 'id' means no response expected)
-            var reqId = request.TryGetValue("id", out var idVal) ? idVal : null;
-            var isNotification = reqId == null;
 
             // Parse method name (e.g., "UserService.getUser")
             if (!ParseMethodName(method, out var ifaceName, out var funcName))
             {
-                return ErrorResponse(reqId, -32601, "Method not found", $"Invalid method name format: {method}");
+                return Fail(-32601, "Method not found", $"Invalid method name format: {method}");
             }
 
             // Look up handler
             if (!_handlers.TryGetValue(ifaceName, out var handler))
             {
-                return ErrorResponse(reqId, -32601, "Method not found", $"Unknown interface: {ifaceName}");
+                return Fail(-32601, "Method not found", $"Unknown interface: {ifaceName}");
             }
 
             // Get function from handler
@@ -93,28 +95,23 @@ namespace PulseRPC
 
             if (methodInfo == null)
             {
-                return ErrorResponse(reqId, -32601, "Method not found", $"Unknown method: {method}");
+                return Fail(-32601, "Method not found", $"Unknown method: {method}");
             }
 
-            // Get params
+            // Get and normalize params (positional arrays, by-name objects, or a single scalar)
             request.TryGetValue("params", out var paramsObj);
-
-            // Convert params to list if it's a list
-            var positionalParams = new List<object?>();
-            if (paramsObj is System.Collections.IList paramsList)
+            List<object?> positionalParams;
+            try
             {
-                foreach (var p in paramsList)
-                {
-                    positionalParams.Add(p);
-                }
+                positionalParams = NormalizeParams(ifaceName, funcName, paramsObj);
             }
-            else if (paramsObj == null)
+            catch (ArgumentException ex)
             {
-                positionalParams = new List<object?>();
+                return Fail(-32602, "Invalid params", ex.Message);
             }
 
-            // Validate request using positional params
-            if (_validateRequests && positionalParams.Count > 0)
+            // Validate request using positional params - including count-0 requests (M9)
+            if (_validateRequests)
             {
                 try
                 {
@@ -122,7 +119,7 @@ namespace PulseRPC
                 }
                 catch (ArgumentException ex)
                 {
-                    return ErrorResponse(reqId, -32602, "Invalid params", ex.Message);
+                    return Fail(-32602, "Invalid params", ex.Message);
                 }
             }
 
@@ -141,25 +138,26 @@ namespace PulseRPC
                 var innerEx = ex.InnerException ?? ex;
                 if (innerEx is RPCError rpcErr)
                 {
-                    return ErrorResponse(reqId, rpcErr.Code, rpcErr.Message, rpcErr.Data);
+                    return Fail(rpcErr.Code, rpcErr.Message, rpcErr.Data);
                 }
-                return ErrorResponse(reqId, -32603, "Internal error", innerEx.Message);
+                return Fail(-32603, "Internal error", innerEx.Message);
             }
             catch (RPCError rpcErr)
             {
-                return ErrorResponse(reqId, rpcErr.Code, rpcErr.Message, rpcErr.Data);
+                return Fail(rpcErr.Code, rpcErr.Message, rpcErr.Data);
             }
             catch (ArgumentException ex)
             {
-                return ErrorResponse(reqId, -32602, "Invalid params", ex.Message);
+                return Fail(-32602, "Invalid params", ex.Message);
             }
             catch (Exception ex)
             {
-                return ErrorResponse(reqId, -32603, "Internal error", ex.Message);
+                return Fail(-32603, "Internal error", ex.Message);
             }
 
-            // Validate response if validation is enabled
-            if (_validateResponses && result != null)
+            // Validate response if validation is enabled - null results for a
+            // required return type must be rejected too (M14).
+            if (_validateResponses)
             {
                 try
                 {
@@ -167,7 +165,7 @@ namespace PulseRPC
                 }
                 catch (ArgumentException ex)
                 {
-                    return ErrorResponse(reqId, -32603, "Internal error",
+                    return Fail(-32603, "Internal error",
                         $"Response validation failed: {ex.Message}");
                 }
             }
@@ -179,6 +177,91 @@ namespace PulseRPC
             }
 
             return SuccessResponse(reqId, result);
+        }
+
+        /// <summary>
+        /// Gets the IDL parameter definitions for a method.
+        /// </summary>
+        private List<Dictionary<string, object>> GetParamDefs(string ifaceName, string funcName)
+        {
+            var fn = _contract.GetInterface(ifaceName)?.GetFunction(funcName);
+            if (fn == null || !fn.TryGetValue("parameters", out var pdObj) || pdObj is not System.Collections.IList pdList)
+            {
+                return new List<Dictionary<string, object>>();
+            }
+            return pdList.OfType<Dictionary<string, object>>().ToList();
+        }
+
+        /// <summary>
+        /// Normalizes JSON-RPC params into a positional list using the IDL
+        /// parameter names. By-name objects are reordered and unknown names are
+        /// rejected so they cannot be silently dropped (M8).
+        /// </summary>
+        private List<object?> NormalizeParams(string ifaceName, string funcName, object? paramsObj)
+        {
+            if (paramsObj == null)
+            {
+                return new List<object?>();
+            }
+
+            if (paramsObj is System.Collections.IList list)
+            {
+                var result = new List<object?>();
+                foreach (var p in list)
+                {
+                    result.Add(p);
+                }
+                return result;
+            }
+
+            if (paramsObj is System.Collections.IDictionary dict)
+            {
+                var paramDefs = GetParamDefs(ifaceName, funcName);
+                var knownNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var pd in paramDefs)
+                {
+                    if (pd.TryGetValue("name", out var nameObj) && nameObj != null)
+                    {
+                        knownNames.Add(nameObj.ToString()!);
+                    }
+                }
+
+                foreach (var key in dict.Keys)
+                {
+                    var keyName = key?.ToString() ?? "";
+                    if (!knownNames.Contains(keyName))
+                    {
+                        throw new ArgumentException($"Unknown parameter '{keyName}' for {ifaceName}.{funcName}");
+                    }
+                }
+
+                var result = new List<object?>();
+                foreach (var pd in paramDefs)
+                {
+                    var name = pd.TryGetValue("name", out var nameObj) ? nameObj?.ToString() ?? "" : "";
+                    object? value = null;
+                    if (!string.IsNullOrEmpty(name) && dict.Contains(name))
+                    {
+                        value = dict[name];
+                    }
+                    else
+                    {
+                        foreach (var key in dict.Keys)
+                        {
+                            if (string.Equals(key?.ToString(), name, StringComparison.OrdinalIgnoreCase))
+                            {
+                                value = dict[key!];
+                                break;
+                            }
+                        }
+                    }
+                    result.Add(value);
+                }
+                return result;
+            }
+
+            // A single scalar param value.
+            return new List<object?> { paramsObj };
         }
 
         /// <summary>
