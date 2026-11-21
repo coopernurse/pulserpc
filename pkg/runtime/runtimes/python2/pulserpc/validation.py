@@ -15,11 +15,24 @@ def validate_string(value):
 
 
 def validate_int(value):
-    """Validate that value is an int"""
+    """Validate that value is an int.
+
+    Booleans are rejected even though ``bool`` subclasses ``int`` in Python 2,
+    and float NaN/infinity are rejected before ``int(value)`` can raise an
+    unwrapped ValueError/OverflowError. This matches the Python 3 acceptance
+    set (invariant R2).
+    """
+    if isinstance(value, bool):
+        raise TypeError("Expected int, got bool")
     if isinstance(value, _int_types):
         return
-    if isinstance(value, float) and value == int(value):
-        return
+    if isinstance(value, float):
+        if value != value:  # NaN
+            raise TypeError("Expected int, got float NaN")
+        if value == float("inf") or value == float("-inf"):
+            raise TypeError("Expected int, got float infinity")
+        if value == int(value):
+            return
     raise TypeError("Expected int, got %s" % type(value).__name__)
 
 

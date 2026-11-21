@@ -72,11 +72,39 @@ def test_int_validation():
     except TypeError:
         pass
     
-    # Note: In Python 2, bool is a subclass of int, so True/False are valid ints
-    # This is expected behavior in Python 2
-    validate_int(True)
-    validate_int(False)
-    
+    # bool is rejected explicitly even though it subclasses int in Python 2.
+    try:
+        validate_int(True)
+        assert False, "Should have raised TypeError for bool True"
+    except TypeError:
+        pass
+
+    try:
+        validate_int(False)
+        assert False, "Should have raised TypeError for bool False"
+    except TypeError:
+        pass
+
+    # NaN/infinity must raise TypeError, not an unwrapped ValueError/OverflowError
+    # from int(value).
+    try:
+        validate_int(float("nan"))
+        assert False, "Should have raised TypeError for NaN"
+    except TypeError:
+        pass
+
+    try:
+        validate_int(float("inf"))
+        assert False, "Should have raised TypeError for infinity"
+    except TypeError:
+        pass
+
+    try:
+        validate_int(float("-inf"))
+        assert False, "Should have raised TypeError for negative infinity"
+    except TypeError:
+        pass
+
     print("  PASS: Int validation")
 
 
@@ -87,7 +115,11 @@ def test_float_validation():
     validate_float(0.0)
     validate_float(42)
     validate_float(100)
-    
+    # Non-finite floats remain valid for the float type, matching Python 3's
+    # acceptance set (only validate_int rejects NaN/infinity).
+    validate_float(float("nan"))
+    validate_float(float("inf"))
+
     try:
         validate_float("string")
         assert False, "Should have raised TypeError for string"

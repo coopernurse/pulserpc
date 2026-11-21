@@ -7,6 +7,36 @@ layout: default
 
 Build a PulseRPC server in Python 2.7 using the standard library.
 
+## Python 2 support policy
+
+Python 2 is **actively maintained for legacy systems**, not frozen, and **not
+expected to reach feature parity with the Python 3 runtime**. Python 2 reached
+end of life in 2020, but legacy deployments persist, so this runtime continues
+to receive bug fixes and targeted features. The canonical
+[RUNTIME_IMPLEMENTATION_GUIDE.md](../../RUNTIME_IMPLEMENTATION_GUIDE.md)
+checklist applies to Python 2 except for the capabilities explicitly waived
+below.
+
+### Intentionally waived capabilities
+
+- **Contract verification (diff / auditors / checksum)** — Python 2 has no diff
+  engine, no auditors, and no checksum helper. The following Python 3 symbols
+  are intentionally absent from `pulserpc.__all__`: `extract_checksum`,
+  `diff_idl`, `EntityType`, `ChangeType`, `Direction`, `Severity`,
+  `ContractDelta`, `VerificationResult`, `ContractAuditor`, `NoOpAuditor`,
+  `LoggingAuditor`, and `FailFastAuditor`.
+- **Structured validation classes** — `ValidationResult` and `ValidationError`
+  are Python 3 only. Contract-level validation failures instead raise
+  `RPCError` with code `-32602` (request) or `-32603` (response) and a
+  plain-dict `data` payload (`{"error": ..., "invalid_fields": [...]}`).
+- **Batch requests** — not supported (the Python 3 runtime does not support
+  them either).
+- **Generated stubs** — no stub classes are generated for structs or enums;
+  handlers use plain dicts and strings.
+
+`tests/test_api_surface.py` pins the 19 exported symbols and fails on drift.
+An API difference that is not listed here is a bug, not an intentional waiver.
+
 ## Prerequisites
 
 - Python 2.7
