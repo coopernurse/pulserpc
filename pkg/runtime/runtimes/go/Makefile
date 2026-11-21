@@ -2,24 +2,29 @@
 
 # Variables
 GO_IMAGE=golang:1.21-alpine
+# The repository go.mod requires Go 1.25; use a matching image for unit tests.
+TEST_GO_IMAGE=golang:1.25-alpine
+REPO_ROOT=$(abspath ../../../..)
 DOCKER_AVAILABLE := $(shell command -v docker >/dev/null 2>&1 && echo "yes" || echo "no")
 
-# Test using local Go if available, otherwise Docker
+# Test using local Go if available, otherwise Docker. Both test packages are
+# selected: the standalone `tests` module and the `pulserpc` package with the
+# contract/diff/auditor/verification tests (audit go-11).
 test:
 ifeq ($(DOCKER_AVAILABLE),yes)
 	@echo "Using Docker for testing..."
 	@$(MAKE) test-docker
 else
 	@echo "Using local Go for testing..."
-	@cd tests && go test -v
+	@cd $(REPO_ROOT) && go test ./pkg/runtime/runtimes/go/... -count=1
 endif
 
 # Test using Docker
 test-docker:
 	@echo "Testing Go runtime in Docker..."
-	@docker run --rm -v $(PWD):/workspace -w /workspace \
-		$(GO_IMAGE) \
-		sh -c "echo 'module pulserpc-go-runtime' > go.mod && echo 'go 1.21.13' >> go.mod && echo 'replace pulserpc-go-runtime/pulserpc => ./pulserpc' >> go.mod && cd tests && go test -v; TEST_RESULT=\$$?; cd .. && rm -f go.mod; exit \$$TEST_RESULT"
+	@docker run --rm -v $(REPO_ROOT):/workspace -w /workspace \
+		$(TEST_GO_IMAGE) \
+		sh -c "go test ./pkg/runtime/runtimes/go/... -count=1"
 
 # Test generator integration (requires Docker)
 test-integration:
@@ -40,4 +45,3 @@ test-integration:
 clean:
 	go clean ./...
 	find . -name "*.test" -delete 2>/dev/null || true
-

@@ -1021,8 +1021,11 @@ func generateClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	sb.WriteString("	\"context\"\n")
 	sb.WriteString("	\"encoding/json\"\n")
 	sb.WriteString("	\"fmt\"\n")
+	sb.WriteString("	\"io\"\n")
 	sb.WriteString("	\"net/http\"\n")
 	sb.WriteString("	\"strings\"\n")
+	sb.WriteString("	\"sync/atomic\"\n")
+	sb.WriteString("	\"time\"\n")
 
 	// Import the shared pulserpc runtime
 	sb.WriteString(fmt.Sprintf("	\"%s\"\n", runtimeImportPath))
@@ -1094,15 +1097,21 @@ func writeTransportInterfaceGo(sb *strings.Builder) {
 	sb.WriteString("type Transport interface {\n")
 	sb.WriteString("	Call(method string, params []interface{}) (map[string]interface{}, error)\n")
 	sb.WriteString("}\n\n")
+	sb.WriteString("// NotifyTransport is an optional capability for sending notifications.\n")
+	sb.WriteString("// A notification is a request without an id and receives no response.\n")
+	sb.WriteString("type NotifyTransport interface {\n")
+	sb.WriteString("	Notify(method string, params []interface{}) error\n")
+	sb.WriteString("}\n\n")
 }
 
 // writeHTTPTransportGo generates the HTTPTransport struct
 func writeHTTPTransportGo(sb *strings.Builder) {
 	sb.WriteString("// HTTPTransport implements Transport using HTTP\n")
 	sb.WriteString("type HTTPTransport struct {\n")
-	sb.WriteString("	baseURL string\n")
-	sb.WriteString("	headers map[string]string\n")
-	sb.WriteString("	client  *http.Client\n")
+	sb.WriteString("	baseURL   string\n")
+	sb.WriteString("	headers   map[string]string\n")
+	sb.WriteString("	client    *http.Client\n")
+	sb.WriteString("	requestID uint64\n")
 	sb.WriteString("}\n\n")
 
 	sb.WriteString("// NewHTTPTransport creates a new HTTPTransport\n")
@@ -1117,14 +1126,26 @@ func writeHTTPTransportGo(sb *strings.Builder) {
 	sb.WriteString("	}\n")
 	sb.WriteString("}\n\n")
 
-	sb.WriteString("// Call performs a JSON-RPC 2.0 call over HTTP\n")
+	sb.WriteString("// Call performs a JSON-RPC 2.0 call over HTTP with a unique id.\n")
 	sb.WriteString("func (t *HTTPTransport) Call(method string, params []interface{}) (map[string]interface{}, error) {\n")
-	sb.WriteString("	requestID := fmt.Sprintf(\"%d\", len(method)+len(params))\n")
+	sb.WriteString("	return t.call(method, params, fmt.Sprintf(\"%d\", atomic.AddUint64(&t.requestID, 1)))\n")
+	sb.WriteString("}\n\n")
+
+	sb.WriteString("// Notify sends a notification over HTTP: no id member, no response expected.\n")
+	sb.WriteString("func (t *HTTPTransport) Notify(method string, params []interface{}) error {\n")
+	sb.WriteString("	_, err := t.call(method, params, nil)\n")
+	sb.WriteString("	return err\n")
+	sb.WriteString("}\n\n")
+
+	sb.WriteString("// call builds and sends one JSON-RPC request. A nil id omits the id member.\n")
+	sb.WriteString("func (t *HTTPTransport) call(method string, params []interface{}, id interface{}) (map[string]interface{}, error) {\n")
 	sb.WriteString("	request := map[string]interface{}{\n")
 	sb.WriteString("		\"jsonrpc\": \"2.0\",\n")
 	sb.WriteString("		\"method\":  method,\n")
 	sb.WriteString("		\"params\":  params,\n")
-	sb.WriteString("		\"id\":      requestID,\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("	if id != nil {\n")
+	sb.WriteString("		request[\"id\"] = id\n")
 	sb.WriteString("	}\n\n")
 
 	sb.WriteString("	jsonData, err := json.Marshal(request)\n")
@@ -1148,9 +1169,31 @@ func writeHTTPTransportGo(sb *strings.Builder) {
 	sb.WriteString("	}\n")
 	sb.WriteString("	defer resp.Body.Close()\n\n")
 
+	sb.WriteString("	jsonDataResp, err := io.ReadAll(resp.Body)\n")
+	sb.WriteString("	if err != nil {\n")
+	sb.WriteString("		return nil, fmt.Errorf(\"failed to read response: %w\", err)\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("	if len(jsonDataResp) == 0 {\n")
+	sb.WriteString("		if id == nil {\n")
+	sb.WriteString("			return map[string]interface{}{}, nil\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("		return nil, fmt.Errorf(\"empty response\")\n")
+	sb.WriteString("	}\n\n")
+
 	sb.WriteString("	var response map[string]interface{}\n")
-	sb.WriteString("	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {\n")
+	sb.WriteString("	if err := json.Unmarshal(jsonDataResp, &response); err != nil {\n")
 	sb.WriteString("		return nil, fmt.Errorf(\"failed to decode response: %w\", err)\n")
+	sb.WriteString("	}\n\n")
+
+	sb.WriteString("	if id != nil {\n")
+	sb.WriteString("		if received, ok := response[\"id\"]; !ok || fmt.Sprintf(\"%v\", received) != fmt.Sprintf(\"%v\", id) {\n")
+	sb.WriteString("			return nil, fmt.Errorf(\"response id %v does not match request id %v\", received, id)\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("	if _, hasResult := response[\"result\"]; hasResult {\n")
+	sb.WriteString("		if _, hasError := response[\"error\"]; hasError {\n")
+	sb.WriteString("			return nil, fmt.Errorf(\"invalid response: both result and error are present\")\n")
+	sb.WriteString("		}\n")
 	sb.WriteString("	}\n\n")
 
 	sb.WriteString("	if errObj, ok := response[\"error\"].(map[string]interface{}); ok {\n")
@@ -1231,6 +1274,15 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	// Generate VerifyCompatibility method
 	writeVerifyCompatibilityMethod(sb, clientName)
 
+	// Notify sends a request without an id through transports that support it.
+	fmt.Fprintf(sb, "// Notify sends a JSON-RPC notification to %s.\n", iface.Name)
+	fmt.Fprintf(sb, "func (c *%s) Notify(method string, params []interface{}) error {\n", clientName)
+	sb.WriteString("	if transport, ok := c.transport.(NotifyTransport); ok {\n")
+	sb.WriteString("		return transport.Notify(method, params)\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("	return fmt.Errorf(\"transport does not support notifications\")\n")
+	sb.WriteString("}\n\n")
+
 	// Generate methods
 	for _, method := range iface.Methods {
 		writeClientMethodGo(sb, iface, method, structMap, enumMap, namespace, nsImports, packageImportPath)
@@ -1262,6 +1314,22 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 	}
 	sb.WriteString(" {\n")
 
+	goReturnType := ""
+	if method.ReturnType != nil {
+		goReturnType = getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
+	}
+
+	// A small helper keeps the generated error returns consistent for methods
+	// that do and do not declare a return value.
+	writeErrorReturn := func(errExpr string) {
+		if method.ReturnType == nil {
+			fmt.Fprintf(sb, "\t\treturn %s\n", errExpr)
+			return
+		}
+		fmt.Fprintf(sb, "\t\tvar zero %s\n", goReturnType)
+		fmt.Fprintf(sb, "\t\treturn zero, %s\n", errExpr)
+	}
+
 	// Build params array
 	sb.WriteString("\tparams := []interface{}{\n")
 	for _, param := range method.Parameters {
@@ -1269,48 +1337,43 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 	}
 	sb.WriteString("\t}\n\n")
 
+	// The generated validation flags must actually gate IDL validation.
+	fmt.Fprintf(sb, "\tif c.validateRequests && c.contract != nil {\n")
+	fmt.Fprintf(sb, "\t\tif err := c.contract.ValidateRequest(%q, %q, params); err != nil {\n", iface.Name, method.Name)
+	writeErrorReturn("fmt.Errorf(\"request validation failed: %w\", err)")
+	sb.WriteString("\t\t}\n\t}\n\n")
+
 	// Call transport
 	fmt.Fprintf(sb, "\tmethodName := \"%s.%s\"\n", iface.Name, method.Name)
 	sb.WriteString("\tresponse, err := c.transport.Call(methodName, params)\n")
 	sb.WriteString("\tif err != nil {\n")
-	if method.ReturnType != nil {
-		returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
-		sb.WriteString("\t\tvar zero ")
-		sb.WriteString(returnType)
-		sb.WriteString("\n")
-		sb.WriteString("\t\treturn zero, err\n")
-	} else {
-		sb.WriteString("\t\treturn err\n")
-	}
+	writeErrorReturn("err")
 	sb.WriteString("\t}\n\n")
 
 	// Extract result
 	if method.ReturnType != nil {
 		sb.WriteString("\tresult, ok := response[\"result\"]\n")
 		sb.WriteString("\tif !ok {\n")
-		returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
 		if method.ReturnOptional {
-			sb.WriteString("\t\tvar zero ")
-			sb.WriteString(returnType)
-			sb.WriteString("\n")
+			fmt.Fprintf(sb, "\t\tvar zero %s\n", goReturnType)
 			sb.WriteString("\t\treturn zero, nil\n")
 		} else {
-			sb.WriteString("\t\tvar zero ")
-			sb.WriteString(returnType)
-			sb.WriteString("\n")
+			fmt.Fprintf(sb, "\t\tvar zero %s\n", goReturnType)
 			sb.WriteString("\t\treturn zero, fmt.Errorf(\"missing result in response\")\n")
 		}
 		sb.WriteString("\t}\n\n")
 
-		goReturnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
-		sb.WriteString("\tvar typedResult ")
-		sb.WriteString(goReturnType)
-		sb.WriteString("\n")
+		// Validate the raw result before decoding it. Null results are passed
+		// through so a required return can be rejected.
+		fmt.Fprintf(sb, "\tif c.validateResponses && c.contract != nil {\n")
+		fmt.Fprintf(sb, "\t\tif err := c.contract.ValidateResponse(%q, %q, result); err != nil {\n", iface.Name, method.Name)
+		writeErrorReturn("fmt.Errorf(\"response validation failed: %w\", err)")
+		sb.WriteString("\t\t}\n\t}\n\n")
+
+		fmt.Fprintf(sb, "\tvar typedResult %s\n", goReturnType)
 		sb.WriteString("\tresultJSON, _ := json.Marshal(result)\n")
 		sb.WriteString("\tif err := json.Unmarshal(resultJSON, &typedResult); err != nil {\n")
-		sb.WriteString("\t\tvar zero ")
-		sb.WriteString(goReturnType)
-		sb.WriteString("\n")
+		fmt.Fprintf(sb, "\t\tvar zero %s\n", goReturnType)
 		sb.WriteString("\t\treturn zero, fmt.Errorf(\"failed to unmarshal result: %w\", err)\n")
 		sb.WriteString("\t}\n")
 		sb.WriteString("\treturn typedResult, nil\n")
@@ -1361,6 +1424,7 @@ func writeVerifyCompatibilityMethod(sb *strings.Builder, clientName string) {
 	sb.WriteString("			Compatible: false,\n")
 	sb.WriteString("			ClientChecksum: clientChecksum,\n")
 	sb.WriteString("			Error: \"failed to fetch server IDL via pulserpc-idl: \" + fetchErr.Error(),\n")
+	sb.WriteString("			Timestamp: time.Now(),\n")
 	sb.WriteString("		}\n")
 	sb.WriteString("		if c.auditor != nil {\n")
 	sb.WriteString("			c.auditor.Audit(ctx, result)\n")
@@ -1385,6 +1449,7 @@ func writeVerifyCompatibilityMethod(sb *strings.Builder, clientName string) {
 	sb.WriteString("		ServerChecksum: serverChecksum,\n")
 	sb.WriteString("		ClientChecksum: clientChecksum,\n")
 	sb.WriteString("		Deltas:         deltas,\n")
+	sb.WriteString("		Timestamp:      time.Now(),\n")
 	sb.WriteString("	}\n\n")
 	sb.WriteString("	if c.auditor != nil {\n")
 	sb.WriteString("		c.auditor.Audit(ctx, result)\n")

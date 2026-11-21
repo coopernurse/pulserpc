@@ -240,6 +240,15 @@ func (c *Contract) ValidateResponse(ifaceName string, funcName string, result in
 		}
 		return nil
 	}
+	// A void return is encoded as {"builtIn":"void"}. It must accept nil and
+	// reject any result, just like a method with no returnType key.
+	if builtIn, ok := returnType["builtIn"].(string); ok && builtIn == "void" {
+		if result != nil {
+			return fmt.Errorf("function '%s.%s' invalid response: expected nil, got %v",
+				ifaceName, funcName, result)
+		}
+		return nil
+	}
 
 	// Convert result to map if it's a struct (for proper validation)
 	result, err := convertToMap(result)

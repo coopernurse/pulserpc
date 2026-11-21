@@ -96,54 +96,49 @@ type StructMap map[string]StructDef
 // EnumMap maps enum names to their definitions
 type EnumMap map[string]EnumDef
 
-// FindStruct finds a struct definition by name
-// Tries qualified name first, then unqualified name
-func FindStruct(structName string, allStructs StructMap) StructDef {
-	// Try qualified name first
-	if structDef, ok := allStructs[structName]; ok {
-		return structDef
+// resolveDefinition resolves a possibly-qualified type name deterministically:
+// an exact key wins, then an exact base-name key, then a key whose base name
+// matches. A base name shared by multiple namespaces is ambiguous and returns
+// nil instead of whichever entry Go's map iteration happens to yield first.
+func resolveDefinition[T any](name string, defs map[string]T) T {
+	var zero T
+	if def, ok := defs[name]; ok {
+		return def
 	}
 
-	// Try unqualified name (extract base name from qualified name)
-	if idx := len(structName) - 1; idx >= 0 {
-		for i := idx; i >= 0; i-- {
-			if structName[i] == '.' {
-				baseName := structName[i+1:]
-				if structDef, ok := allStructs[baseName]; ok {
-					return structDef
-				}
-				break
+	base := name
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		base = name[idx+1:]
+	}
+	if def, ok := defs[base]; ok {
+		return def
+	}
+
+	var found T
+	matches := 0
+	for key, def := range defs {
+		if key == base || strings.HasSuffix(key, "."+base) {
+			found = def
+			matches++
+			if matches > 1 {
+				return zero
 			}
 		}
 	}
-
-	return nil
+	if matches == 1 {
+		return found
+	}
+	return zero
 }
 
-// FindEnum finds an enum definition by name
-// Tries qualified name first, then unqualified name
+// FindStruct finds a struct definition by name.
+func FindStruct(structName string, allStructs StructMap) StructDef {
+	return resolveDefinition(structName, allStructs)
+}
+
+// FindEnum finds an enum definition by name.
 func FindEnum(enumName string, allEnums EnumMap) EnumDef {
-	// Try qualified name first
-	if enumDef, ok := allEnums[enumName]; ok {
-		return enumDef
-	}
-
-	// If enumName contains a dot, extract the base name and try that
-	if strings.Contains(enumName, ".") {
-		baseName := enumName[strings.LastIndex(enumName, ".")+1:]
-		if enumDef, ok := allEnums[baseName]; ok {
-			return enumDef
-		}
-	}
-
-	// Try looking for the enum in allEnums with matching base name
-	for key, enumDef := range allEnums {
-		if strings.HasSuffix(key, "."+enumName) {
-			return enumDef
-		}
-	}
-
-	return nil
+	return resolveDefinition(enumName, allEnums)
 }
 
 // GetStructFields recursively resolves struct extends to return all fields (parent + child)
