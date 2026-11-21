@@ -96,3 +96,31 @@ func TestGeneratedJavaServerAndClientAuditFixes(t *testing.T) {
 		}
 	})
 }
+
+// Result validation used to roundtrip every typed result through
+// jsonParser.toJson/fromJson before validating it. The roundtrip is only needed
+// when the IDL return type contains a user-defined struct/enum.
+func TestGeneratedJavaServerConditionalResultConversion(t *testing.T) {
+	idl := parseTestIDL(t, "namespace test\ninterface Svc { Ping() string }\n")
+	server := generateServerJava(idl, nil, map[string]*NamespaceTypes{}, "com.example", "package com.example;", "{}")
+
+	for _, fragment := range []string{
+		"Object plainResult = result;",
+		"if (responseNeedsPlainConversion(returnTypeDef)) {",
+		`plainResult = jsonParser.fromJson(jsonParser.toJson(result), Object.class);`,
+		"private static boolean responseNeedsPlainConversion(Map<String, Object> typeDef) {",
+		`if (typeDef.containsKey("userDefined")) return true;`,
+		`return responseNeedsPlainConversion((Map<String, Object>) typeDef.get("array"));`,
+		`return responseNeedsPlainConversion((Map<String, Object>) typeDef.get("mapValue"));`,
+		"contract.validateResponse(idlIfaceName, methodName, plainResult);",
+	} {
+		if !strings.Contains(server, fragment) {
+			t.Errorf("generated Java server missing conditional result conversion: %q", fragment)
+		}
+	}
+
+	// The conversion must be guarded, not the default assignment.
+	if strings.Contains(server, `Object plainResult = jsonParser.fromJson(jsonParser.toJson(result), Object.class);`) {
+		t.Error("generated Java server still performs an unconditional JSON roundtrip on every result")
+	}
+}

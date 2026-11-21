@@ -43,10 +43,11 @@ public class HTTPTransport implements Transport {
 
         // java-14: validate the raw envelope so the check is parser-agnostic
         // (Gson bypasses setters, so a parsed Response cannot be trusted here).
+        // Parse the body only once; validate that Map and build the Response
+        // from the same parsed data rather than deserializing the body twice.
         Map<String, Object> envelope = jsonParser.fromJson(httpResponse.body(), Map.class);
         Response.validateMap(envelope, request.getId());
-
-        Response response = jsonParser.fromJson(httpResponse.body(), Response.class);
+        Response response = Response.fromMap(envelope);
 
         if (response.hasError()) {
             Map<String, Object> error = response.getError();

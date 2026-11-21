@@ -1175,7 +1175,18 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("                String idlIfaceName = contract.findInterfaceName(interfaceName);\n")
 	sb.WriteString("                if (idlIfaceName != null) {\n")
 	sb.WriteString("                    try {\n")
-	sb.WriteString("                        Object plainResult = jsonParser.fromJson(jsonParser.toJson(result), Object.class);\n")
+	sb.WriteString("                        Interface idlIface = contract.getInterface(idlIfaceName);\n")
+	sb.WriteString("                        FunctionDef idlFn = idlIface == null ? null : idlIface.getFunction(methodName);\n")
+	sb.WriteString("                        @SuppressWarnings(\"unchecked\")\n")
+	sb.WriteString("                        Map<String, Object> returnTypeDef = (idlFn != null && idlFn.get(\"returnType\") instanceof Map)\n")
+	sb.WriteString("                            ? (Map<String, Object>) idlFn.get(\"returnType\") : null;\n")
+	sb.WriteString("                        // java-audit: only pay for a JSON roundtrip when the IDL return\n")
+	sb.WriteString("                        // type contains a user-defined struct/enum; scalars and\n")
+	sb.WriteString("                        // scalar containers validate as their native Java values.\n")
+	sb.WriteString("                        Object plainResult = result;\n")
+	sb.WriteString("                        if (responseNeedsPlainConversion(returnTypeDef)) {\n")
+	sb.WriteString("                            plainResult = jsonParser.fromJson(jsonParser.toJson(result), Object.class);\n")
+	sb.WriteString("                        }\n")
 	sb.WriteString("                        contract.validateResponse(idlIfaceName, methodName, plainResult);\n")
 	sb.WriteString("                    } catch (Exception ex) {\n")
 	sb.WriteString("                        return errorEnvelope(-32603, \"Internal error: response validation failed: \" + ex.getMessage(), null, id);\n")
@@ -1212,6 +1223,23 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("            e.printStackTrace();\n")
 	sb.WriteString("            return errorEnvelope(-32603, \"Internal error: \" + e.getMessage(), null, id);\n")
 	sb.WriteString("        }\n")
+	sb.WriteString("    }\n\n")
+
+	// java-audit: avoid an unconditional toJson/fromJson roundtrip on every
+	// response. Only definitions that reference a user-defined type (including
+	// nested array/map element types) need a typed POJO converted to plain Maps
+	// before IDL validation.
+	sb.WriteString("    @SuppressWarnings(\"unchecked\")\n")
+	sb.WriteString("    private static boolean responseNeedsPlainConversion(Map<String, Object> typeDef) {\n")
+	sb.WriteString("        if (typeDef == null) return false;\n")
+	sb.WriteString("        if (typeDef.containsKey(\"userDefined\")) return true;\n")
+	sb.WriteString("        if (typeDef.get(\"array\") instanceof Map) {\n")
+	sb.WriteString("            return responseNeedsPlainConversion((Map<String, Object>) typeDef.get(\"array\"));\n")
+	sb.WriteString("        }\n")
+	sb.WriteString("        if (typeDef.get(\"mapValue\") instanceof Map) {\n")
+	sb.WriteString("            return responseNeedsPlainConversion((Map<String, Object>) typeDef.get(\"mapValue\"));\n")
+	sb.WriteString("        }\n")
+	sb.WriteString("        return false;\n")
 	sb.WriteString("    }\n")
 
 	sb.WriteString("}\n")
