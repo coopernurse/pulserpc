@@ -211,6 +211,54 @@ function testInterfaceAddedToServer() {
   console.log("✓ testInterfaceAddedToServer");
 }
 
+function testRemovedRequiredFieldIsInfo() {
+  // Canonical contract after core-12: removing a required field is Info
+  // (ClientHasMore); adding a required field is the Error case.
+  const clientIDL = {
+    interfaces: [],
+    structs: [
+      { name: "T", fields: [{ name: "id", type: { builtIn: "string" }, optional: false }] },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const serverIDL = {
+    interfaces: [],
+    structs: [{ name: "T", fields: [] }],
+    enums: [],
+    errors: [],
+  };
+  const deltas = diffIDL(clientIDL, serverIDL);
+  assert.strictEqual(deltas.length, 1);
+  assert.strictEqual(deltas[0].severity, Severity.Info);
+  assert.strictEqual(
+    classifySeverity(EntityType.Field, ChangeType.Removed, Direction.ClientHasMore, "required"),
+    Severity.Info
+  );
+  console.log("✓ testRemovedRequiredFieldIsInfo");
+}
+
+function testAddedRequiredFieldIsError() {
+  const clientIDL = {
+    interfaces: [],
+    structs: [{ name: "T", fields: [] }],
+    enums: [],
+    errors: [],
+  };
+  const serverIDL = {
+    interfaces: [],
+    structs: [
+      { name: "T", fields: [{ name: "id", type: { builtIn: "string" }, optional: false }] },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const deltas = diffIDL(clientIDL, serverIDL);
+  assert.strictEqual(deltas.length, 1);
+  assert.strictEqual(deltas[0].severity, Severity.Error);
+  console.log("✓ testAddedRequiredFieldIsError");
+}
+
 function testClassifySeverityRemovedStruct() {
   assert.strictEqual(classifySeverity(EntityType.Struct, ChangeType.Removed, Direction.ClientHasMore), Severity.Error);
   console.log("✓ testClassifySeverityRemovedStruct");
@@ -250,6 +298,8 @@ testIdenticalIDLs();
 testAddedOptionalField();
 testAddedRequiredField();
 testRemovedField();
+testRemovedRequiredFieldIsInfo();
+testAddedRequiredFieldIsError();
 testFieldMadeOptional();
 testFieldMadeRequired();
 testStructRemovedFromServer();

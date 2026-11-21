@@ -12,6 +12,14 @@ import { RPCError } from "./rpc.js";
 
 export type { VerificationResult, ContractDelta };
 
+/**
+ * Keys that must never be copied out of untrusted IDL metadata. `key` comes
+ * from a server's `pulserpc-idl` response, so assigning it with `obj[key] = v`
+ * would invoke Object.prototype's inherited `__proto__` setter and poison the
+ * prototype of the metadata object.
+ */
+const UNSAFE_META_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 export interface ContractAuditor {
   audit(result: VerificationResult): void;
   name(): string;
@@ -143,6 +151,8 @@ export class Contract {
   interfaces: Map<string, Interface> = new Map();
   structs: StructMap = {};
   enums: EnumMap = {};
+  /** Metadata declared by `meta` items, keyed by item field name (R12). */
+  meta: Record<string, any> = {};
 
   constructor(idlParsed: any) {
     this.idlParsed = idlParsed;
@@ -163,6 +173,21 @@ export class Contract {
       for (const enumData of idlParsed.enums || []) {
         this.enums[enumData.name] = enumData;
       }
+
+      // Parse metadata (R12): the dict form may carry `meta` directly or as
+      // a list of `{type: "meta", ...}` items, like the Barrister form.
+      const rawMeta = idlParsed.meta;
+      if (Array.isArray(rawMeta)) {
+        for (const item of rawMeta) {
+          this.addMetaItem(item);
+        }
+      } else if (rawMeta && typeof rawMeta === 'object') {
+        // Do not use Object.assign here: it copies remote-controlled keys
+        // straight onto `this.meta`, including an inherited `__proto__` setter.
+        for (const [key, value] of Object.entries(rawMeta)) {
+          this.setMetaItem(key, value);
+        }
+      }
     } else if (Array.isArray(idlParsed)) {
       // Barrister format - list of items with type field
       for (const item of idlParsed) {
@@ -173,9 +198,34 @@ export class Contract {
           this.enums[item.name] = item;
         } else if (itemType === 'interface') {
           this.interfaces.set(item.name, new InterfaceImpl(item));
+        } else if (itemType === 'meta') {
+          this.addMetaItem(item);
         }
       }
     }
+  }
+
+  private addMetaItem(item: any): void {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+    for (const [key, value] of Object.entries(item)) {
+      if (key !== 'type') {
+        this.setMetaItem(key, value);
+      }
+    }
+  }
+
+  /**
+   * Store one metadata entry, rejecting prototype-polluting keys. Both the
+   * Barrister item form and the dict form funnel through here so neither can
+   * assign `__proto__`, `constructor` or `prototype` onto `this.meta`.
+   */
+  private setMetaItem(key: string, value: any): void {
+    if (UNSAFE_META_KEYS.has(key)) {
+      return;
+    }
+    this.meta[key] = value;
   }
 
   /**
@@ -214,6 +264,30 @@ export class Contract {
   }
 
   /**
+   * Single owner of the positional parameter-count rule (M9): trailing
+   * optional parameters may be omitted, so any length between `requiredCount`
+   * and the full signature length is accepted.
+   *
+   * Exposed so Server.positionalToNamedParams reuses the same rule (preserving
+   * fail-fast behaviour when request validation is disabled) instead of
+   * duplicating the range check with a divergent error message.
+   */
+  checkParamCount(
+    ifaceName: string,
+    funcName: string,
+    paramDefs: FunctionDef["parameters"],
+    givenCount: number
+  ): void {
+    const requiredCount = paramDefs.filter((p) => !p.optional).length;
+    if (givenCount < requiredCount || givenCount > paramDefs.length) {
+      throw new RPCError(
+        -32602,
+        `Function '${ifaceName}.${funcName}' expects ${requiredCount}-${paramDefs.length} param(s). ${givenCount} given.`
+      );
+    }
+  }
+
+  /**
    * Validate request parameters against IDL
    */
   validateRequest(ifaceName: string, funcName: string, params: any[]): void {
@@ -229,13 +303,9 @@ export class Contract {
 
     const paramDefs = func.parameters || [];
 
-    // Check parameter count
-    if (params.length !== paramDefs.length) {
-      throw new RPCError(
-        -32602,
-        `Function '${ifaceName}.${funcName}' expects ${paramDefs.length} param(s). ${params.length} given.`
-      );
-    }
+    // Trailing optional parameters may be omitted: accept any length between
+    // the number of required parameters and the full signature (M9).
+    this.checkParamCount(ifaceName, funcName, paramDefs, params.length);
 
     // Validate each parameter and collect errors
     const allErrors: ValidationError[] = [];
@@ -244,6 +314,12 @@ export class Contract {
       const paramDef = paramDefs[i];
       const paramType = paramDef.type;
       const isOptional = paramDef.optional || false;
+
+      // An absent value at an optional position (e.g. a named-param request
+      // that omits a trailing optional field) is not a validation error.
+      if (paramValue === undefined && isOptional) {
+        continue;
+      }
 
       const errors = validateType(paramValue, paramType, this.structs, this.enums, isOptional);
       for (const err of errors) {
@@ -280,11 +356,12 @@ export class Contract {
     // Check if function has a return type
     const returnType = func.returnType;
     if (!returnType) {
-      // Function returns void/None
-      if (result !== null && result !== undefined) {
+      // Function returns void/None. Null is the canonical JSON-RPC value
+      // across runtimes; `undefined` is not a valid wire value (R14).
+      if (result !== null) {
         throw new RPCError(
           -32603,
-          `Function '${ifaceName}.${funcName}' invalid response: '${JSON.stringify(result)}'. Expected null/undefined`
+          `Function '${ifaceName}.${funcName}' invalid response: '${JSON.stringify(result)}'. Expected null`
         );
       }
       return;

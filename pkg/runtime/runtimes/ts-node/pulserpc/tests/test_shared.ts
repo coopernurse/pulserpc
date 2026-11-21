@@ -71,6 +71,22 @@ function test_shared_validateType_optional_null() {
   console.log("  ✓ validateType optional/null");
 }
 
+function test_shared_validateInt_non_finite() {
+  // R2: the ts-node/ts-cjs split must be visible to CI. ts-node rejects NaN
+  // and +/-Infinity (one error each); a sibling runtime that accepts them
+  // will fail this shared assertion until it is fixed.
+  const s: StructMap = {};
+  const e: EnumMap = {};
+  for (const value of [NaN, Infinity, -Infinity, JSON.parse("1e999")]) {
+    const errs = validateType(value, { builtIn: "int" }, s, e);
+    assert.strictEqual(errs.length, 1, `expected one error for ${String(value)}`);
+  }
+  // Float deliberately accepts NaN/Infinity in both TS runtimes.
+  assert.deepStrictEqual(validateType(NaN, { builtIn: "float" }, s, e), []);
+  assert.deepStrictEqual(validateType(Infinity, { builtIn: "float" }, s, e), []);
+  console.log("  ✓ validateType int rejects NaN/Infinity");
+}
+
 // ── Structs ─────────────────────────────────────────────
 
 function test_shared_validateStruct_extends() {
@@ -260,6 +276,7 @@ run("test_shared_validateType_covers_all_builtins", test_shared_validateType_cov
 run("test_shared_validateType_array", test_shared_validateType_array);
 run("test_shared_validateType_map", test_shared_validateType_map);
 run("test_shared_validateType_optional_null", test_shared_validateType_optional_null);
+run("test_shared_validateInt_non_finite", test_shared_validateInt_non_finite);
 run("test_shared_validateStruct_extends", test_shared_validateStruct_extends);
 run("test_shared_validateStruct_override", test_shared_validateStruct_override);
 run("test_shared_getStructFields", test_shared_getStructFields);

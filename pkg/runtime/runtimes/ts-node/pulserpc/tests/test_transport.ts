@@ -58,16 +58,69 @@ async function testHttpErrorWrapsRPCError() {
     assert.fail("Expected RPCError to be thrown");
   } catch (e: any) {
     assert.ok(e instanceof RPCError, `Expected RPCError, got ${e?.constructor?.name}`);
-    assert.strictEqual(e.code, -32000);
+    // R8: transport failures use a standard JSON-RPC code, never -32000.
+    assert.strictEqual(e.code, -32603);
     assert.ok(e.message.includes("503"), `Expected message to include status code, got: ${e.message}`);
     assert.deepStrictEqual(e.data, { status: 503 });
   }
   console.log("✓ testHttpErrorWrapsRPCError");
 }
 
+async function testMalformedResponsesUseStandardCode() {
+  const cases: Array<[string, typeof fetch]> = [
+    [
+      "empty body",
+      (async () => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: async () => "",
+      })) as unknown as typeof fetch,
+    ],
+    [
+      "invalid JSON",
+      (async () => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: async () => "{not json",
+      })) as unknown as typeof fetch,
+    ],
+  ];
+  for (const [label, fetchFn] of cases) {
+    const transport = new HttpTransport("http://localhost:8080", {}, fetchFn);
+    try {
+      await transport.request(req);
+      assert.fail(`Expected RPCError for ${label}`);
+    } catch (e: any) {
+      assert.ok(e instanceof RPCError, `Expected RPCError for ${label}`);
+      assert.strictEqual(e.code, -32603, `${label} must use a standard error code`);
+    }
+  }
+  console.log("✓ testMalformedResponsesUseStandardCode");
+}
+
+async function testNotificationEmptyBodyIsNotAnError() {
+  const notificationFetch = (async () => ({
+    ok: true,
+    status: 204,
+    statusText: "No Content",
+    text: async () => "",
+  })) as unknown as typeof fetch;
+  const transport = new HttpTransport("http://localhost:8080", {}, notificationFetch);
+  const response = await transport.request({
+    jsonrpc: "2.0",
+    method: "Foo.notify",
+  });
+  assert.strictEqual(response.jsonrpc, "2.0");
+  console.log("✓ testNotificationEmptyBodyIsNotAnError");
+}
+
 (async () => {
   await testUrlUsedVerbatim();
   await testHttpErrorWrapsRPCError();
+  await testMalformedResponsesUseStandardCode();
+  await testNotificationEmptyBodyIsNotAnError();
   console.log("\nAll transport tests passed!");
 })().catch((e) => {
   console.error(e);

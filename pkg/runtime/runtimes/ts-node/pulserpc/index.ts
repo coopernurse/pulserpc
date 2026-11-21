@@ -4,7 +4,7 @@
  * This library provides validation and RPC functionality for PulseRPC-generated code.
  */
 
-export { RPCError } from "./rpc.js";
+export { RPCError, RPCErrorCode } from "./rpc.js";
 export { Contract } from "./contract.js";
 export type { Interface, FunctionDef, VerificationResult, ContractAuditor } from "./contract.js";
 export { Client } from "./client.js";
