@@ -84,7 +84,10 @@ public class Response {
             throw new RPCError(-32600, "Invalid response: jsonrpc must be '2.0'");
         }
         Object responseId = envelope.get("id");
-        if (expectedId != null && responseId != null && !expectedId.equals(responseId)) {
+        // Mirror typed validate(): when an id is expected, a missing id is a
+        // mismatch too. The old responseId != null guard let an envelope with
+        // no "id" key slip through validation (java-audit low finding).
+        if (expectedId != null && !expectedId.equals(responseId)) {
             throw new RPCError(-32600, "Invalid response: id mismatch (expected " + expectedId + ", got " + responseId + ")");
         }
         boolean hasResult = envelope.containsKey("result");
@@ -92,6 +95,27 @@ public class Response {
         if (hasResult == hasError) {
             throw new RPCError(-32600, "Invalid response: exactly one of result or error is required");
         }
+    }
+
+    /**
+     * Build a Response from an envelope that has already been parsed into a
+     * plain Map by a JsonParser. This lets callers parse the raw body once:
+     * validate that same Map (parser-agnostic) and then construct the Response
+     * from it, instead of deserializing the body a second time.
+     */
+    @SuppressWarnings("unchecked")
+    public static Response fromMap(Map<String, Object> envelope) {
+        Response response = new Response();
+        response.setJsonrpc((String) envelope.get("jsonrpc"));
+        response.setId(envelope.get("id"));
+        if (envelope.containsKey("result")) {
+            // setResult records presence even when the wire value is null.
+            response.setResult(envelope.get("result"));
+        }
+        if (envelope.containsKey("error")) {
+            response.setError((Map<String, Object>) envelope.get("error"));
+        }
+        return response;
     }
 }
 

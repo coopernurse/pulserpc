@@ -149,4 +149,34 @@ public class TypesTest {
         List<Map<String, Object>> fields = Types.getStructFields("Child", allStructs);
         Assert.assertEquals(2, fields.size());
     }
+
+    @Test
+    public void testResolutionIsDeterministicAcrossLookups() {
+        // Cached sorted keys must preserve the old deterministic tie-breaking.
+        Map<String, Map<String, Object>> structs = new LinkedHashMap<>();
+        Map<String, Object> alpha = Map.of("name", "a.Other");
+        Map<String, Object> zeta = Map.of("name", "z.Other");
+        structs.put("z.Other", zeta);   // insertion order differs from sorted order
+        structs.put("a.Other", alpha);
+        for (int i = 0; i < 10; i++) {
+            Assert.assertEquals("qualified request tie-break", alpha, Types.findStruct("req.Other", structs));
+            Assert.assertEquals("suffix request tie-break", alpha, Types.findStruct("Other", structs));
+        }
+
+        // Interface resolution uses the same cached, deterministic ordering.
+        Map<String, Object> idl = Map.of("interfaces", List.of(
+            Map.of("name", "z.Svc", "methods", List.of()),
+            Map.of("name", "a.Svc", "methods", List.of())
+        ));
+        Contract contract = new Contract(idl);
+        for (int i = 0; i < 10; i++) {
+            Assert.assertEquals("interface tie-break", "a.Svc", contract.findInterfaceName("req.Svc"));
+        }
+
+        // A definitions map that grows after the cache was warmed must not
+        // return a stale sorted key list.
+        Map<String, Object> zero = Map.of("name", "0.Other");
+        structs.put("0.Other", zero);
+        Assert.assertEquals(zero, Types.findStruct("req.Other", structs));
+    }
 }

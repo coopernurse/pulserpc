@@ -123,6 +123,12 @@ public class Contract {
                 }
             }
         }
+
+        // java-audit: warm the sorted-key caches once at construction so
+        // interface/type lookups never rebuild or sort their key lists.
+        Types.sortedKeys(interfaces);
+        Types.sortedKeys(structs);
+        Types.sortedKeys(enums);
     }
 
     /**
@@ -155,8 +161,8 @@ public class Contract {
         if (interfaces.containsKey(name)) {
             return name;
         }
-        List<String> keys = new ArrayList<>(interfaces.keySet());
-        java.util.Collections.sort(keys);
+        // Cached at construction; deterministic order preserves tie-breaking.
+        List<String> keys = Types.sortedKeys(interfaces);
         for (String key : keys) {
             if (key.endsWith("." + name)) {
                 return key;

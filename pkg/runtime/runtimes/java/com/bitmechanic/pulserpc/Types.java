@@ -6,11 +6,38 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Collections;
+import java.util.WeakHashMap;
 
 /**
  * Helper methods for PulseRPC type operations
  */
 public class Types {
+
+    /**
+     * Sorted key lists cached by the definitions map. Definition maps are
+     * created once per contract but looked up many times during validation, so
+     * rebuilding and sorting the key list on every lookup was pure overhead.
+     * Weak keys avoid pinning contracts in memory, and the size guard keeps a
+     * mutated map correct (resolution depends on keys, not values).
+     */
+    private static final Map<Map<String, ?>, List<String>> SORTED_KEYS =
+        Collections.synchronizedMap(new WeakHashMap<>());
+
+    /**
+     * Return the deterministically sorted keys for a definitions map, computing
+     * and caching them on first use. Package-private so Contract can warm the
+     * cache at construction and share the same resolution order.
+     */
+    static List<String> sortedKeys(Map<String, ?> definitions) {
+        List<String> cached = SORTED_KEYS.get(definitions);
+        if (cached == null || cached.size() != definitions.size()) {
+            List<String> keys = new ArrayList<>(definitions.keySet());
+            Collections.sort(keys);
+            SORTED_KEYS.put(definitions, keys);
+            cached = keys;
+        }
+        return cached;
+    }
 
     /**
      * Find a struct definition by name. Resolves exact names first, then a
@@ -38,8 +65,8 @@ public class Types {
             return exact;
         }
 
-        List<String> keys = new ArrayList<>(definitions.keySet());
-        Collections.sort(keys);
+        // Cached, deterministically sorted keys (same tie-breaking as before).
+        List<String> keys = sortedKeys(definitions);
 
         // Requested name is unqualified but the definition is qualified.
         for (String key : keys) {
