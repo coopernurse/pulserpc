@@ -144,6 +144,34 @@ public class Contract {
     }
 
     /**
+     * Resolve an interface name used on the wire (often an unqualified base name
+     * such as "A") to the key stored in this contract (which may be qualified,
+     * e.g. "inc.A"). Returns null when no interface matches. java-07.
+     */
+    public String findInterfaceName(String name) {
+        if (name == null) {
+            return null;
+        }
+        if (interfaces.containsKey(name)) {
+            return name;
+        }
+        List<String> keys = new ArrayList<>(interfaces.keySet());
+        java.util.Collections.sort(keys);
+        for (String key : keys) {
+            if (key.endsWith("." + name)) {
+                return key;
+            }
+        }
+        String base = name.substring(name.lastIndexOf('.') + 1);
+        for (String key : keys) {
+            if (key.substring(key.lastIndexOf('.') + 1).equals(base)) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Validate request parameters against the IDL
      */
     public void validateRequest(String ifaceName, String funcName, List<Object> params) {

@@ -45,10 +45,12 @@ public class Validation {
     }
 
     /**
-     * Validate that value is a float or int
+     * Validate that value is a float or int. All Java Number types are accepted
+     * so integer values (including Long) are valid wherever a float is expected,
+     * matching the other runtimes (java-08).
      */
     public static void validateFloat(Object value) {
-        if (!(value instanceof Float) && !(value instanceof Double) && !(value instanceof Integer)) {
+        if (!(value instanceof Number)) {
             throw new IllegalArgumentException("Expected float, got " + getTypeName(value));
         }
     }

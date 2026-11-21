@@ -41,6 +41,11 @@ public class HTTPTransport implements Transport {
             throw new IOException("HTTP error: " + httpResponse.statusCode() + " - " + httpResponse.body());
         }
 
+        // java-14: validate the raw envelope so the check is parser-agnostic
+        // (Gson bypasses setters, so a parsed Response cannot be trusted here).
+        Map<String, Object> envelope = jsonParser.fromJson(httpResponse.body(), Map.class);
+        Response.validateMap(envelope, request.getId());
+
         Response response = jsonParser.fromJson(httpResponse.body(), Response.class);
 
         if (response.hasError()) {

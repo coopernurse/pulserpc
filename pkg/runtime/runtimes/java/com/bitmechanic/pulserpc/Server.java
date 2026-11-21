@@ -85,16 +85,18 @@ public class Server {
         // Get params
         Object paramsObj = request.get("params");
 
-        // Convert params to list if it's a list
+        // java-09: params must be an array (or absent). Object-form params are
+        // rejected instead of being silently dropped.
         List<Object> positionalParams = new java.util.ArrayList<>();
         if (paramsObj instanceof List) {
             positionalParams.addAll((List<Object>) paramsObj);
-        } else if (paramsObj == null) {
-            positionalParams = new java.util.ArrayList<>();
+        } else if (paramsObj != null) {
+            return errorResponse(reqId, -32602, "Invalid params", "params must be an array");
         }
 
-        // Validate request using positional params
-        if (validateRequests && !positionalParams.isEmpty()) {
+        // java-09: always validate the parameter count, even when no params were
+        // supplied, so a method declared with parameters cannot be invoked empty.
+        if (validateRequests && contract != null) {
             try {
                 contract.validateRequest(ifaceName, funcName, positionalParams);
             } catch (IllegalArgumentException ex) {
@@ -121,8 +123,9 @@ public class Server {
             return errorResponse(reqId, -32603, "Internal error", ex.getMessage());
         }
 
-        // Validate response if validation is enabled
-        if (validateResponses && result != null) {
+        // java-10: let validateResponse decide whether null is acceptable for the
+        // declared return type (it rejects null for non-optional returns).
+        if (validateResponses && contract != null) {
             try {
                 contract.validateResponse(ifaceName, funcName, result);
             } catch (IllegalArgumentException ex) {

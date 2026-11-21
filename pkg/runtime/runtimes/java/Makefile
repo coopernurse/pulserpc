@@ -1,10 +1,10 @@
 # Java Runtime Tests
 # Requires: openjdk-17-jdk (or similar), maven
 
-.PHONY: test clean
+.PHONY: test clean test-validation test-types test-rpc test-json test-severity test-diff test-audit test-server test-envelope
 
-# Test target - run all tests
-test: test-validation test-types test-rpc test-json
+# Test target - run all tests (java-12: include diff/auditor/severity suites)
+test: test-validation test-types test-rpc test-json test-severity test-diff test-audit test-server test-envelope
 
 # Test individual components
 test-validation:
@@ -22,6 +22,26 @@ test-rpc:
 test-json:
 	@echo "Testing Java JSON parsers..."
 	@mvn clean test -Dtest=JsonParserTest
+
+test-severity:
+	@echo "Testing Java severity classification..."
+	@mvn clean test -Dtest=SeverityTest
+
+test-diff:
+	@echo "Testing Java contract diff engine..."
+	@mvn clean test -Dtest=DiffEngineTest
+
+test-audit:
+	@echo "Testing Java contract auditors..."
+	@mvn clean test -Dtest=AuditorTest
+
+test-server:
+	@echo "Testing Java RPC server..."
+	@mvn clean test -Dtest=ServerTest
+
+test-envelope:
+	@echo "Testing Java response envelope validation..."
+	@mvn clean test -Dtest=EnvelopeTest
 
 # Integration test - requires generated test server
 test-integration:

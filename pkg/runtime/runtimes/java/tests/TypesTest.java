@@ -80,4 +80,73 @@ public class TypesTest {
         Assert.assertTrue(fieldNames.contains("id"));
         Assert.assertTrue(fieldNames.contains("name"));
     }
+
+    @Test
+    public void testGetStructFields_ChildOverridesParent() {
+        // java-06: a child redeclaration must replace the parent's field.
+        Map<String, Map<String, Object>> allStructs = new HashMap<>();
+        Map<String, Object> base = new HashMap<>();
+        base.put("fields", Arrays.asList(
+            Map.of("name", "id", "type", Map.of("builtIn", "string"), "optional", false)
+        ));
+        allStructs.put("Base", base);
+
+        Map<String, Object> child = new HashMap<>();
+        child.put("extends", "Base");
+        child.put("fields", Arrays.asList(
+            Map.of("name", "id", "type", Map.of("builtIn", "int"), "optional", true)
+        ));
+        allStructs.put("Child", child);
+
+        List<Map<String, Object>> fields = Types.getStructFields("Child", allStructs);
+        Assert.assertEquals("exactly one field for the overridden name", 1, fields.size());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> type = (Map<String, Object>) fields.get(0).get("type");
+        Assert.assertEquals("child's type wins", "int", type.get("builtIn"));
+        Assert.assertEquals(Boolean.TRUE, fields.get(0).get("optional"));
+    }
+
+    @Test
+    public void testFindStruct_QualifiedNameResolution() {
+        // java-07: unqualified request resolves against a qualified map key and
+        // a qualified request resolves against an unqualified key.
+        Map<String, Map<String, Object>> structs = new HashMap<>();
+        Map<String, Object> response = Map.of("name", "inc.Response");
+        structs.put("inc.Response", response);
+
+        Assert.assertEquals(response, Types.findStruct("Response", structs));
+        Assert.assertEquals(response, Types.findStruct("other.Response", structs));
+        Assert.assertEquals(response, Types.findStruct("inc.Response", structs));
+        Assert.assertNull(Types.findStruct("Missing", structs));
+
+        Map<String, Map<String, Object>> unqualified = new HashMap<>();
+        unqualified.put("Status", Map.of("name", "Status"));
+        Assert.assertNotNull(Types.findStruct("inc.Status", unqualified));
+    }
+
+    @Test
+    public void testFindEnum_QualifiedNameResolution() {
+        Map<String, Map<String, Object>> enums = new HashMap<>();
+        Map<String, Object> color = Map.of("name", "inc.Color");
+        enums.put("inc.Color", color);
+        Assert.assertEquals(color, Types.findEnum("Color", enums));
+        Assert.assertNull(Types.findEnum("Nope", enums));
+    }
+
+    @Test
+    public void testGetStructFields_QualifiedExtends() {
+        // java-07: an extends value qualified with a namespace must still be
+        // resolved when collecting inherited fields.
+        Map<String, Map<String, Object>> allStructs = new HashMap<>();
+        allStructs.put("inc.Base", Map.of("fields", Arrays.asList(
+            Map.of("name", "id", "type", Map.of("builtIn", "int"))
+        )));
+        allStructs.put("inc.Child", Map.of(
+            "extends", "inc.Base",
+            "fields", Arrays.asList(Map.of("name", "name", "type", Map.of("builtIn", "string")))
+        ));
+
+        List<Map<String, Object>> fields = Types.getStructFields("Child", allStructs);
+        Assert.assertEquals(2, fields.size());
+    }
 }
