@@ -330,7 +330,7 @@ sleep 2
 
 WAIT_COUNT=0
 while [ $WAIT_COUNT -lt 30 ]; do
-    if curl -s "$SERVER_URL" > /dev/null 2>&1; then
+    if python -c "import socket; s=socket.create_connection(('127.0.0.1', $SERVER_PORT), 1); s.close()" 2>/dev/null; then
         break
     fi
     sleep 1
