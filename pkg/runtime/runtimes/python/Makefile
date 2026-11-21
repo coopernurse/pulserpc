@@ -11,7 +11,7 @@ ifeq ($(DOCKER_AVAILABLE),yes)
 	@$(MAKE) test-docker
 else
 	@echo "Using local Python for testing..."
-	@python3 -m pytest tests/ -v
+	@python3 -m pytest tests/ pulserpc/tests/ -v
 endif
 
 # Test using Docker
@@ -19,7 +19,7 @@ test-docker:
 	@echo "Testing Python runtime in Docker..."
 	@docker run --rm -v $(PWD):/workspace -w /workspace \
 		$(PYTHON_IMAGE) \
-		/bin/bash -c "pip install -q pytest && python -m pytest tests/ -v"
+		/bin/bash -c "pip install -q pytest && python -m pytest tests/ pulserpc/tests/ -v"
 
 # Test generator integration (requires Docker)
 test-integration:

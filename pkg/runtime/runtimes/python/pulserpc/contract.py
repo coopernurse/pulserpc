@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from .validation import validate_type
 from .rpctypes import VerificationResult, ContractDelta, Severity, ValidationError, ValidationResult
-from .rpc import RPCError
+from .rpc import RPCError, INVALID_PARAMS, INTERNAL_ERROR
 
 
 class ContractAuditor(ABC):
@@ -255,22 +255,27 @@ class Contract:
             params: List of parameter values
 
         Raises:
-            RPCError: If validation fails, with code -32602 and ValidationResult as data
+            RPCError: If validation fails, with code INVALID_PARAMS.
+
+        The error ``data`` is the JSON form of ``ValidationResult``:
+        ``{"valid": false, "error": "<joined message>", "invalid_fields": [...]}``
+        (``invalid_fields`` is omitted when no field has a path).  This is the
+        structured shape emitted by the Python runtime (audit python-10).
         """
         interface = self.get_interface(iface_name)
         if not interface:
-            raise RPCError(-32602, f"Unknown interface: '{iface_name}'")
+            raise RPCError(INVALID_PARAMS, f"Unknown interface: '{iface_name}'")
 
         func = interface.get_function(func_name)
         if not func:
-            raise RPCError(-32602, f"{iface_name}: Unknown function: '{func_name}'")
+            raise RPCError(INVALID_PARAMS, f"{iface_name}: Unknown function: '{func_name}'")
 
         param_defs = func.get('parameters', [])
 
         # Check parameter count
         if len(params) != len(param_defs):
             raise RPCError(
-                -32602,
+                INVALID_PARAMS,
                 f"Function '{iface_name}.{func_name}' expects "
                 f"{len(param_defs)} param(s). {len(params)} given."
             )
@@ -291,7 +296,7 @@ class Contract:
 
         if all_errors:
             raise RPCError(
-                -32602,
+                INVALID_PARAMS,
                 f"Function '{iface_name}.{func_name}' invalid params",
                 asdict(build_validation_result(all_errors))
             )
@@ -306,15 +311,19 @@ class Contract:
             result: Result value from the function
 
         Raises:
-            RPCError: If validation fails, with code -32603 and ValidationResult as data
+            RPCError: If validation fails, with code INTERNAL_ERROR.
+
+        As with request validation, ``data`` carries the JSON form of
+        ``ValidationResult``: ``{"valid": false, "error": str,
+        "invalid_fields": [...]}`` (audit python-10).
         """
         interface = self.get_interface(iface_name)
         if not interface:
-            raise RPCError(-32603, f"Unknown interface: '{iface_name}'")
+            raise RPCError(INTERNAL_ERROR, f"Unknown interface: '{iface_name}'")
 
         func = interface.get_function(func_name)
         if not func:
-            raise RPCError(-32603, f"{iface_name}: Unknown function: '{func_name}'")
+            raise RPCError(INTERNAL_ERROR, f"{iface_name}: Unknown function: '{func_name}'")
 
         # Check if function has a return type
         return_type = func.get('returnType')
@@ -322,7 +331,7 @@ class Contract:
             # Function returns void/None
             if result is not None:
                 raise RPCError(
-                    -32603,
+                    INTERNAL_ERROR,
                     f"Function '{iface_name}.{func_name}' invalid response: "
                     f"'{result}'. Expected None"
                 )
@@ -334,7 +343,7 @@ class Contract:
                               self.enums, is_optional)
         if errors:
             raise RPCError(
-                -32603,
+                INTERNAL_ERROR,
                 f"Function '{iface_name}.{func_name}' invalid response",
                 asdict(build_validation_result(errors))
             )

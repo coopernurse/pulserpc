@@ -4,7 +4,14 @@ PulseRPC Python Runtime Library
 This library provides validation and RPC functionality for PulseRPC-generated code.
 """
 
-from .rpc import RPCError
+from .rpc import (
+    RPCError,
+    PARSE_ERROR,
+    INVALID_REQUEST,
+    METHOD_NOT_FOUND,
+    INVALID_PARAMS,
+    INTERNAL_ERROR,
+)
 from .validation import (
     validate_type,
     validate_string,
@@ -37,13 +44,18 @@ from .contract import (
     LoggingAuditor,
     FailFastAuditor,
 )
-from .server import Server
+from .server import Server, DEFAULT_MAX_BATCH_SIZE
 from .client import Client
 from .contract import Contract
 from .transport import Transport, HttpTransport, InProcTransport
 
 __all__ = [
     "RPCError",
+    "PARSE_ERROR",
+    "INVALID_REQUEST",
+    "METHOD_NOT_FOUND",
+    "INVALID_PARAMS",
+    "INTERNAL_ERROR",
     "validate_type",
     "validate_string",
     "validate_int",
@@ -71,6 +83,7 @@ __all__ = [
     "LoggingAuditor",
     "FailFastAuditor",
     "Server",
+    "DEFAULT_MAX_BATCH_SIZE",
     "Client",
     "Contract",
     "Transport",

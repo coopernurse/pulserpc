@@ -1,8 +1,14 @@
 """Validation functions for PulseRPC types"""
 
-from typing import Any, Callable, Dict, List
+import math
+from typing import Any, Callable, Dict, List, Optional
 
-from .rpctypes import find_struct, find_enum, get_struct_fields, ValidationError
+from .rpctypes import (
+    ValidationError,
+    _get_resolution_index,
+    _resolve_with_index,
+    get_struct_fields,
+)
 
 
 def _join_path(parent: str, child: str) -> str:
@@ -33,12 +39,18 @@ def validate_int(value: Any, path: str = "") -> List[ValidationError]:
             return [_make_error(path, f"Expected int, got float NaN")]
         if value == float('inf') or value == float('-inf'):
             return [_make_error(path, f"Expected int, got float infinity")]
-        if value == int(value):
+        # Match the Go runtime's acceptance set: an exact integral value, or a
+        # value within 1e-9 of the next-lower integer (audit python-02).
+        if value == int(value) or abs(value - math.floor(value)) < 1e-9:
             return []
     return [_make_error(path, f"Expected int, got {type(value).__name__}")]
 
 
 def validate_float(value: Any, path: str = "") -> List[ValidationError]:
+    # bool subclasses int in Python, but JSON `true`/`false` are not floats.
+    # validate_int already applies the same rule (audit python-02).
+    if isinstance(value, bool):
+        return [_make_error(path, f"Expected float, got bool")]
     if not isinstance(value, (int, float)):
         return [_make_error(path, f"Expected float, got {type(value).__name__}")]
     return []
@@ -100,12 +112,16 @@ def validate_struct(
     struct_def: Dict[str, Any],
     all_structs: Dict[str, Any],
     all_enums: Dict[str, Any],
-    path: str = ""
+    path: str = "",
+    _indexes: Optional[tuple] = None,
 ) -> List[ValidationError]:
     if not isinstance(value, dict):
         return [_make_error(path, f"Expected dict for struct {struct_name}, got {type(value).__name__}")]
 
-    fields = get_struct_fields(struct_name, all_structs)
+    if _indexes is None:
+        _indexes = (_get_resolution_index(all_structs),
+                    _get_resolution_index(all_enums))
+    fields = get_struct_fields(struct_name, all_structs, _index=_indexes[0])
     errors: List[ValidationError] = []
 
     for field in fields:
@@ -130,7 +146,8 @@ def validate_struct(
                     ))
             else:
                 errors.extend(
-                    validate_type(field_value, field_type, all_structs, all_enums, is_optional, field_path)
+                    validate_type(field_value, field_type, all_structs, all_enums,
+                                  is_optional, field_path, _indexes)
                 )
 
     return errors
@@ -142,7 +159,8 @@ def validate_type(
     all_structs: Dict[str, Any],
     all_enums: Dict[str, Any],
     is_optional: bool = False,
-    path: str = ""
+    path: str = "",
+    _indexes: Optional[tuple] = None,
 ) -> List[ValidationError]:
     if value is None:
         if is_optional:
@@ -160,34 +178,33 @@ def validate_type(
         return validate_bool(value, path)
     elif type_def.get('array'):
         element_type = type_def['array']
-        element_validator = lambda v, p: validate_type(v, element_type, all_structs, all_enums, False, p)
+        element_validator = lambda v, p: validate_type(
+            v, element_type, all_structs, all_enums, False, p, _indexes
+        )
         return validate_array(value, element_validator, path)
     elif type_def.get('mapValue'):
         value_type = type_def['mapValue']
-        value_validator = lambda v, p: validate_type(v, value_type, all_structs, all_enums, False, p)
+        value_validator = lambda v, p: validate_type(
+            v, value_type, all_structs, all_enums, False, p, _indexes
+        )
         return validate_map(value, value_validator, path)
     elif type_def.get('userDefined'):
+        # Resolve against prebuilt indexes instead of re-sorting both tables on
+        # every validation (review finding 2).
+        if _indexes is None:
+            _indexes = (_get_resolution_index(all_structs),
+                        _get_resolution_index(all_enums))
         user_type = type_def['userDefined']
-        struct_def = find_struct(user_type, all_structs)
-        if not struct_def and '.' not in user_type:
-            for qualified_key in all_structs:
-                if qualified_key.endswith('.' + user_type):
-                    struct_def = all_structs[qualified_key]
-                    user_type = qualified_key
-                    break
-        if struct_def:
-            return validate_struct(value, user_type, struct_def, all_structs, all_enums, path)
-        else:
-            enum_def = find_enum(user_type, all_enums)
-            if not enum_def and '.' not in user_type:
-                for qualified_key in all_enums:
-                    if qualified_key.endswith('.' + user_type):
-                        enum_def = all_enums[qualified_key]
-                        break
-            if enum_def:
-                allowed_values = [v['name'] for v in enum_def.get('values', [])]
-                return validate_enum(value, user_type, allowed_values, path)
-            else:
-                return [_make_error(path, f"Unknown user-defined type: {user_type}")]
+        struct_key = _resolve_with_index(user_type, all_structs, _indexes[0])
+        if struct_key is not None:
+            return validate_struct(
+                value, struct_key, all_structs[struct_key], all_structs,
+                all_enums, path, _indexes
+            )
+        enum_key = _resolve_with_index(user_type, all_enums, _indexes[1])
+        if enum_key is not None:
+            allowed_values = [v['name'] for v in all_enums[enum_key].get('values', [])]
+            return validate_enum(value, enum_key, allowed_values, path)
+        return [_make_error(path, f"Unknown user-defined type: {user_type}")]
     else:
         return [_make_error(path, f"Invalid type definition: {type_def}")]
