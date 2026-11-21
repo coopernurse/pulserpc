@@ -103,6 +103,20 @@ func ValidateEnum(value interface{}, enumName string, allowedValues []string) er
 	return fmt.Errorf("invalid value for enum %s: '%s'. Allowed values: %v", enumName, strValue, allowedValues)
 }
 
+// typeResolver bundles the contract-owned struct/enum indexes so validation
+// resolves user-defined types in O(1) without rebuilding an index per field.
+type typeResolver struct {
+	structs *definitionIndex[StructDef]
+	enums   *definitionIndex[EnumDef]
+}
+
+func newTypeResolver(structs StructMap, enums EnumMap) *typeResolver {
+	return &typeResolver{
+		structs: newDefinitionIndex(structs),
+		enums:   newDefinitionIndex(enums),
+	}
+}
+
 // ValidateStruct validates that value is a map[string]interface{} matching the struct definition
 func ValidateStruct(
 	value interface{},
@@ -111,13 +125,23 @@ func ValidateStruct(
 	allStructs StructMap,
 	allEnums EnumMap,
 ) error {
+	return validateStruct(value, structName, structDef, newTypeResolver(allStructs, allEnums))
+}
+
+// validateStruct is the indexed implementation shared with contract validation.
+func validateStruct(
+	value interface{},
+	structName string,
+	structDef StructDef,
+	resolver *typeResolver,
+) error {
 	dict, ok := value.(map[string]interface{})
 	if !ok {
 		return fmt.Errorf("expected map for struct %s, got %T", structName, value)
 	}
 
 	// Get all fields including parent fields
-	fields := GetStructFields(structName, allStructs)
+	fields := getStructFields(structName, resolver.structs)
 
 	// Check required fields
 	for _, field := range fields {
@@ -153,7 +177,7 @@ func ValidateStruct(
 					return fmt.Errorf("invalid field type definition for field '%s' in struct %s", fieldName, structName)
 				}
 
-				if err := ValidateType(fieldValue, typeDef, allStructs, allEnums, false); err != nil {
+				if err := validateType(fieldValue, typeDef, resolver, false); err != nil {
 					return fmt.Errorf("field '%s' in struct %s validation failed: %w", fieldName, structName, err)
 				}
 			}
@@ -169,6 +193,18 @@ func ValidateType(
 	typeDef map[string]interface{},
 	allStructs StructMap,
 	allEnums EnumMap,
+	isOptional bool,
+) error {
+	return validateType(value, typeDef, newTypeResolver(allStructs, allEnums), isOptional)
+}
+
+// validateType is the indexed implementation. The resolver is built once per
+// contract (or once per standalone ValidateType call) and reused for nested
+// array/map/struct validation, so user-defined lookups stay O(1) per field.
+func validateType(
+	value interface{},
+	typeDef map[string]interface{},
+	resolver *typeResolver,
 	isOptional bool,
 ) error {
 	// Handle optional types
@@ -202,7 +238,7 @@ func ValidateType(
 			return fmt.Errorf("invalid array type definition")
 		}
 		elementValidator := func(v interface{}) error {
-			return ValidateType(v, elementType, allStructs, allEnums, false)
+			return validateType(v, elementType, resolver, false)
 		}
 		return ValidateArray(value, elementValidator)
 	}
@@ -214,7 +250,7 @@ func ValidateType(
 			return fmt.Errorf("invalid map type definition")
 		}
 		valueValidator := func(v interface{}) error {
-			return ValidateType(v, valueType, allStructs, allEnums, false)
+			return validateType(v, valueType, resolver, false)
 		}
 		return ValidateMap(value, valueValidator)
 	}
@@ -222,13 +258,13 @@ func ValidateType(
 	// User-defined types
 	if userDefined, ok := typeDef["userDefined"].(string); ok {
 		// Check if it's a struct
-		structDef := FindStruct(userDefined, allStructs)
+		structDef := resolver.structs.resolve(userDefined)
 		if structDef != nil {
-			return ValidateStruct(value, userDefined, structDef, allStructs, allEnums)
+			return validateStruct(value, userDefined, structDef, resolver)
 		}
 
 		// Check if it's an enum
-		enumDef := FindEnum(userDefined, allEnums)
+		enumDef := resolver.enums.resolve(userDefined)
 		if enumDef != nil {
 			// Extract allowed values from enum definition
 			valuesObj, ok := enumDef["values"]

@@ -23,6 +23,11 @@ type Contract struct {
 	Structs    StructMap
 	Enums      EnumMap
 	Meta       map[string]interface{}
+
+	// resolver owns the base-name indexes for Structs and Enums. It is built
+	// once here and reused by all validation/FindStruct/FindEnum calls so type
+	// resolution stays O(1) instead of scanning the whole map per lookup.
+	resolver *typeResolver
 }
 
 // NewContract creates a new Contract from parsed IDL data
@@ -121,6 +126,9 @@ func NewContract(idlParsed interface{}) *Contract {
 		}
 	}
 
+	// Build the type-resolution indexes once, when the contract is constructed.
+	c.resolver = newTypeResolver(c.Structs, c.Enums)
+
 	return c
 }
 
@@ -167,6 +175,35 @@ func (c *Contract) GetIDLParsed() interface{} {
 	return c.idlParsed
 }
 
+// typeResolver returns the contract-owned resolver. Contracts created through
+// NewContract always have one; the fallback keeps manually constructed values
+// working without mutating shared state.
+func (c *Contract) typeResolver() *typeResolver {
+	if c != nil && c.resolver != nil {
+		return c.resolver
+	}
+	var structs StructMap
+	var enums EnumMap
+	if c != nil {
+		structs, enums = c.Structs, c.Enums
+	}
+	return newTypeResolver(structs, enums)
+}
+
+// FindStruct resolves a struct by possibly-qualified name in O(1) using the
+// index built at contract construction. Exact keys win; an ambiguous base name
+// resolves to nil.
+func (c *Contract) FindStruct(structName string) StructDef {
+	return c.typeResolver().structs.resolve(structName)
+}
+
+// FindEnum resolves an enum by possibly-qualified name in O(1) using the index
+// built at contract construction. Exact keys win; an ambiguous base name
+// resolves to nil.
+func (c *Contract) FindEnum(enumName string) EnumDef {
+	return c.typeResolver().enums.resolve(enumName)
+}
+
 // ValidateRequest validates request parameters against the IDL
 func (c *Contract) ValidateRequest(ifaceName string, funcName string, params []interface{}) error {
 	iface := c.GetInterface(ifaceName)
@@ -209,7 +246,7 @@ func (c *Contract) ValidateRequest(ifaceName string, funcName string, params []i
 			isOptional = opt
 		}
 
-		if err := ValidateType(paramValue, paramType, c.Structs, c.Enums, isOptional); err != nil {
+		if err := validateType(paramValue, paramType, c.typeResolver(), isOptional); err != nil {
 			return fmt.Errorf("function '%s.%s' invalid param '%s': %w",
 				ifaceName, funcName, paramName, err)
 		}
@@ -263,7 +300,7 @@ func (c *Contract) ValidateResponse(ifaceName string, funcName string, result in
 		isOptional = opt
 	}
 
-	if err := ValidateType(result, returnType, c.Structs, c.Enums, isOptional); err != nil {
+	if err := validateType(result, returnType, c.typeResolver(), isOptional); err != nil {
 		return fmt.Errorf("function '%s.%s' invalid response: %w",
 			ifaceName, funcName, err)
 	}

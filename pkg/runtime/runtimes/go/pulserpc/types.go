@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -96,54 +95,32 @@ type StructMap map[string]StructDef
 // EnumMap maps enum names to their definitions
 type EnumMap map[string]EnumDef
 
-// resolveDefinition resolves a possibly-qualified type name deterministically:
-// an exact key wins, then an exact base-name key, then a key whose base name
-// matches. A base name shared by multiple namespaces is ambiguous and returns
-// nil instead of whichever entry Go's map iteration happens to yield first.
-func resolveDefinition[T any](name string, defs map[string]T) T {
-	var zero T
-	if def, ok := defs[name]; ok {
-		return def
-	}
-
-	base := name
-	if idx := strings.LastIndex(name, "."); idx >= 0 {
-		base = name[idx+1:]
-	}
-	if def, ok := defs[base]; ok {
-		return def
-	}
-
-	var found T
-	matches := 0
-	for key, def := range defs {
-		if key == base || strings.HasSuffix(key, "."+base) {
-			found = def
-			matches++
-			if matches > 1 {
-				return zero
-			}
-		}
-	}
-	if matches == 1 {
-		return found
-	}
-	return zero
-}
-
 // FindStruct finds a struct definition by name.
+//
+// This package-level helper is kept for callers that only have a raw StructMap.
+// Repeated or validation-time lookups should use Contract.FindStruct, which
+// resolves in O(1) through an index built once at contract construction.
 func FindStruct(structName string, allStructs StructMap) StructDef {
-	return resolveDefinition(structName, allStructs)
+	return newDefinitionIndex(allStructs).resolve(structName)
 }
 
 // FindEnum finds an enum definition by name.
+//
+// See FindStruct: Contract.FindEnum is the O(1) path for repeated lookups.
 func FindEnum(enumName string, allEnums EnumMap) EnumDef {
-	return resolveDefinition(enumName, allEnums)
+	return newDefinitionIndex(allEnums).resolve(enumName)
 }
 
 // GetStructFields recursively resolves struct extends to return all fields (parent + child)
 func GetStructFields(structName string, allStructs StructMap) []map[string]interface{} {
-	structDef := FindStruct(structName, allStructs)
+	return getStructFields(structName, newDefinitionIndex(allStructs))
+}
+
+// getStructFields is the indexed implementation shared by GetStructFields and
+// contract-time validation. It avoids rebuilding the index for every `extends`
+// hop or every field that is validated.
+func getStructFields(structName string, structs *definitionIndex[StructDef]) []map[string]interface{} {
+	structDef := structs.resolve(structName)
 	if structDef == nil {
 		return []map[string]interface{}{}
 	}
@@ -152,7 +129,7 @@ func GetStructFields(structName string, allStructs StructMap) []map[string]inter
 
 	// Get parent fields first
 	if extends, ok := structDef["extends"].(string); ok && extends != "" {
-		parentFields := GetStructFields(extends, allStructs)
+		parentFields := getStructFields(extends, structs)
 		fields = append(fields, parentFields...)
 	}
 

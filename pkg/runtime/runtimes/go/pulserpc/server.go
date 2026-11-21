@@ -2,10 +2,17 @@ package pulserpc
 
 import (
 	"fmt"
+	"log"
 	"reflect"
 	"sort"
 	"strings"
 )
+
+// internalErrorMessage is the fixed, generic message returned to clients for
+// unexpected internal failures. Raw panic/error values must never be reflected
+// into a JSON-RPC error's data field: they can contain secrets or stack details
+// and are serialized straight to the client by the generated HTTP adapter.
+const internalErrorMessage = "Internal error"
 
 // Server represents a JSON-RPC 2.0 server with handler registration and optional validation
 type Server struct {
@@ -46,8 +53,11 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 
 	defer func() {
 		if r := recover(); r != nil {
-			response = s.respondError(isNotification, reqID, -32603, "Internal error",
-				fmt.Sprintf("internal error while processing request: %v", r))
+			// Log only the panic type for server-side diagnostics. Never format
+			// the panic value itself: it may carry secrets or internal details.
+			log.Printf("pulserpc: recovered panic of type %T while processing a request", r)
+			response = s.respondError(isNotification, reqID, -32603,
+				internalErrorMessage, internalErrorMessage)
 		}
 	}()
 
