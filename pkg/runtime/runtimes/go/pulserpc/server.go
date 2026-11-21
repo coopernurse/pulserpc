@@ -3,15 +3,16 @@ package pulserpc
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 )
 
 // Server represents a JSON-RPC 2.0 server with handler registration and optional validation
 type Server struct {
-	contract           *Contract
-	handlers           map[string]interface{}
-	validateRequests   bool
-	validateResponses  bool
+	contract          *Contract
+	handlers          map[string]interface{}
+	validateRequests  bool
+	validateResponses bool
 }
 
 // NewServer creates a new Server instance
@@ -30,8 +31,26 @@ func (s *Server) AddHandler(ifaceName string, handler interface{}) {
 }
 
 // Call processes a single JSON-RPC request and returns a JSON-RPC response
-// Returns nil for notifications (requests without 'id')
-func (s *Server) Call(request map[string]interface{}) map[string]interface{} {
+// Returns nil for notifications (requests without 'id').
+//
+// Notification status is determined once, up front, and honored by every
+// return path: JSON-RPC notifications must never receive a response, not even
+// an error one. Reflection panics caused by malformed request data are also
+// contained here so an HTTP handler survives them.
+func (s *Server) Call(request map[string]interface{}) (response map[string]interface{}) {
+	var reqID interface{}
+	isNotification := request != nil && request["id"] == nil
+	if request != nil {
+		reqID = request["id"]
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			response = s.respondError(isNotification, reqID, -32603, "Internal error",
+				fmt.Sprintf("internal error while processing request: %v", r))
+		}
+	}()
+
 	// Validate request format
 	if request == nil {
 		return s.errorResponse(nil, -32600, "Invalid Request", "Request must be an object")
@@ -39,34 +58,30 @@ func (s *Server) Call(request map[string]interface{}) map[string]interface{} {
 
 	// Check JSON-RPC version
 	if request["jsonrpc"] != "2.0" {
-		return s.errorResponse(request["id"], -32600, "Invalid Request", "jsonrpc version must be '2.0'")
+		return s.respondError(isNotification, reqID, -32600, "Invalid Request", "jsonrpc version must be '2.0'")
 	}
 
 	// Check for method
 	method, ok := request["method"].(string)
 	if !ok || method == "" {
-		return s.errorResponse(request["id"], -32600, "Invalid Request", "Method must be a string")
+		return s.respondError(isNotification, reqID, -32600, "Invalid Request", "Method must be a string")
 	}
 
 	// Handle pulserpc-idl request
 	if method == "pulserpc-idl" {
-		return s.successResponse(request["id"], s.contract.idlParsed)
+		return s.respondSuccess(isNotification, reqID, s.contract.idlParsed)
 	}
-
-	// Check for notification (no 'id' means no response expected)
-	reqID := request["id"]
-	isNotification := reqID == nil
 
 	// Parse method name (e.g., "UserService.getUser")
 	ifaceName, funcName, err := parseMethodName(method)
 	if err != nil {
-		return s.errorResponse(reqID, -32601, "Method not found", err.Error())
+		return s.respondError(isNotification, reqID, -32601, "Method not found", err.Error())
 	}
 
 	// Look up handler
 	handler, exists := s.handlers[ifaceName]
 	if !exists {
-		return s.errorResponse(reqID, -32601, "Method not found", fmt.Sprintf("Unknown interface: %s", ifaceName))
+		return s.respondError(isNotification, reqID, -32601, "Method not found", fmt.Sprintf("Unknown interface: %s", ifaceName))
 	}
 
 	// Get function from handler
@@ -76,59 +91,80 @@ func (s *Server) Call(request map[string]interface{}) map[string]interface{} {
 		// Try finding method by name (case-insensitive for Go conventions)
 		funcValue = findMethodByName(handlerValue, funcName)
 		if !funcValue.IsValid() {
-			return s.errorResponse(reqID, -32601, "Method not found", fmt.Sprintf("Unknown method: %s", method))
+			return s.respondError(isNotification, reqID, -32601, "Method not found", fmt.Sprintf("Unknown method: %s", method))
 		}
 	}
 
-	// Get params
-	params := request["params"]
+	// Get function definition for param names and type conversion
+	fnDef := s.getFunctionDef(ifaceName, funcName)
 
-	// Convert params to []interface{} if it's a list
+	// Params may be positional (array) or named (object). Both forms are
+	// normalized to a positional list so validation and invocation share one
+	// code path and IDL validation is never silently skipped.
 	var positionalParams []interface{}
-	if paramsList, ok := params.([]interface{}); ok {
-		positionalParams = paramsList
-	} else if params == nil {
+	switch p := request["params"].(type) {
+	case []interface{}:
+		positionalParams = p
+	case map[string]interface{}:
+		positionalParams, err = s.namedParamsToPositional(p, fnDef)
+		if err != nil {
+			return s.respondError(isNotification, reqID, -32602, "Invalid params", err.Error())
+		}
+	case nil:
 		positionalParams = []interface{}{}
+	default:
+		return s.respondError(isNotification, reqID, -32602, "Invalid params",
+			"params must be an array or an object")
 	}
 
 	// Validate request using positional params
-	if s.validateRequests && len(positionalParams) > 0 {
+	if s.validateRequests && s.contract != nil {
 		if err := s.contract.ValidateRequest(ifaceName, funcName, positionalParams); err != nil {
-			return s.errorResponse(reqID, -32602, "Invalid params", err.Error())
+			return s.respondError(isNotification, reqID, -32602, "Invalid params", err.Error())
 		}
 	}
 
 	// Convert positional params to named params using IDL signature
 	namedParams, err := s.positionalToNamedParams(ifaceName, funcName, positionalParams)
 	if err != nil {
-		return s.errorResponse(reqID, -32602, "Invalid params", err.Error())
+		return s.respondError(isNotification, reqID, -32602, "Invalid params", err.Error())
 	}
-
-	// Get function definition for type conversion
-	fnDef := s.getFunctionDef(ifaceName, funcName)
 
 	// Invoke handler method
 	result, err := s.invokeHandler(handlerValue, funcName, namedParams, fnDef)
 	if err != nil {
 		// Check if it's an RPCError
 		if rpcErr, ok := err.(*RPCError); ok {
-			return s.errorResponse(reqID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
+			return s.respondError(isNotification, reqID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
 		}
-		return s.errorResponse(reqID, -32603, "Internal error", err.Error())
+		return s.respondError(isNotification, reqID, -32603, "Internal error", err.Error())
 	}
 
-	// Validate response if validation is enabled
-	if s.validateResponses && result != nil {
+	// Validate response if validation is enabled. Validation must also run for
+	// nil results: a null result is invalid for a required return type.
+	if s.validateResponses && s.contract != nil {
 		if err := s.contract.ValidateResponse(ifaceName, funcName, result); err != nil {
-			return s.errorResponse(reqID, -32603, "Internal error", fmt.Sprintf("Response validation failed: %s", err.Error()))
+			return s.respondError(isNotification, reqID, -32603, "Internal error",
+				fmt.Sprintf("Response validation failed: %s", err.Error()))
 		}
 	}
 
-	// Don't respond to notifications
+	return s.respondSuccess(isNotification, reqID, result)
+}
+
+// respondError suppresses error replies for notifications (no id requested).
+func (s *Server) respondError(isNotification bool, reqID interface{}, code int, message string, data interface{}) map[string]interface{} {
 	if isNotification {
 		return nil
 	}
+	return s.errorResponse(reqID, code, message, data)
+}
 
+// respondSuccess suppresses success replies for notifications.
+func (s *Server) respondSuccess(isNotification bool, reqID interface{}, result interface{}) map[string]interface{} {
+	if isNotification {
+		return nil
+	}
 	return s.successResponse(reqID, result)
 }
 
@@ -228,6 +264,51 @@ func (s *Server) getFunctionDef(ifaceName, funcName string) FunctionDef {
 	return iface.GetFunction(funcName)
 }
 
+// namedParamsToPositional converts object-form (named) params to a positional
+// list using the IDL parameter order. Unknown names are rejected so no value is
+// silently dropped; omitted params become nil and are caught by validation
+// when they are required.
+func (s *Server) namedParamsToPositional(named map[string]interface{}, fnDef FunctionDef) ([]interface{}, error) {
+	if fnDef == nil {
+		// Without a contract there is no declared order; sort keys so the
+		// result is at least deterministic.
+		keys := make([]string, 0, len(named))
+		for key := range named {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		positional := make([]interface{}, 0, len(keys))
+		for _, key := range keys {
+			positional = append(positional, named[key])
+		}
+		return positional, nil
+	}
+
+	paramDefs, _ := fnDef["parameters"].([]interface{})
+	positional := make([]interface{}, len(paramDefs))
+	seen := make(map[string]bool, len(named))
+	for i, raw := range paramDefs {
+		paramDef, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := paramDef["name"].(string)
+		if name == "" {
+			continue
+		}
+		if value, ok := named[name]; ok {
+			positional[i] = value
+			seen[name] = true
+		}
+	}
+	for name := range named {
+		if !seen[name] {
+			return nil, fmt.Errorf("unknown parameter '%s'", name)
+		}
+	}
+	return positional, nil
+}
+
 // positionalToNamedParams converts positional params to named params using IDL signature
 func (s *Server) positionalToNamedParams(ifaceName, funcName string, positionalParams []interface{}) (map[string]interface{}, error) {
 	fn := s.getFunctionDef(ifaceName, funcName)
@@ -323,7 +404,7 @@ func (s *Server) invokeHandler(handlerValue reflect.Value, funcName string, para
 				paramName, _ := pd["name"].(string)
 				if paramName != "" {
 					if v, ok := params[paramName]; ok {
-						argValue = s.convertValueToType(reflect.ValueOf(v), paramType)
+						argValue = valueToType(v, paramType, s)
 						found = true
 					}
 				}
@@ -334,7 +415,7 @@ func (s *Server) invokeHandler(handlerValue reflect.Value, funcName string, para
 			// Try all keys in order (for numbered params)
 			for _, v := range params {
 				if v != nil {
-					argValue = s.convertValueToType(reflect.ValueOf(v), paramType)
+					argValue = valueToType(v, paramType, s)
 					found = true
 					break
 				}
@@ -369,9 +450,23 @@ func (s *Server) invokeHandler(handlerValue reflect.Value, funcName string, para
 	return nil, nil
 }
 
+// valueToType converts a request value to the handler parameter type. A nil
+// value is valid input for optional parameters and must become the type's zero
+// value instead of reaching reflect.Value.Type() on a zero Value (which panics).
+func valueToType(value interface{}, targetType reflect.Type, s *Server) reflect.Value {
+	if value == nil {
+		return reflect.Zero(targetType)
+	}
+	return s.convertValueToType(reflect.ValueOf(value), targetType)
+}
+
 // convertValueToType converts a reflect.Value to the target type
 // Handles the common case of []interface{} being used for arrays and maps being used for structs
 func (s *Server) convertValueToType(value reflect.Value, targetType reflect.Type) reflect.Value {
+	if !value.IsValid() {
+		return reflect.Zero(targetType)
+	}
+
 	// If already assignable, return as-is
 	if value.Type().AssignableTo(targetType) {
 		return value

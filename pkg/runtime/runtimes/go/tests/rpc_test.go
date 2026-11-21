@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"pulserpc-go-runtime/pulserpc"
+	"github.com/coopernurse/pulserpc/pkg/runtime/runtimes/go/pulserpc"
 )
 
 func TestRPCError(t *testing.T) {

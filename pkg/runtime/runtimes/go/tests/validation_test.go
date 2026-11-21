@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"pulserpc-go-runtime/pulserpc"
+	"github.com/coopernurse/pulserpc/pkg/runtime/runtimes/go/pulserpc"
 )
 
 func TestValidateString(t *testing.T) {
@@ -28,6 +28,21 @@ func TestValidateInt(t *testing.T) {
 
 	if err := pulserpc.ValidateInt("123"); err == nil {
 		t.Error("Expected error for non-int value")
+	}
+}
+
+// go-06: fractional floats (including near-integers) are rejected
+// symmetrically for positive and negative values.
+func TestValidateIntRejectsFractionalFloats(t *testing.T) {
+	for _, value := range []float64{1.5, -1.5, 1.0000000001, -1.0000000001, 0.0000000001, -0.0000000001} {
+		if err := pulserpc.ValidateInt(value); err == nil {
+			t.Errorf("ValidateInt(%v) should reject a fractional part", value)
+		}
+	}
+	for _, value := range []float64{123.0, -123.0, 0.0} {
+		if err := pulserpc.ValidateInt(value); err != nil {
+			t.Errorf("ValidateInt(%v) should accept a whole number: %v", value, err)
+		}
 	}
 }
 

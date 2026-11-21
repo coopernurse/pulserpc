@@ -131,24 +131,25 @@ func (c *Client) Call(method string, params interface{}) (interface{}, error) {
 		}
 	}
 
-	// Generate request ID
+	// Generate a unique request ID and hand it to the transport so the
+	// serialized request and the expected response envelope agree.
 	c.requestID++
 	reqID := c.requestID
 
-	// Build request
-	req := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"id":      reqID,
-	}
-	if params != nil {
-		req["params"] = params
-	}
-
-	// Send request via transport
-	response, err := c.transport.Request(method, params)
+	response, err := c.sendRequest(reqID, method, params)
 	if err != nil {
 		return nil, fmt.Errorf("transport request failed: %w", err)
+	}
+
+	// Always enforce the response-envelope contract here. Transports that
+	// cannot carry a caller-supplied id are checked without the id comparison
+	// (their request id is outside the client's control).
+	var checkID interface{} = reqID
+	if _, ok := c.transport.(RequestWithID); !ok {
+		checkID = nil
+	}
+	if err := validateEnvelope(response, checkID); err != nil {
+		return nil, err
 	}
 
 	// Check for error response
@@ -168,8 +169,9 @@ func (c *Client) Call(method string, params interface{}) (interface{}, error) {
 		result = nil
 	}
 
-	// Validate response if enabled
-	if c.validateResponse && c.contract != nil && result != nil {
+	// Validate response if enabled. A nil result is not an excuse to skip
+	// validation: required return types must reject null.
+	if c.validateResponse && c.contract != nil {
 		ifaceName, funcName, err := parseMethodName(method)
 		if err == nil {
 			if err := c.contract.ValidateResponse(ifaceName, funcName, result); err != nil {
@@ -181,10 +183,21 @@ func (c *Client) Call(method string, params interface{}) (interface{}, error) {
 	return result, nil
 }
 
-// Notify sends a notification (no response expected)
+// sendRequest routes a request through a transport that can carry the caller's
+// id (and omit it for notifications), falling back to the legacy Request
+// method for custom transports.
+func (c *Client) sendRequest(id interface{}, method string, params interface{}) (map[string]interface{}, error) {
+	if transport, ok := c.transport.(RequestWithID); ok {
+		return transport.RequestWithID(method, params, id)
+	}
+	return c.transport.Request(method, params)
+}
+
+// Notify sends a JSON-RPC notification: a request with no id and no response.
 func (c *Client) Notify(method string, params interface{}) {
-	// Ignore errors for notifications
-	c.Call(method, params)
+	// Notifications have no id and no caller-visible result; transport errors
+	// are intentionally ignored.
+	_, _ = c.sendRequest(nil, method, params)
 }
 
 // GetInterface returns an interface proxy by name

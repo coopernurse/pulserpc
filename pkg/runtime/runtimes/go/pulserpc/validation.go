@@ -14,16 +14,22 @@ func ValidateString(value interface{}) error {
 	return nil
 }
 
-// ValidateInt validates that value is an int
+// ValidateInt validates that value is an int. JSON numbers decode as float64;
+// only whole numbers are accepted. The check is symmetric for positive and
+// negative values (math.Trunc rounds toward zero) so near-integers with a
+// fractional part are rejected consistently.
 func ValidateInt(value interface{}) error {
 	if _, ok := value.(int); ok {
 		return nil
 	}
 	if v, ok := value.(float64); ok {
-		if v == float64(int64(v)) || math.Abs(v-math.Floor(v)) < 1e-9 {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("expected int, got non-finite float %v", v)
+		}
+		if v == math.Trunc(v) {
 			return nil
 		}
-		return fmt.Errorf("expected int, got float with fractional part")
+		return fmt.Errorf("expected int, got float with fractional part: %v", v)
 	}
 	return fmt.Errorf("expected int, got %T", value)
 }
