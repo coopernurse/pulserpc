@@ -12,6 +12,14 @@ import { RPCError } from "./rpc.js";
 
 export type { VerificationResult, ContractDelta };
 
+/**
+ * Keys that must never be copied out of untrusted IDL metadata. `key` comes
+ * from a server's `pulserpc-idl` response, so assigning it with `obj[key] = v`
+ * would invoke Object.prototype's inherited `__proto__` setter and poison the
+ * prototype of the metadata object.
+ */
+const UNSAFE_META_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 export interface ContractAuditor {
   audit(result: VerificationResult): void;
   name(): string;
@@ -174,7 +182,11 @@ export class Contract {
           this.addMetaItem(item);
         }
       } else if (rawMeta && typeof rawMeta === 'object') {
-        Object.assign(this.meta, rawMeta);
+        // Do not use Object.assign here: it copies remote-controlled keys
+        // straight onto `this.meta`, including an inherited `__proto__` setter.
+        for (const [key, value] of Object.entries(rawMeta)) {
+          this.setMetaItem(key, value);
+        }
       }
     } else if (Array.isArray(idlParsed)) {
       // Barrister format - list of items with type field
@@ -199,9 +211,21 @@ export class Contract {
     }
     for (const [key, value] of Object.entries(item)) {
       if (key !== 'type') {
-        this.meta[key] = value;
+        this.setMetaItem(key, value);
       }
     }
+  }
+
+  /**
+   * Store one metadata entry, rejecting prototype-polluting keys. Both the
+   * Barrister item form and the dict form funnel through here so neither can
+   * assign `__proto__`, `constructor` or `prototype` onto `this.meta`.
+   */
+  private setMetaItem(key: string, value: any): void {
+    if (UNSAFE_META_KEYS.has(key)) {
+      return;
+    }
+    this.meta[key] = value;
   }
 
   /**
@@ -240,6 +264,30 @@ export class Contract {
   }
 
   /**
+   * Single owner of the positional parameter-count rule (M9): trailing
+   * optional parameters may be omitted, so any length between `requiredCount`
+   * and the full signature length is accepted.
+   *
+   * Exposed so Server.positionalToNamedParams reuses the same rule (preserving
+   * fail-fast behaviour when request validation is disabled) instead of
+   * duplicating the range check with a divergent error message.
+   */
+  checkParamCount(
+    ifaceName: string,
+    funcName: string,
+    paramDefs: FunctionDef["parameters"],
+    givenCount: number
+  ): void {
+    const requiredCount = paramDefs.filter((p) => !p.optional).length;
+    if (givenCount < requiredCount || givenCount > paramDefs.length) {
+      throw new RPCError(
+        -32602,
+        `Function '${ifaceName}.${funcName}' expects ${requiredCount}-${paramDefs.length} param(s). ${givenCount} given.`
+      );
+    }
+  }
+
+  /**
    * Validate request parameters against IDL
    */
   validateRequest(ifaceName: string, funcName: string, params: any[]): void {
@@ -257,13 +305,7 @@ export class Contract {
 
     // Trailing optional parameters may be omitted: accept any length between
     // the number of required parameters and the full signature (M9).
-    const requiredCount = paramDefs.filter((p) => !p.optional).length;
-    if (params.length < requiredCount || params.length > paramDefs.length) {
-      throw new RPCError(
-        -32602,
-        `Function '${ifaceName}.${funcName}' expects ${requiredCount}-${paramDefs.length} param(s). ${params.length} given.`
-      );
-    }
+    this.checkParamCount(ifaceName, funcName, paramDefs, params.length);
 
     // Validate each parameter and collect errors
     const allErrors: ValidationError[] = [];

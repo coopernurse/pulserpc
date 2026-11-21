@@ -312,12 +312,7 @@ function diffStructFields(
         memberName: name,
         changeType: ChangeType.Removed,
         direction: Direction.ClientHasMore,
-        severity: classifySeverity(
-          EntityType.Field,
-          ChangeType.Removed,
-          Direction.ClientHasMore,
-          isFieldRequired(clientFields[name]) ? "required" : "optional"
-        ),
+        severity: Severity.Info,
         description: `Field '${name}' in struct '${structName}' exists in client but not in server`,
       });
     }

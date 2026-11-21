@@ -260,19 +260,10 @@ export class Server {
     // Get parameter names from IDL
     const paramDefs = func.parameters || [];
 
-    // Check parameter count
-    if (positionalParams.length !== paramDefs.length) {
-      // Allow fewer params if trailing ones are optional
-      const requiredCount = paramDefs.filter((p: { optional?: boolean }) => !p.optional).length;
-      if (
-        positionalParams.length < requiredCount ||
-        positionalParams.length > paramDefs.length
-      ) {
-        throw new Error(
-          `Parameter count mismatch: expected ${paramDefs.length}, got ${positionalParams.length}`
-        );
-      }
-    }
+    // Contract is the single owner of the parameter-count rule. Reusing it
+    // here keeps the mapping safe even when request validation is disabled,
+    // without maintaining a second (previously divergent) range check.
+    this.contract.checkParamCount(ifaceName, funcName, paramDefs, positionalParams.length);
 
     // Map positional params to names
     const namedParams: Record<string, any> = {};

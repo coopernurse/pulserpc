@@ -141,6 +141,55 @@ function testMetaParsing() {
   console.log("✓ testMetaParsing");
 }
 
+function testMetaPrototypePollution() {
+  // A server's pulserpc-idl response is remote-controlled: a `__proto__` key
+  // must not change the prototype of the metadata object (security finding).
+  const listItem = JSON.parse(
+    '{"type":"meta","name":"ok","__proto__":{"polluted":true},' +
+    '"constructor":{"polluted":true},"prototype":{"polluted":true}}'
+  );
+  const fromList = new Contract([listItem]);
+  assert.strictEqual(Object.getPrototypeOf(fromList.meta), Object.prototype);
+  assert.strictEqual((fromList.meta as any).polluted, undefined);
+  assert.strictEqual(fromList.meta.name, "ok", "benign keys must still be copied");
+  for (const key of ["__proto__", "constructor", "prototype"]) {
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(fromList.meta, key), false);
+  }
+
+  const dictMeta = JSON.parse('{"name":"ok","__proto__":{"polluted":true}}');
+  const fromDict = new Contract({ meta: dictMeta, interfaces: [] });
+  assert.strictEqual(Object.getPrototypeOf(fromDict.meta), Object.prototype);
+  assert.strictEqual((fromDict.meta as any).polluted, undefined);
+  assert.strictEqual(fromDict.meta.name, "ok");
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(fromDict.meta, "__proto__"), false);
+  assert.strictEqual(({} as any).polluted, undefined, "Object.prototype must stay clean");
+  console.log("✓ testMetaPrototypePollution");
+}
+
+function testCheckParamCountSingleOwner() {
+  const contract = new Contract(sampleIDL());
+  const paramDefs = contract.getInterface("Svc")!.getFunction("opt")!.parameters;
+  // The shared rule and validateRequest accept the same range and message.
+  assert.doesNotThrow(() => contract.checkParamCount("Svc", "opt", paramDefs, 1));
+  assert.doesNotThrow(() => contract.checkParamCount("Svc", "opt", paramDefs, 2));
+  assert.throws(
+    () => contract.checkParamCount("Svc", "opt", paramDefs, 0),
+    (e: any) => e instanceof RPCError && e.code === -32602 &&
+      e.message === "Function 'Svc.opt' expects 1-2 param(s). 0 given."
+  );
+  assert.throws(
+    () => contract.checkParamCount("Svc", "opt", paramDefs, 3),
+    (e: any) => e instanceof RPCError && e.code === -32602 &&
+      e.message === "Function 'Svc.opt' expects 1-2 param(s). 3 given."
+  );
+  assert.throws(
+    () => contract.validateRequest("Svc", "opt", []),
+    (e: any) => e instanceof RPCError &&
+      e.message === "Function 'Svc.opt' expects 1-2 param(s). 0 given."
+  );
+  console.log("✓ testCheckParamCountSingleOwner");
+}
+
 function delta(severity: Severity): ContractDelta {
   return {
     entityType: EntityType.Field,
@@ -207,5 +256,7 @@ run("testValidateRequestTrailingOptional", testValidateRequestTrailingOptional);
 run("testValidateResponseNullability", testValidateResponseNullability);
 run("testValidationErrorDataShape", testValidationErrorDataShape);
 run("testMetaParsing", testMetaParsing);
+run("testMetaPrototypePollution", testMetaPrototypePollution);
+run("testCheckParamCountSingleOwner", testCheckParamCountSingleOwner);
 run("testAuditors", testAuditors);
 console.log("\nAll contract tests passed!");

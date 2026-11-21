@@ -149,12 +149,39 @@ async function testHandlerErrorMapping() {
   console.log("✓ testHandlerErrorMapping");
 }
 
+async function testParamCountRuleWithValidationDisabled() {
+  // Even with request validation off, positional params are mapped against
+  // the IDL signature via Contract.checkParamCount (single owner of the rule),
+  // so a bad count still fails fast instead of being silently mis-mapped.
+  const server = new Server({
+    contract: new Contract(idl()),
+    validateRequests: false,
+    validateResponses: false,
+  });
+  server.addHandler("Svc", {
+    opt(_ctx: any, a: number, b?: string) { return b === undefined ? a : Number(b); },
+  });
+
+  const tooFew = await server.call(request("Svc.opt", [], 1));
+  assert.strictEqual(tooFew!.error?.code, -32602);
+  assert.ok((tooFew!.error as any).data.includes("expects 1-2 param(s)"));
+
+  const tooMany = await server.call(request("Svc.opt", [5, "9", 10], 2));
+  assert.strictEqual(tooMany!.error?.code, -32602);
+  assert.ok((tooMany!.error as any).data.includes("expects 1-2 param(s)"));
+
+  const ok = await server.call(request("Svc.opt", [5], 3));
+  assert.strictEqual(ok!.result, 5, "valid trailing-optional form must still work");
+  console.log("✓ testParamCountRuleWithValidationDisabled");
+}
+
 (async () => {
   await testResponseValidation();
   await testNotificationsProduceNoResponse();
   await testRequestValidationAndErrorData();
   await testTrailingOptionalParams();
   await testHandlerErrorMapping();
+  await testParamCountRuleWithValidationDisabled();
   console.log("\nAll server tests passed!");
 })().catch((e) => {
   console.error(e);
