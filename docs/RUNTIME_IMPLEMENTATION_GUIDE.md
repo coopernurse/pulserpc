@@ -815,7 +815,7 @@ Servers and clients must implement the core JSON-RPC 2.0 envelope:
 - Error codes: Standard JSON-RPC error codes (-32700, -32600, -32601, -32602, -32603)
 
 Batch requests (an array of requests) are **optional** for generated adapters. The
-generated Go and C# servers support them; generated Java, TypeScript and Python
+generated Go, C# and Java servers support them; generated TypeScript and Python
 servers do not. Batch support is therefore not part of the generated-server
 compliance checklist. Parse errors (-32700) are emitted by the generated Go,
 Python, TypeScript and C# servers; the generated Java server emits -32700 for a

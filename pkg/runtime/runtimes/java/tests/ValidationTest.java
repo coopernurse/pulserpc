@@ -42,6 +42,28 @@ public class ValidationTest {
     }
 
     @Test
+    public void testValidateFloat() {
+        // java-08: integer values of every Number type are valid floats.
+        Validation.validateFloat(5);
+        Validation.validateFloat(5L);
+        Validation.validateFloat(5.0f);
+        Validation.validateFloat(5.0d);
+
+        try {
+            Validation.validateFloat("5");
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage().contains("Expected float"));
+        }
+        try {
+            Validation.validateFloat(true);
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage().contains("Expected float"));
+        }
+    }
+
+    @Test
     public void testValidateBool() {
         // Valid boolean
         Validation.validateBool(true);
@@ -115,6 +137,139 @@ public class ValidationTest {
             Assert.fail("Expected IllegalArgumentException");
         } catch (IllegalArgumentException e) {
             Assert.assertTrue(e.getMessage().contains("Expected string"));
+        }
+    }
+
+    private Map<String, Map<String, Object>> sampleStructs() {
+        Map<String, Map<String, Object>> structs = new HashMap<>();
+        structs.put("Address", Map.of("fields", Arrays.asList(
+            Map.of("name", "street", "type", Map.of("builtIn", "string"))
+        )));
+        Map<String, Object> user = new HashMap<>();
+        user.put("fields", Arrays.asList(
+            Map.of("name", "email", "type", Map.of("builtIn", "string")),
+            Map.of("name", "age", "type", Map.of("builtIn", "int"), "optional", true),
+            Map.of("name", "address", "type", Map.of("userDefined", "Address")),
+            Map.of("name", "status", "type", Map.of("userDefined", "Status")),
+            Map.of("name", "tags", "type", Map.of("array", Map.of("builtIn", "string"))),
+            Map.of("name", "scores", "type", Map.of("mapValue", Map.of("builtIn", "int")))
+        ));
+        structs.put("User", user);
+        return structs;
+    }
+
+    private Map<String, Map<String, Object>> sampleEnums() {
+        Map<String, Map<String, Object>> enums = new HashMap<>();
+        enums.put("Status", Map.of("values", Arrays.asList(
+            Map.of("name", "ACTIVE"), Map.of("name", "INACTIVE")
+        )));
+        return enums;
+    }
+
+    private Map<String, Object> validUser() {
+        Map<String, Object> user = new HashMap<>();
+        user.put("email", "a@example.com");
+        user.put("address", Map.of("street", "Main St"));
+        user.put("status", "ACTIVE");
+        user.put("tags", Arrays.asList("x", "y"));
+        user.put("scores", Map.of("math", 10));
+        return user;
+    }
+
+    @Test
+    public void testValidateStruct_RequiredOptionalAndFieldPaths() {
+        Map<String, Map<String, Object>> structs = sampleStructs();
+        Map<String, Map<String, Object>> enums = sampleEnums();
+
+        Validation.validateStruct(validUser(), "User", structs.get("User"), structs, enums);
+
+        // Missing required field
+        Map<String, Object> missing = validUser();
+        missing.remove("email");
+        try {
+            Validation.validateStruct(missing, "User", structs.get("User"), structs, enums);
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage().contains("email"));
+        }
+
+        // Null required field
+        Map<String, Object> nullRequired = validUser();
+        nullRequired.put("email", null);
+        try {
+            Validation.validateStruct(nullRequired, "User", structs.get("User"), structs, enums);
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage().contains("email"));
+        }
+
+        // Missing optional field is fine
+        Map<String, Object> noAge = validUser();
+        noAge.remove("age");
+        Validation.validateStruct(noAge, "User", structs.get("User"), structs, enums);
+
+        // Nested struct violation reports the field path
+        Map<String, Object> badAddress = validUser();
+        badAddress.put("address", Map.of("street", 123));
+        try {
+            Validation.validateStruct(badAddress, "User", structs.get("User"), structs, enums);
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            // Message chains the outer and inner field names (address.street).
+            Assert.assertTrue(e.getMessage().contains("address"));
+            Assert.assertTrue(e.getMessage().contains("street"));
+        }
+
+        // Enum field violation reports the field path
+        Map<String, Object> badEnum = validUser();
+        badEnum.put("status", "UNKNOWN");
+        try {
+            Validation.validateStruct(badEnum, "User", structs.get("User"), structs, enums);
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage().contains("status"));
+        }
+
+        // Array element violation reports the field path
+        Map<String, Object> badArray = validUser();
+        badArray.put("tags", Arrays.asList("ok", 7));
+        try {
+            Validation.validateStruct(badArray, "User", structs.get("User"), structs, enums);
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage().contains("tags"));
+        }
+
+        // Map value violation reports the field path
+        Map<String, Object> badMap = validUser();
+        badMap.put("scores", Map.of("math", "oops"));
+        try {
+            Validation.validateStruct(badMap, "User", structs.get("User"), structs, enums);
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage().contains("scores"));
+        }
+    }
+
+    @Test
+    public void testValidateType_QualifiedUserDefinedAndOptional() {
+        Map<String, Map<String, Object>> structs = new HashMap<>();
+        structs.put("inc.Address", Map.of("fields", Arrays.asList(
+            Map.of("name", "street", "type", Map.of("builtIn", "string"))
+        )));
+        Map<String, Map<String, Object>> enums = new HashMap<>();
+
+        // java-07: an unqualified userDefined resolves against a qualified key.
+        Validation.validateType(Map.of("street", "Main"), Map.of("userDefined", "Address"), structs, enums, false);
+        // ... and a qualified userDefined resolves against an unqualified key.
+        Validation.validateType(Map.of("street", "Main"), Map.of("userDefined", "other.Address"), structs, enums, false);
+
+        Validation.validateType(null, Map.of("builtIn", "string"), structs, enums, true);
+        try {
+            Validation.validateType(null, Map.of("builtIn", "string"), structs, enums, false);
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage().contains("null"));
         }
     }
 }

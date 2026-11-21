@@ -8,6 +8,7 @@ import java.util.Map;
 public class Response {
     private String jsonrpc;
     private Object result;
+    private boolean resultPresent;
     private Map<String, Object> error;
     private Object id;
 
@@ -29,6 +30,13 @@ public class Response {
 
     public void setResult(Object result) {
         this.result = result;
+        this.resultPresent = true;
+    }
+
+    public boolean hasResult() {
+        // Gson sets fields directly and bypasses setResult(), so also treat a
+        // non-null result as present. In-process responses always set the flag.
+        return resultPresent || result != null;
     }
 
     public Map<String, Object> getError() {
@@ -49,6 +57,41 @@ public class Response {
 
     public boolean hasError() {
         return error != null;
+    }
+
+    /**
+     * Validate the JSON-RPC 2.0 response envelope (java-14): the version must be
+     * "2.0", the id must match the request, and exactly one of result/error must
+     * be present. Throws RPCError(-32600) on a malformed envelope.
+     */
+    public void validate(Object expectedId) {
+        if (!"2.0".equals(jsonrpc)) {
+            throw new RPCError(-32600, "Invalid response: jsonrpc must be '2.0'");
+        }
+        if (expectedId != null && !expectedId.equals(id)) {
+            throw new RPCError(-32600, "Invalid response: id mismatch (expected " + expectedId + ", got " + id + ")");
+        }
+        if (hasResult() == hasError()) {
+            throw new RPCError(-32600, "Invalid response: exactly one of result or error is required");
+        }
+    }
+
+    /**
+     * Map-based variant used by generated clients that parse the raw envelope.
+     */
+    public static void validateMap(Map<String, Object> envelope, Object expectedId) {
+        if (envelope == null || !"2.0".equals(envelope.get("jsonrpc"))) {
+            throw new RPCError(-32600, "Invalid response: jsonrpc must be '2.0'");
+        }
+        Object responseId = envelope.get("id");
+        if (expectedId != null && responseId != null && !expectedId.equals(responseId)) {
+            throw new RPCError(-32600, "Invalid response: id mismatch (expected " + expectedId + ", got " + responseId + ")");
+        }
+        boolean hasResult = envelope.containsKey("result");
+        boolean hasError = envelope.containsKey("error");
+        if (hasResult == hasError) {
+            throw new RPCError(-32600, "Invalid response: exactly one of result or error is required");
+        }
     }
 }
 

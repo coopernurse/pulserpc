@@ -92,6 +92,9 @@ public class Client {
             throw new RuntimeException("Transport request failed: " + e.getMessage(), e);
         }
 
+        // java-14: validate the response envelope before reading result/error.
+        response.validate(reqId);
+
         if (response.hasError()) {
             Map<String, Object> errObj = response.getError();
             int code = errObj.containsKey("code") ? ((Number) errObj.get("code")).intValue() : -32603;
@@ -102,7 +105,9 @@ public class Client {
 
         Object result = response.getResult();
 
-        if (validateResponse && contract != null && result != null) {
+        // java-10: do not skip validation for null results - validateResponse
+        // decides based on the declared return type's optionality.
+        if (validateResponse && contract != null) {
             String[] parts = parseMethodName(method);
             if (parts != null) {
                 try {
