@@ -6,7 +6,7 @@
  * - InProcTransport: In-process transport for testing
  */
 
-import { RPCError } from "./rpc.js";
+import { RPCError, RPCErrorCode } from "./rpc.js";
 
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -77,18 +77,31 @@ export class HttpTransport extends Transport {
     });
 
     if (!response.ok) {
-      throw new RPCError(-32000, `HTTP ${response.status}: ${response.statusText}`, { status: response.status });
+      throw new RPCError(
+        RPCErrorCode.InternalError,
+        `HTTP ${response.status}: ${response.statusText}`,
+        { status: response.status }
+      );
     }
 
     const text = await response.text();
     if (!text) {
-      throw new RPCError(-32000, "Empty response body");
+      // A notification (no `id`) is answered with 204/No Content. There is no
+      // response document to parse, so return a neutral envelope rather than
+      // reporting a transport failure (R11 / M4).
+      if (
+        response.status === 204 &&
+        !Object.prototype.hasOwnProperty.call(req, "id")
+      ) {
+        return { jsonrpc: "2.0", id: req.id ?? null };
+      }
+      throw new RPCError(RPCErrorCode.InternalError, "Empty response body");
     }
 
     try {
       return JSON.parse(text) as JsonRpcResponse;
     } catch (e: any) {
-      throw new RPCError(-32000, `Invalid JSON response: ${e.message}`);
+      throw new RPCError(RPCErrorCode.InternalError, `Invalid JSON response: ${e.message}`);
     }
   }
 }
@@ -112,7 +125,7 @@ export class InProcTransport extends Transport {
       // Notification - should not happen in normal usage
       return {
         jsonrpc: "2.0",
-        id: req.id || null,
+        id: req.id ?? null,
       };
     }
     return response;

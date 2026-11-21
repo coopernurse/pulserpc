@@ -102,8 +102,12 @@ The TypeScript client SHALL provide a `verifyCompatibility(): Promise<Verificati
 - **THEN** result is returned with `compatible: true` and `deltas` containing Info-level entries
 
 #### Scenario: Compatibility verification with breaking changes
-- **WHEN** client calls `verifyCompatibility()` and server has removed a required field
-- **THEN** result is returned with `compatible: false` and `deltas` containing Error-level entry
+- **WHEN** client calls `verifyCompatibility()` and the server has added a required field the client does not send (a `Required field added` / `ClientHasLess` delta)
+- **THEN** result is returned with `compatible: false` and `deltas` containing an Error-level entry
+
+#### Scenario: Compatibility verification with a removed field
+- **WHEN** client calls `verifyCompatibility()` and the server has removed a required field the client still has (a `Field removed` / `ClientHasMore` delta)
+- **THEN** result is returned with `compatible: true` and `deltas` containing an Info-level entry
 
 #### Scenario: Auditor is called on every verification
 - **WHEN** client calls `verifyCompatibility()` multiple times with no changes

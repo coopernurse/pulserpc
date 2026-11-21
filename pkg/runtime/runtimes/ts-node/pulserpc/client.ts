@@ -13,7 +13,7 @@ import { Contract, Interface, ContractAuditor } from "./contract.js";
 import { Transport, JsonRpcRequest } from "./transport.js";
 import { diffIDL } from "./diff.js";
 import { extractChecksum } from "./types.js";
-import { ContractDelta, VerificationResult } from "./types.js";
+import { ContractDelta, VerificationResult, Severity } from "./types.js";
 
 export interface ClientOptions {
   auditor?: ContractAuditor;
@@ -230,7 +230,7 @@ export class Client {
     }
 
     const deltas = diffIDL(clientIDL, serverIDL);
-    const hasError = deltas.some(d => d.severity === "Error");
+    const hasError = deltas.some(d => d.severity === Severity.Error);
     const compatible = !hasError;
 
     const serverChecksum = extractChecksum(serverIDL);
@@ -319,11 +319,31 @@ export class Client {
       return null;
     }
 
-    // Check for error response
-    if (response.error) {
+    // Validate the response envelope before reading any payload field (M5).
+    if (!response || response.jsonrpc !== "2.0") {
+      throw new RPCError(-32600, "Invalid response: jsonrpc must be '2.0'");
+    }
+    if (response.id !== reqId) {
+      throw new RPCError(-32600, `Invalid response: expected id ${reqId}, got ${response.id}`);
+    }
+
+    const hasResult = Object.prototype.hasOwnProperty.call(response, "result");
+    const hasError = Object.prototype.hasOwnProperty.call(response, "error");
+    if (hasResult && hasError) {
+      throw new RPCError(-32600, "Invalid response: must not contain both 'result' and 'error'");
+    }
+    if (!hasResult && !hasError) {
+      throw new RPCError(-32600, "Invalid response: missing 'result' and 'error'");
+    }
+
+    // Check for error response. `??` keeps a legitimate code of 0 intact.
+    if (hasError) {
       const error = response.error;
+      if (!error || typeof error !== "object") {
+        throw new RPCError(-32600, "Invalid response: malformed error object");
+      }
       throw new RPCError(
-        error.code || -32603,
+        error.code ?? -32603,
         error.message || "Unknown error",
         error.data
       );
@@ -332,8 +352,10 @@ export class Client {
     // Get result
     const result = response.result;
 
-    // Validate response if enabled
-    if (this.validateResponse && this.contract && result !== undefined && result !== null) {
+    // Validate response if enabled. `null` is a real value that the contract
+    // must check against the return optionality; only `undefined` (not a JSON
+    // wire value) is treated as absent (M14).
+    if (this.validateResponse && this.contract && result !== undefined) {
       try {
         this.contract.validateResponse(ifaceName, funcName, result);
       } catch (e: any) {

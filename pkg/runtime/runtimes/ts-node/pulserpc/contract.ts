@@ -143,6 +143,8 @@ export class Contract {
   interfaces: Map<string, Interface> = new Map();
   structs: StructMap = {};
   enums: EnumMap = {};
+  /** Metadata declared by `meta` items, keyed by item field name (R12). */
+  meta: Record<string, any> = {};
 
   constructor(idlParsed: any) {
     this.idlParsed = idlParsed;
@@ -163,6 +165,17 @@ export class Contract {
       for (const enumData of idlParsed.enums || []) {
         this.enums[enumData.name] = enumData;
       }
+
+      // Parse metadata (R12): the dict form may carry `meta` directly or as
+      // a list of `{type: "meta", ...}` items, like the Barrister form.
+      const rawMeta = idlParsed.meta;
+      if (Array.isArray(rawMeta)) {
+        for (const item of rawMeta) {
+          this.addMetaItem(item);
+        }
+      } else if (rawMeta && typeof rawMeta === 'object') {
+        Object.assign(this.meta, rawMeta);
+      }
     } else if (Array.isArray(idlParsed)) {
       // Barrister format - list of items with type field
       for (const item of idlParsed) {
@@ -173,7 +186,20 @@ export class Contract {
           this.enums[item.name] = item;
         } else if (itemType === 'interface') {
           this.interfaces.set(item.name, new InterfaceImpl(item));
+        } else if (itemType === 'meta') {
+          this.addMetaItem(item);
         }
+      }
+    }
+  }
+
+  private addMetaItem(item: any): void {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+    for (const [key, value] of Object.entries(item)) {
+      if (key !== 'type') {
+        this.meta[key] = value;
       }
     }
   }
@@ -229,11 +255,13 @@ export class Contract {
 
     const paramDefs = func.parameters || [];
 
-    // Check parameter count
-    if (params.length !== paramDefs.length) {
+    // Trailing optional parameters may be omitted: accept any length between
+    // the number of required parameters and the full signature (M9).
+    const requiredCount = paramDefs.filter((p) => !p.optional).length;
+    if (params.length < requiredCount || params.length > paramDefs.length) {
       throw new RPCError(
         -32602,
-        `Function '${ifaceName}.${funcName}' expects ${paramDefs.length} param(s). ${params.length} given.`
+        `Function '${ifaceName}.${funcName}' expects ${requiredCount}-${paramDefs.length} param(s). ${params.length} given.`
       );
     }
 
@@ -244,6 +272,12 @@ export class Contract {
       const paramDef = paramDefs[i];
       const paramType = paramDef.type;
       const isOptional = paramDef.optional || false;
+
+      // An absent value at an optional position (e.g. a named-param request
+      // that omits a trailing optional field) is not a validation error.
+      if (paramValue === undefined && isOptional) {
+        continue;
+      }
 
       const errors = validateType(paramValue, paramType, this.structs, this.enums, isOptional);
       for (const err of errors) {
@@ -280,11 +314,12 @@ export class Contract {
     // Check if function has a return type
     const returnType = func.returnType;
     if (!returnType) {
-      // Function returns void/None
-      if (result !== null && result !== undefined) {
+      // Function returns void/None. Null is the canonical JSON-RPC value
+      // across runtimes; `undefined` is not a valid wire value (R14).
+      if (result !== null) {
         throw new RPCError(
           -32603,
-          `Function '${ifaceName}.${funcName}' invalid response: '${JSON.stringify(result)}'. Expected null/undefined`
+          `Function '${ifaceName}.${funcName}' invalid response: '${JSON.stringify(result)}'. Expected null`
         );
       }
       return;

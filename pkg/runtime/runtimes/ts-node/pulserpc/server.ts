@@ -61,43 +61,49 @@ export class Server {
       );
     }
 
+    // A notification is a request with no `id` member. `id: 0` is a valid id.
+    // Notifications still execute the handler, but never receive a response
+    // (R11 / M4).
+    const isNotification = !Object.prototype.hasOwnProperty.call(req, "id");
+    const respond = (response: JsonRpcResponse): JsonRpcResponse | null =>
+      isNotification ? null : response;
+
     // Check JSON-RPC version
     if ((req as any).jsonrpc !== "2.0") {
-      return this.errorResponse(
+      return respond(this.errorResponse(
         (req as any).id ?? null,
         -32600,
         "Invalid Request",
         "jsonrpc version must be '2.0'"
-      );
+      ));
     }
 
     // Check for method
     const method = (req as any).method;
     if (!method || typeof method !== "string") {
-      return this.errorResponse(
+      return respond(this.errorResponse(
         (req as any).id ?? null,
         -32600,
         "Invalid Request",
         "Method must be a string"
-      );
+      ));
     }
 
     // Handle pulserpc-idl request
     if (method === "pulserpc-idl") {
-      return {
+      return respond({
         jsonrpc: "2.0",
         result: this.contract.idlParsed,
         id: (req as any).id ?? null,
-      };
+      });
     }
 
-    // Check for notification (no 'id' means no response expected)
     const reqId = (req as any).id;
 
     // Parse method name (e.g., "UserService.getUser")
     const dotIndex = method.lastIndexOf(".");
     if (dotIndex === -1) {
-      return this.errorResponse(reqId, -32601, "Method not found", `Invalid method name format: ${method}`);
+      return respond(this.errorResponse(reqId, -32601, "Method not found", `Invalid method name format: ${method}`));
     }
 
     const ifaceName = method.substring(0, dotIndex);
@@ -105,14 +111,14 @@ export class Server {
 
     // Look up handler
     if (!this.handlers.has(ifaceName)) {
-      return this.errorResponse(reqId, -32601, "Method not found", `Unknown interface: ${ifaceName}`);
+      return respond(this.errorResponse(reqId, -32601, "Method not found", `Unknown interface: ${ifaceName}`));
     }
 
     const handler = this.handlers.get(ifaceName) as any;
 
     // Get function from handler
     if (typeof handler[funcName] !== "function") {
-      return this.errorResponse(reqId, -32601, "Method not found", `Unknown method: ${method}`);
+      return respond(this.errorResponse(reqId, -32601, "Method not found", `Unknown method: ${method}`));
     }
 
     const func = handler[funcName].bind(handler);
@@ -128,7 +134,7 @@ export class Server {
           this.contract.validateRequest(ifaceName, funcName, params);
         } catch (e: any) {
           const code = e instanceof RPCError ? e.code : -32602;
-          return this.errorResponse(reqId, code, e.message || "Invalid params", e.data);
+          return respond(this.errorResponse(reqId, code, e.message || "Invalid params", e.data));
         }
       }
 
@@ -136,14 +142,14 @@ export class Server {
       try {
         params = this.positionalToNamedParams(ifaceName, funcName, params);
       } catch (e: any) {
-        return this.errorResponse(reqId, -32602, "Invalid params", e.message);
+        return respond(this.errorResponse(reqId, -32602, "Invalid params", e.message));
       }
     } else if (params === undefined || params === null) {
       params = {};
     }
 
     if (typeof params !== "object" || Array.isArray(params)) {
-      return this.errorResponse(reqId, -32602, "Invalid params", "Parameters must be an object or array");
+      return respond(this.errorResponse(reqId, -32602, "Invalid params", "Parameters must be an object or array"));
     }
 
     // Validate request if using named params (dict)
@@ -155,7 +161,7 @@ export class Server {
           this.contract.validateRequest(ifaceName, funcName, paramList);
         } catch (e: any) {
           const code = e instanceof RPCError ? e.code : -32602;
-          return this.errorResponse(reqId, code, e.message || "Invalid params", e.data);
+          return respond(this.errorResponse(reqId, code, e.message || "Invalid params", e.data));
         }
       }
     }
@@ -165,19 +171,35 @@ export class Server {
       // Call handler function with ctx first, then positional params (spread the object values)
       const args = Object.values(params);
       const result = await func(ctx, ...args);
-      return {
+
+      // Validate the handler result against the IDL when enabled (R10).
+      if (this.validateResponses) {
+        try {
+          this.contract.validateResponse(ifaceName, funcName, result);
+        } catch (e: any) {
+          const code = e instanceof RPCError ? e.code : -32603;
+          return respond(this.errorResponse(
+            reqId,
+            code,
+            e.message || "Response validation failed",
+            e.data
+          ));
+        }
+      }
+
+      return respond({
         jsonrpc: "2.0",
         result,
         id: reqId ?? null,
-      };
+      });
     } catch (e: any) {
       // Convert application errors to RPC errors
       if (e instanceof RPCError) {
-        return this.errorResponse(reqId, e.code, e.message, e.data);
+        return respond(this.errorResponse(reqId, e.code, e.message, e.data));
       } else {
         // Log unexpected errors and return internal error
         console.error(`Handler exception for ${method}:`, e);
-        return this.errorResponse(reqId, -32603, "Internal error", `Handler exception: ${e.message || String(e)}`);
+        return respond(this.errorResponse(reqId, -32603, "Internal error", `Handler exception: ${e.message || String(e)}`));
       }
     }
   }

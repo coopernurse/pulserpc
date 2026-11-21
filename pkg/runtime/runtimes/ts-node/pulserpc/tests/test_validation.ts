@@ -55,6 +55,20 @@ function testValidateIntFailure() {
   console.log("✓ testValidateIntFailure");
 }
 
+function testValidateIntRejectsNonFinite() {
+  // R2 / ts-node-14: make the ts-node/ts-cjs divergence visible to CI.
+  // ts-cjs accepts +/-Infinity; ts-node must reject each with one error.
+  for (const value of [NaN, Infinity, -Infinity, JSON.parse("1e999")]) {
+    const errs = validateInt(value);
+    assert.equal(errs.length, 1, `expected exactly one error for ${String(value)}`);
+    assert.equal(errs[0].path, "");
+  }
+  // Float acceptance is deliberately wider (matches the other TS runtime).
+  assert.deepEqual(validateFloat(NaN), []);
+  assert.deepEqual(validateFloat(Infinity), []);
+  console.log("✓ testValidateIntRejectsNonFinite");
+}
+
 function testValidateFloatSuccess() {
   assert.deepEqual(validateFloat(3.14), []);
   assert.deepEqual(validateFloat(42), []);
@@ -365,6 +379,7 @@ testValidateStringSuccess();
 testValidateStringFailure();
 testValidateIntSuccess();
 testValidateIntFailure();
+testValidateIntRejectsNonFinite();
 testValidateFloatSuccess();
 testValidateFloatFailure();
 testValidateBoolSuccess();

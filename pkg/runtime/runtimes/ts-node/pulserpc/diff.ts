@@ -302,13 +302,22 @@ function diffStructFields(
         }
       }
     } else {
+      // Canonical contract (core-12): a field removed by the server is
+      // ClientHasMore and therefore Info, even when it was required — extra
+      // fields sent by the client are ignored on the wire (M12). The Error
+      // case is a *required field added* by the server, handled below.
       deltas.push({
         entityType: EntityType.Field,
         entityName: structName,
         memberName: name,
         changeType: ChangeType.Removed,
         direction: Direction.ClientHasMore,
-        severity: Severity.Info,
+        severity: classifySeverity(
+          EntityType.Field,
+          ChangeType.Removed,
+          Direction.ClientHasMore,
+          isFieldRequired(clientFields[name]) ? "required" : "optional"
+        ),
         description: `Field '${name}' in struct '${structName}' exists in client but not in server`,
       });
     }
