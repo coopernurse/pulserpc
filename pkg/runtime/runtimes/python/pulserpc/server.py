@@ -11,6 +11,13 @@ from .rpc import (
 from .contract import Contract
 
 
+# Default upper bound on the number of entries accepted in a single JSON-RPC
+# batch.  Without a bound an attacker can submit an arbitrarily large array and
+# force one handler invocation (and one response object) per element, which is a
+# cheap request-amplification / memory-exhaustion vector (review finding 1).
+DEFAULT_MAX_BATCH_SIZE = 100
+
+
 class Server:
     """JSON-RPC 2.0 server with handler registration and optional validation
 
@@ -20,7 +27,8 @@ class Server:
 
     def __init__(self, contract: Contract, validate_requests: bool = True,
                  validate_responses: bool = True,
-                 on_error: Optional[Callable[[Exception], None]] = None):
+                 on_error: Optional[Callable[[Exception], None]] = None,
+                 max_batch_size: int = DEFAULT_MAX_BATCH_SIZE):
         """Initialize Server
 
         Args:
@@ -28,12 +36,20 @@ class Server:
             validate_requests: Validate request parameters against IDL
             validate_responses: Validate response values against IDL
             on_error: Optional callback invoked on unhandled handler exceptions
+            max_batch_size: Maximum number of entries accepted in a batch
+                request. Oversized batches are rejected with INVALID_REQUEST
+                before any handler runs. Must be a positive integer.
         """
+        if not isinstance(max_batch_size, int) or isinstance(max_batch_size, bool) \
+                or max_batch_size <= 0:
+            raise ValueError("max_batch_size must be a positive integer")
+
         self.handlers: Dict[str, Any] = {}
         self.contract = contract
         self.validate_requests = validate_requests
         self.validate_responses = validate_responses
         self.on_error = on_error
+        self.max_batch_size = max_batch_size
 
     def add_handler(self, iface_name: str, handler: Any) -> None:
         """Register a handler instance for an interface
@@ -73,10 +89,22 @@ class Server:
 
     def _call_batch(self, reqs: List[Any], ctx: Any = None
                     ) -> Optional[List[Dict[str, Any]]]:
-        """Process a JSON-RPC batch request (audit python-09)."""
+        """Process a JSON-RPC batch request (audit python-09).
+
+        Batches are bounded by ``max_batch_size`` so an attacker cannot force an
+        unbounded number of handler invocations or response objects with a
+        single request. Oversized batches are rejected up front with
+        INVALID_REQUEST; entries are never dispatched.
+        """
         if not reqs:
             return self._error_response(
                 None, INVALID_REQUEST, "Invalid Request", "Batch must not be empty"
+            )
+
+        if len(reqs) > self.max_batch_size:
+            return self._error_response(
+                None, INVALID_REQUEST, "Invalid Request",
+                f"Batch exceeds maximum size of {self.max_batch_size}"
             )
 
         responses: List[Dict[str, Any]] = []

@@ -44,7 +44,7 @@ from .contract import (
     LoggingAuditor,
     FailFastAuditor,
 )
-from .server import Server
+from .server import Server, DEFAULT_MAX_BATCH_SIZE
 from .client import Client
 from .contract import Contract
 from .transport import Transport, HttpTransport, InProcTransport
@@ -83,6 +83,7 @@ __all__ = [
     "LoggingAuditor",
     "FailFastAuditor",
     "Server",
+    "DEFAULT_MAX_BATCH_SIZE",
     "Client",
     "Contract",
     "Transport",

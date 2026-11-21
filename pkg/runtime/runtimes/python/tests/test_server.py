@@ -2,9 +2,12 @@
 (audit python-03, python-05, python-08, python-09, python-10, python-11).
 """
 
+import pytest
+
 from pulserpc import (
     Contract,
     Server,
+    DEFAULT_MAX_BATCH_SIZE,
     INVALID_REQUEST,
     METHOD_NOT_FOUND,
     INVALID_PARAMS,
@@ -227,6 +230,50 @@ def test_batch_includes_errors_for_invalid_entries():
     assert len(responses) == 2
     assert error_code(responses[0]) == INVALID_REQUEST
     assert responses[1]['result'] == 'ok'
+
+
+# --- review finding 1: bounded batch processing -------------------------------
+
+def test_oversized_batch_is_rejected_without_running_handlers():
+    server = make_server()
+    batch = [
+        request('Demo.echo', ['x'], req_id=i)
+        for i in range(DEFAULT_MAX_BATCH_SIZE + 1)
+    ]
+    response = server.call(batch)
+    assert error_code(response) == INVALID_REQUEST
+    assert 'id' not in response  # a rejected batch has no request id
+    # The whole batch is refused up front: no per-entry amplification.
+    assert server.handlers['Demo'].calls == []
+
+
+def test_max_batch_size_is_configurable():
+    server = make_server(max_batch_size=2)
+    batch = [
+        request('Demo.echo', ['a'], 1),
+        request('Demo.echo', ['b'], 2),
+        request('Demo.echo', ['c'], 3),
+    ]
+    assert error_code(server.call(batch)) == INVALID_REQUEST
+    assert server.handlers['Demo'].calls == []
+
+
+def test_normal_batch_within_limit_still_works():
+    server = make_server(max_batch_size=2)
+    responses = server.call([
+        request('Demo.echo', ['a'], 1),
+        request('Demo.echo', ['b'], 2),
+    ])
+    assert [r['id'] for r in responses] == [1, 2]
+    assert [r['result'] for r in responses] == ['a', 'b']
+    assert len(server.handlers['Demo'].calls) == 2
+
+
+def test_max_batch_size_must_be_positive_integer():
+    with pytest.raises(ValueError):
+        Server(make_contract(), max_batch_size=0)
+    with pytest.raises(ValueError):
+        Server(make_contract(), max_batch_size=-1)
 
 
 # --- python-10: structured validation-error data on the wire -------------------

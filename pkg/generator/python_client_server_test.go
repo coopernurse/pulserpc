@@ -1080,6 +1080,21 @@ func TestGenerateTestServerPyForNamespaceRuntimeImport(t *testing.T) {
 	}
 }
 
+func TestGenerateTestServerPyCapsRequestBody(t *testing.T) {
+	baseNs := &NamespaceTypes{Interfaces: []*parser.Interface{{Name: "A"}}}
+	code := generateTestServerPyForNamespace(baseNs, nil, nil, "", "")
+
+	for _, want := range []string{
+		"MAX_BODY_SIZE = 1024 * 1024",
+		"if content_length > self.MAX_BODY_SIZE:",
+		"\"Invalid Request\", \"Request body too large\"",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated test_server.py should contain %q, got:\n%s", want, code)
+		}
+	}
+}
+
 func TestGenerateTestClientPyForNamespaceRuntimeImport(t *testing.T) {
 	baseNs := &NamespaceTypes{Interfaces: []*parser.Interface{{Name: "A"}}}
 	configured := generateTestClientPyForNamespace(baseNs, nil, nil, "", "myapp.lib.rpc")
