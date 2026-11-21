@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from .transport import Transport
-from .rpc import RPCError
+from .rpc import RPCError, INVALID_REQUEST, INTERNAL_ERROR
 from .contract import Contract
 from .diff import diff_idl
 from .rpctypes import (
@@ -46,19 +46,17 @@ class InterfaceClientProxy:
             Callable that invokes the RPC method
         """
         def methodcaller(*params, **kwargs):
-            # If keyword args were provided, convert to positional list
+            # Keyword args are converted to a positional list by Client.call,
+            # using the IDL parameter order, before they go on the wire
+            # (audit python-07).
             if kwargs:
-                # Use named params - send as dict
                 return self._client.call(
-                    f"{self._iface_name}.{func_name}",
-                    kwargs if kwargs else None
+                    f"{self._iface_name}.{func_name}", kwargs
                 )
-            else:
-                # Use positional params - send as list
-                return self._client.call(
-                    f"{self._iface_name}.{func_name}",
-                    list(params) if params else None
-                )
+            return self._client.call(
+                f"{self._iface_name}.{func_name}",
+                list(params) if params else None
+            )
         return methodcaller
 
 
@@ -161,16 +159,18 @@ class Client:
         except ValueError:
             raise ValueError(f"Invalid method name format: {method}")
 
+        # Named params must be converted to a positional list using the IDL
+        # signature, both for validation and for the outgoing request: JSON-RPC
+        # 'params' is always an array (audit python-07).
+        if isinstance(params, dict):
+            converted = self._named_to_positional(iface_name, func_name, params)
+            params = converted if converted is not None else []
+        elif params is not None and not isinstance(params, list):
+            params = [params]
+
         # Validate request if enabled
         if self.validate_request and self.contract:
-            # Convert params to list for validation
-            if isinstance(params, dict):
-                # Named params - need to convert to positional
-                param_list = self._named_to_positional(iface_name, func_name, params)
-            elif isinstance(params, list):
-                param_list = params
-            else:
-                param_list = [] if params is None else [params]
+            param_list = params if params is not None else []
 
             try:
                 self.contract.validate_request(iface_name, func_name, param_list)
@@ -198,11 +198,15 @@ class Client:
         if not expect_response:
             return None
 
+        # Validate the JSON-RPC response envelope: correct version, matching id
+        # and exactly one of result/error (audit python-04).
+        self._validate_response_envelope(response, req_id)
+
         # Check for error response
         if 'error' in response:
             error = response['error']
             raise RPCError(
-                code=error.get('code', -32603),
+                code=error.get('code', INTERNAL_ERROR),
                 message=error.get('message', 'Unknown error'),
                 data=error.get('data')
             )
@@ -210,14 +214,39 @@ class Client:
         # Get result
         result = response.get('result')
 
-        # Validate response if enabled
-        if self.validate_response and self.contract and result is not None:
+        # Validate response if enabled.  A null result for a required return
+        # type must be validated, not silently accepted (audit python-03).
+        if self.validate_response and self.contract:
             try:
                 self.contract.validate_response(iface_name, func_name, result)
             except (TypeError, ValueError) as e:
                 raise ValueError(f"Response validation failed: {e}") from e
 
         return result
+
+    @staticmethod
+    def _validate_response_envelope(response: Any, expected_id: Any) -> None:
+        """Reject malformed JSON-RPC response envelopes (audit python-04)."""
+        if not isinstance(response, dict):
+            raise RPCError(INVALID_REQUEST, "Invalid response: expected an object")
+        if response.get('jsonrpc') != '2.0':
+            raise RPCError(
+                INVALID_REQUEST, "Invalid response: jsonrpc version must be '2.0'"
+            )
+        if 'id' not in response or response.get('id') != expected_id:
+            raise RPCError(
+                INVALID_REQUEST,
+                f"Invalid response: id mismatch, expected {expected_id!r}"
+            )
+        has_result = 'result' in response
+        has_error = 'error' in response
+        if has_result == has_error:
+            raise RPCError(
+                INVALID_REQUEST,
+                "Invalid response: exactly one of 'result' or 'error' is required"
+            )
+        if has_error and not isinstance(response['error'], dict):
+            raise RPCError(INVALID_REQUEST, "Invalid response: error must be an object")
 
     def notify(self, method: str, params: Optional[Any] = None) -> None:
         """Send a JSON-RPC notification (no response expected)

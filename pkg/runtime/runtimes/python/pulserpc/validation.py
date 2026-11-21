@@ -1,8 +1,9 @@
 """Validation functions for PulseRPC types"""
 
+import math
 from typing import Any, Callable, Dict, List
 
-from .rpctypes import find_struct, find_enum, get_struct_fields, ValidationError
+from .rpctypes import get_struct_fields, resolve_qualified_name, ValidationError
 
 
 def _join_path(parent: str, child: str) -> str:
@@ -33,12 +34,18 @@ def validate_int(value: Any, path: str = "") -> List[ValidationError]:
             return [_make_error(path, f"Expected int, got float NaN")]
         if value == float('inf') or value == float('-inf'):
             return [_make_error(path, f"Expected int, got float infinity")]
-        if value == int(value):
+        # Match the Go runtime's acceptance set: an exact integral value, or a
+        # value within 1e-9 of the next-lower integer (audit python-02).
+        if value == int(value) or abs(value - math.floor(value)) < 1e-9:
             return []
     return [_make_error(path, f"Expected int, got {type(value).__name__}")]
 
 
 def validate_float(value: Any, path: str = "") -> List[ValidationError]:
+    # bool subclasses int in Python, but JSON `true`/`false` are not floats.
+    # validate_int already applies the same rule (audit python-02).
+    if isinstance(value, bool):
+        return [_make_error(path, f"Expected float, got bool")]
     if not isinstance(value, (int, float)):
         return [_make_error(path, f"Expected float, got {type(value).__name__}")]
     return []
@@ -168,26 +175,15 @@ def validate_type(
         return validate_map(value, value_validator, path)
     elif type_def.get('userDefined'):
         user_type = type_def['userDefined']
-        struct_def = find_struct(user_type, all_structs)
-        if not struct_def and '.' not in user_type:
-            for qualified_key in all_structs:
-                if qualified_key.endswith('.' + user_type):
-                    struct_def = all_structs[qualified_key]
-                    user_type = qualified_key
-                    break
-        if struct_def:
-            return validate_struct(value, user_type, struct_def, all_structs, all_enums, path)
-        else:
-            enum_def = find_enum(user_type, all_enums)
-            if not enum_def and '.' not in user_type:
-                for qualified_key in all_enums:
-                    if qualified_key.endswith('.' + user_type):
-                        enum_def = all_enums[qualified_key]
-                        break
-            if enum_def:
-                allowed_values = [v['name'] for v in enum_def.get('values', [])]
-                return validate_enum(value, user_type, allowed_values, path)
-            else:
-                return [_make_error(path, f"Unknown user-defined type: {user_type}")]
+        struct_key = resolve_qualified_name(user_type, all_structs)
+        if struct_key is not None:
+            return validate_struct(
+                value, struct_key, all_structs[struct_key], all_structs, all_enums, path
+            )
+        enum_key = resolve_qualified_name(user_type, all_enums)
+        if enum_key is not None:
+            allowed_values = [v['name'] for v in all_enums[enum_key].get('values', [])]
+            return validate_enum(value, enum_key, allowed_values, path)
+        return [_make_error(path, f"Unknown user-defined type: {user_type}")]
     else:
         return [_make_error(path, f"Invalid type definition: {type_def}")]

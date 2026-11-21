@@ -1,7 +1,13 @@
 """Server class for handling JSON-RPC 2.0 requests"""
 
-from typing import Any, Callable, Dict, List, Optional
-from .rpc import RPCError
+from typing import Any, Callable, Dict, List, Optional, Union
+from .rpc import (
+    RPCError,
+    INVALID_REQUEST,
+    METHOD_NOT_FOUND,
+    INVALID_PARAMS,
+    INTERNAL_ERROR,
+)
 from .contract import Contract
 
 
@@ -38,16 +44,19 @@ class Server:
         """
         self.handlers[iface_name] = handler
 
-    def call(self, req: Dict[str, Any], ctx: Any = None) -> Optional[Dict[str, Any]]:
-        """Process a single JSON-RPC request
+    def call(self, req: Union[Dict[str, Any], List[Any]], ctx: Any = None
+             ) -> Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]:
+        """Process a JSON-RPC 2.0 request or batch of requests
 
         Args:
-            req: JSON-RPC request dict with 'jsonrpc', 'method', 'params', 'id'
+            req: JSON-RPC request dict (or a list of request dicts for a batch)
+                with 'jsonrpc', 'method', 'params' and 'id' keys
             ctx: Optional context dict for transport-level metadata (headers, auth, etc.)
                 Passed as the first positional argument to handler methods.
 
         Returns:
-            JSON-RPC response dict, or None for notification (requests without 'id')
+            A JSON-RPC response dict, a list of responses for a batch, or None
+            for a notification (a request without 'id').
 
         Example:
             >>> request = {
@@ -58,52 +67,92 @@ class Server:
             ... }
             >>> response = server.call(request)
         """
+        if isinstance(req, list):
+            return self._call_batch(req, ctx)
+        return self._call_single(req, ctx)
+
+    def _call_batch(self, reqs: List[Any], ctx: Any = None
+                    ) -> Optional[List[Dict[str, Any]]]:
+        """Process a JSON-RPC batch request (audit python-09)."""
+        if not reqs:
+            return self._error_response(
+                None, INVALID_REQUEST, "Invalid Request", "Batch must not be empty"
+            )
+
+        responses: List[Dict[str, Any]] = []
+        for item in reqs:
+            # A nested array is not a valid batch entry; _call_single rejects it.
+            response = self._call_single(item, ctx)
+            if response is not None:
+                responses.append(response)
+
+        # A batch containing only notifications produces no response at all.
+        return responses if responses else None
+
+    def _call_single(self, req: Any, ctx: Any = None) -> Optional[Dict[str, Any]]:
+        """Process a single JSON-RPC request dict."""
         # Validate request format
         if not isinstance(req, dict):
-            return self._error_response(None, -32600, "Invalid Request", "Request must be an object")
+            return self._error_response(
+                None, INVALID_REQUEST, "Invalid Request", "Request must be an object"
+            )
+
+        # Notifications (requests with no 'id') must never receive a response,
+        # including for format errors and the pulserpc-idl path (audit python-05).
+        req_id = req.get('id')
+        is_notification = req_id is None
+
+        def error_response(code: int, message: str, data: Any = None
+                           ) -> Optional[Dict[str, Any]]:
+            if is_notification:
+                return None
+            return self._error_response(req_id, code, message, data)
 
         # Check JSON-RPC version
         if req.get('jsonrpc') != '2.0':
-            return self._error_response(req.get('id'), -32600, "Invalid Request",
-                                      "jsonrpc version must be '2.0'")
+            return error_response(
+                INVALID_REQUEST, "Invalid Request", "jsonrpc version must be '2.0'"
+            )
 
         # Check for method
         method = req.get('method')
         if not method or not isinstance(method, str):
-            return self._error_response(req.get('id'), -32600, "Invalid Request",
-                                      "Method must be a string")
+            return error_response(
+                INVALID_REQUEST, "Invalid Request", "Method must be a string"
+            )
 
         # Handle pulserpc-idl request
         if method == 'pulserpc-idl':
-            req_id = req.get('id')
+            if is_notification:
+                return None
             return {
                 'jsonrpc': '2.0',
                 'result': self.contract.idl_parsed,
                 'id': req_id
             }
 
-        # Check for notification (no 'id' means no response expected)
-        req_id = req.get('id')
-        is_notification = req_id is None
-
         # Parse method name (e.g., "UserService.getUser")
         try:
             iface_name, func_name = method.rsplit('.', 1)
         except ValueError:
-            return self._error_response(req_id, -32601, "Method not found",
-                                      f"Invalid method name format: {method}")
+            return error_response(
+                METHOD_NOT_FOUND, "Method not found",
+                f"Invalid method name format: {method}"
+            )
 
         # Look up handler
         if iface_name not in self.handlers:
-            return self._error_response(req_id, -32601, "Method not found",
-                                      f"Unknown interface: {iface_name}")
+            return error_response(
+                METHOD_NOT_FOUND, "Method not found", f"Unknown interface: {iface_name}"
+            )
 
         handler = self.handlers[iface_name]
 
         # Get function from handler
         if not hasattr(handler, func_name):
-            return self._error_response(req_id, -32601, "Method not found",
-                                      f"Unknown method: {method}")
+            return error_response(
+                METHOD_NOT_FOUND, "Method not found", f"Unknown method: {method}"
+            )
 
         func = getattr(handler, func_name)
 
@@ -114,25 +163,27 @@ class Server:
             params = []
 
         if not isinstance(params, list):
-            return self._error_response(req_id, -32602, "Invalid params",
-                                      "Parameters must be an array")
+            return error_response(
+                INVALID_PARAMS, "Invalid params", "Parameters must be an array"
+            )
 
         if self.validate_requests:
             try:
                 self.contract.validate_request(iface_name, func_name, params)
             except RPCError as e:
-                return self._error_response(req_id, e.code, e.message, e.data)
+                return error_response(e.code, e.message, e.data)
 
         # Invoke handler method
         try:
             result = func(ctx, *params)
         except TypeError as e:
-            return self._error_response(req_id, -32602, "Invalid params",
-                                      f"Parameter mismatch: {e}")
+            return error_response(
+                INVALID_PARAMS, "Invalid params", f"Parameter mismatch: {e}"
+            )
         except Exception as e:
             # Convert application errors to RPC errors
             if isinstance(e, RPCError):
-                return self._error_response(req_id, e.code, e.message, e.data)
+                return error_response(e.code, e.message, e.data)
             else:
                 # Log unexpected errors and return internal error
                 if self.on_error is not None:
@@ -140,15 +191,19 @@ class Server:
                 else:
                     import traceback
                     traceback.print_exc()
-                return self._error_response(req_id, -32603, "Internal error",
-                                          f"Handler exception: {e}")
+                return error_response(
+                    INTERNAL_ERROR, "Internal error", f"Handler exception: {e}"
+                )
 
-        # Validate response if validation is enabled
-        if self.validate_responses and result is not None:
+        # Validate response if validation is enabled.  A null result for a
+        # required return type must be validated, not silently accepted
+        # (audit python-03); Contract.validate_response decides based on the
+        # IDL's returnType/returnOptional.
+        if self.validate_responses:
             try:
                 self.contract.validate_response(iface_name, func_name, result)
             except RPCError as e:
-                return self._error_response(req_id, e.code, e.message, e.data)
+                return error_response(e.code, e.message, e.data)
 
         # Don't respond to notifications
         if is_notification:
@@ -161,7 +216,8 @@ class Server:
             'id': req_id
         }
 
-    def _error_response(self, req_id: Any, code: int, message: str, data: Any = None) -> Dict[str, Any]:
+    def _error_response(self, req_id: Any, code: int, message: str,
+                        data: Any = None) -> Dict[str, Any]:
         """Create a JSON-RPC error response
 
         Args:

@@ -58,6 +58,14 @@ class TestBuiltInTypes:
         errs5 = validate_int(float('nan'))
         assert len(errs5) == 1
         assert "Expected int" in errs5[0].message
+
+    def test_validate_int_accepts_near_integral_floats(self):
+        # Match the Go runtime's 1e-9 tolerance for integral floats.
+        assert validate_int(5.0000000001) == []
+        assert validate_int(-5.0) == []
+        errs = validate_int(5.00001)
+        assert len(errs) == 1
+        assert "Expected int" in errs[0].message
     
     def test_validate_float_success(self):
         validate_float(3.14)
@@ -72,6 +80,14 @@ class TestBuiltInTypes:
         errs2 = validate_float(None)
         assert len(errs2) == 1
         assert "Expected float" in errs2[0].message
+
+    def test_validate_float_rejects_booleans(self):
+        # bool subclasses int in Python, but JSON true/false are not floats.
+        for value in (True, False):
+            errs = validate_float(value)
+            assert len(errs) == 1
+            assert "Expected float" in errs[0].message
+            assert "bool" in errs[0].message
     
     def test_validate_bool_success(self):
         validate_bool(True)

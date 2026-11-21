@@ -53,27 +53,65 @@ class VerificationResult:
     timestamp: datetime
 
 
+def resolve_qualified_name(name: str, definitions: Dict[str, Any]) -> Optional[str]:
+    """Resolve a possibly namespace-qualified type name to a definition key.
+
+    Generated IDLs key structs and enums by their plain name (e.g. ``Response``)
+    while references may carry a namespace qualifier (e.g. ``inc.Response``).
+    Exact matches win; otherwise a qualified suffix match and finally a
+    last-segment match are used.  Validation and inheritance resolution both
+    go through this helper so they cannot disagree (audit python-01).
+    """
+    if name in definitions:
+        return name
+
+    # e.g. reference "Response" -> key "inc.Response", or reference
+    # "sub.inc.Response" -> key "inc.Response".
+    for key in sorted(definitions):
+        if key.endswith('.' + name):
+            return key
+
+    # e.g. reference "inc.Response" -> key "Response".
+    short_name = name.rsplit('.', 1)[-1]
+    for key in sorted(definitions):
+        if key.rsplit('.', 1)[-1] == short_name:
+            return key
+
+    return None
+
+
 def find_struct(struct_name: str, all_structs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Find a struct definition by name"""
-    return all_structs.get(struct_name)
+    """Find a struct definition by name (qualified or unqualified)"""
+    key = resolve_qualified_name(struct_name, all_structs)
+    return all_structs[key] if key is not None else None
 
 
 def find_enum(enum_name: str, all_enums: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Find an enum definition by name"""
-    return all_enums.get(enum_name)
+    """Find an enum definition by name (qualified or unqualified)"""
+    key = resolve_qualified_name(enum_name, all_enums)
+    return all_enums[key] if key is not None else None
 
 
-def get_struct_fields(struct_name: str, all_structs: Dict[str, Any]) -> List[Dict[str, Any]]:
+def get_struct_fields(struct_name: str, all_structs: Dict[str, Any],
+                      _visited: Optional[set] = None) -> List[Dict[str, Any]]:
     """Recursively resolve struct extends to return all fields (parent + child)"""
-    struct_def = find_struct(struct_name, all_structs)
-    if not struct_def:
+    key = resolve_qualified_name(struct_name, all_structs)
+    if key is None:
         return []
-    
+
+    # Guard against cyclic extends clauses (defensive: the parser also rejects them).
+    if _visited is None:
+        _visited = set()
+    if key in _visited:
+        return []
+    _visited = _visited | {key}
+
+    struct_def = all_structs[key]
     fields = []
     
     # Get parent fields first
     if struct_def.get('extends'):
-        parent_fields = get_struct_fields(struct_def['extends'], all_structs)
+        parent_fields = get_struct_fields(struct_def['extends'], all_structs, _visited)
         fields.extend(parent_fields)
     
     # Add child fields (override parent if name conflict)
