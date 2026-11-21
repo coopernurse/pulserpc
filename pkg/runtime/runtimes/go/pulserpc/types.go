@@ -60,7 +60,11 @@ type ContractDelta struct {
 
 // VerificationResult contains the result of a contract compatibility verification
 type VerificationResult struct {
-	Compatible     bool
+	Compatible bool
+	// Error is non-empty when verification could not be completed (for example,
+	// when the server IDL could not be fetched). A non-empty Error means the
+	// result is inconclusive and must never be read as a successful verification.
+	Error          string
 	ServerChecksum string
 	ClientChecksum string
 	Deltas         []ContractDelta
