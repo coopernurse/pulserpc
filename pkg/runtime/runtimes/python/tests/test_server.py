@@ -108,7 +108,16 @@ def error_code(response):
 def test_bad_jsonrpc_returns_invalid_request():
     response = make_server().call(request('Demo.echo', ['x'], jsonrpc='1.0'))
     assert error_code(response) == INVALID_REQUEST == -32600
-    assert response['id'] == 1
+    # An invalid jsonrpc version makes the whole request invalid; its id cannot
+    # be echoed back and must be reported as null.
+    assert response['id'] is None
+
+
+def test_missing_jsonrpc_returns_invalid_request_with_null_id():
+    req = {'method': 'Demo.echo', 'params': ['x'], 'id': 1}
+    response = make_server().call(req)
+    assert error_code(response) == INVALID_REQUEST == -32600
+    assert response['id'] is None
 
 
 def test_missing_method_returns_invalid_request():
