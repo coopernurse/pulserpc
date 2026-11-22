@@ -10,6 +10,38 @@ import (
 	"time"
 )
 
+// resolveSessionFile resolves a session-relative filename and guarantees that
+// the result stays inside sessionDir (S1/D14). Absolute paths, Windows volume
+// paths, and any cleaned path containing a ".." segment are rejected. Backslashes
+// are treated as separators on every OS so the same input cannot escape on
+// Windows while looking harmless on Unix.
+func resolveSessionFile(sessionDir, filename string) (string, error) {
+	if strings.TrimSpace(filename) == "" {
+		return "", fmt.Errorf("file path is required")
+	}
+
+	// Reject absolute paths in both native and slash-normalized forms. On
+	// Windows, filepath.IsAbs does not recognize "/foo", so check the leading
+	// separator and volume name explicitly.
+	normalized := strings.ReplaceAll(filename, "\\", "/")
+	if strings.HasPrefix(normalized, "/") || filepath.IsAbs(filename) || filepath.VolumeName(filename) != "" {
+		return "", fmt.Errorf("absolute file paths are not allowed: %s", filename)
+	}
+
+	cleaned := filepath.Clean(filepath.FromSlash(normalized))
+	fullPath := filepath.Join(sessionDir, cleaned)
+
+	rel, err := filepath.Rel(sessionDir, fullPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid file path %s: %w", filename, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("file path escapes session directory: %s", filename)
+	}
+
+	return fullPath, nil
+}
+
 // GetFile retrieves the contents of a specific file in a session
 func (m *Manager) GetFile(sessionID string, filename string) ([]byte, error) {
 	session, ok := m.GetSession(sessionID)
@@ -17,8 +49,10 @@ func (m *Manager) GetFile(sessionID string, filename string) ([]byte, error) {
 		return nil, fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Construct full file path
-	filePath := filepath.Join(session.Dir, filename)
+	filePath, err := resolveSessionFile(session.Dir, filename)
+	if err != nil {
+		return nil, err
+	}
 
 	// Read file
 	data, err := os.ReadFile(filePath)
@@ -59,7 +93,10 @@ func (m *Manager) CreateZip(sessionID string) ([]byte, error) {
 
 	// Add files to zip
 	for _, file := range session.Files {
-		filePath := filepath.Join(session.Dir, file)
+		filePath, err := resolveSessionFile(session.Dir, file)
+		if err != nil {
+			return nil, fmt.Errorf("invalid session file %s: %w", file, err)
+		}
 
 		// Open file
 		fileReader, err := os.Open(filePath)

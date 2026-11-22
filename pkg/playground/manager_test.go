@@ -13,7 +13,7 @@ import (
 
 // mockPlugin is a mock generator plugin for testing
 type mockPlugin struct {
-	name      string
+	name         string
 	generateFunc func(idl *parser.IDL, fs *flag.FlagSet) error
 }
 
@@ -451,5 +451,68 @@ func TestGetFile(t *testing.T) {
 	_, err = mgr.GetFile("non-existent-id", "test.txt")
 	if err == nil {
 		t.Error("expected error when getting file from non-existent session")
+	}
+}
+
+// S1/D14: session-relative file access must never escape the session directory.
+func TestGetFileRejectsTraversal(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "pulserpc-test-traversal-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	plugins := []generator.Plugin{
+		&mockPlugin{
+			name: "mock-runtime",
+			generateFunc: func(idl *parser.IDL, fs *flag.FlagSet) error {
+				dir := fs.Lookup("dir").Value.String()
+				if err := os.MkdirAll(filepath.Join(dir, "sub"), 0755); err != nil {
+					return err
+				}
+				return os.WriteFile(filepath.Join(dir, "sub", "nested.txt"), []byte("nested"), 0644)
+			},
+		},
+	}
+	mgr, err := NewManager(tempDir, plugins)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	session, err := mgr.Generate("namespace test\n\nstruct User { name string }", "mock-runtime")
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+
+	// A file outside the session directory that traversal attempts target.
+	secretPath := filepath.Join(tempDir, "secret.txt")
+	if err := os.WriteFile(secretPath, []byte("secret"), 0644); err != nil {
+		t.Fatalf("failed to write secret: %v", err)
+	}
+
+	badPaths := []string{
+		"../secret.txt",
+		`..\secret.txt`,
+		"a/../../secret.txt",
+		"a\\..\\..\\secret.txt",
+		secretPath,
+		filepath.ToSlash(secretPath),
+	}
+	for _, p := range badPaths {
+		if _, err := mgr.GetFile(session.ID, p); err == nil {
+			t.Errorf("GetFile(%q) must be rejected, got nil error", p)
+		}
+	}
+
+	// Valid nested files still work, including a leading "./".
+	for _, p := range []string{"sub/nested.txt", "./sub/nested.txt"} {
+		data, err := mgr.GetFile(session.ID, p)
+		if err != nil {
+			t.Errorf("GetFile(%q) should succeed: %v", p, err)
+			continue
+		}
+		if string(data) != "nested" {
+			t.Errorf("GetFile(%q) = %q, want %q", p, data, "nested")
+		}
 	}
 }
