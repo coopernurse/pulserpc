@@ -110,13 +110,16 @@ namespace PulseRPC.Tests
             Assert.Equal(7, response!["id"]);
         }
 
-        // csharp-04: a null result for a required return type is an error.
+        // csharp-04: a null result for a required return type is an error. The
+        // wire message is generic; validation details stay server-side (R15).
         [Fact]
         public void Call_NullResultForRequiredReturn_ReturnsError()
         {
             var response = CreateServer().Call(Request("Calc.nullReturn"));
             Assert.Equal(-32603, ErrorCode(response));
-            Assert.Contains("Response validation failed", ErrorData(response));
+            var err = Assert.IsType<Dictionary<string, object>>(response!["error"]);
+            Assert.Equal("Internal error", err["message"]);
+            Assert.False(err.ContainsKey("data"));
         }
 
         // csharp-05: by-name params are normalized using the IDL parameter names.

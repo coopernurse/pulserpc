@@ -97,7 +97,6 @@ namespace PulseRPC
         private readonly ITransport _transport;
         private readonly bool _validateRequest;
         private readonly bool _validateResponse;
-        private int _requestID;
         private readonly Dictionary<string, InterfaceClientProxy> _ifaces = new Dictionary<string, InterfaceClientProxy>();
         private IContractAuditor? _auditor;
         private bool _verifyOnBootstrap;
@@ -395,8 +394,9 @@ namespace PulseRPC
 
         private object NextRequestId()
         {
-            _requestID++;
-            return _requestID;
+            // GUIDs are unique without a shared counter, so concurrent callers
+            // cannot collide on an id (R20).
+            return Guid.NewGuid().ToString();
         }
 
         /// <summary>
