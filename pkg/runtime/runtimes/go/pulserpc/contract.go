@@ -192,14 +192,14 @@ func (c *Contract) typeResolver() *typeResolver {
 
 // FindStruct resolves a struct by possibly-qualified name in O(1) using the
 // index built at contract construction. Exact keys win; an ambiguous base name
-// resolves to nil.
+// resolves to the first key in sorted order, deterministically.
 func (c *Contract) FindStruct(structName string) StructDef {
 	return c.typeResolver().structs.resolve(structName)
 }
 
 // FindEnum resolves an enum by possibly-qualified name in O(1) using the index
 // built at contract construction. Exact keys win; an ambiguous base name
-// resolves to nil.
+// resolves to the first key in sorted order, deterministically.
 func (c *Contract) FindEnum(enumName string) EnumDef {
 	return c.typeResolver().enums.resolve(enumName)
 }

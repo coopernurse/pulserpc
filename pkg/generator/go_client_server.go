@@ -66,7 +66,6 @@ func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) ([]byte
 	return idlJSON, nil
 }
 
-
 // detectRuntimeImportPath determines the fully qualified import path for the pulserpc runtime
 // It returns (packageImportPath, runtimeImportPath, error)
 // - packageImportPath: the base import path for namespace packages (e.g., github.com/myapp/lib/rpc)
@@ -1101,6 +1100,7 @@ func generateClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	sb.WriteString("	\"io\"\n")
 	sb.WriteString("	\"net/http\"\n")
 	sb.WriteString("	\"strings\"\n")
+	sb.WriteString("	\"sync\"\n")
 	sb.WriteString("	\"sync/atomic\"\n")
 	sb.WriteString("	\"time\"\n")
 
@@ -1146,6 +1146,7 @@ func writeClientOptions(sb *strings.Builder) {
 	sb.WriteString("	SetValidateResponses(bool)\n")
 	sb.WriteString("	SetContract(*pulserpc.Contract)\n")
 	sb.WriteString("	SetAuditor(pulserpc.ContractAuditor)\n")
+	sb.WriteString("	SetVerifyOnBootstrap(bool)\n")
 	sb.WriteString("}\n\n")
 	sb.WriteString("// WithValidateRequests enables request validation\n")
 	sb.WriteString("func WithValidateRequests(v bool) ClientOption {\n")
@@ -1169,6 +1170,12 @@ func writeClientOptions(sb *strings.Builder) {
 	sb.WriteString("func WithAuditor(auditor pulserpc.ContractAuditor) ClientOption {\n")
 	sb.WriteString("	return func(c ClientConfigurator) {\n")
 	sb.WriteString("		c.SetAuditor(auditor)\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("}\n\n")
+	sb.WriteString("// VerifyOnBootstrap verifies the contract before the first RPC call.\n")
+	sb.WriteString("func VerifyOnBootstrap() ClientOption {\n")
+	sb.WriteString("	return func(c ClientConfigurator) {\n")
+	sb.WriteString("		c.SetVerifyOnBootstrap(true)\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("}\n\n")
 }
@@ -1315,6 +1322,7 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	sb.WriteString("	validateResponses bool\n")
 	sb.WriteString("	auditor          pulserpc.ContractAuditor\n")
 	sb.WriteString("	verifyOnBootstrap bool\n")
+	sb.WriteString("	verifyOnce       sync.Once\n")
 	sb.WriteString("}\n\n")
 
 	fmt.Fprintf(sb, "// New%s creates a new %s\n", clientName, clientName)
@@ -1355,8 +1363,26 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	sb.WriteString("	c.auditor = auditor\n")
 	sb.WriteString("}\n\n")
 
+	fmt.Fprintf(sb, "func (c *%s) SetVerifyOnBootstrap(v bool) {\n", clientName)
+	sb.WriteString("	c.verifyOnBootstrap = v\n")
+	sb.WriteString("}\n\n")
+
 	// Generate VerifyCompatibility method
 	writeVerifyCompatibilityMethod(sb, clientName)
+
+	// Verification runs once, before the first RPC, when VerifyOnBootstrap() is
+	// set. The generated client has no network bootstrap in its constructor, so
+	// the first call is the earliest safe point to fetch the server IDL.
+	fmt.Fprintf(sb, "// ensureBootstrapVerification verifies the contract once before the first RPC\n")
+	fmt.Fprintf(sb, "// call when VerifyOnBootstrap() was supplied.\n")
+	fmt.Fprintf(sb, "func (c *%s) ensureBootstrapVerification() {\n", clientName)
+	sb.WriteString("	if !c.verifyOnBootstrap {\n")
+	sb.WriteString("		return\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("	c.verifyOnce.Do(func() {\n")
+	sb.WriteString("		c.VerifyCompatibility(context.Background())\n")
+	sb.WriteString("	})\n")
+	sb.WriteString("}\n\n")
 
 	// Notify sends a request without an id through transports that support it.
 	fmt.Fprintf(sb, "// Notify sends a JSON-RPC notification to %s.\n", iface.Name)
@@ -1420,6 +1446,9 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 		fmt.Fprintf(sb, "\t\t%s,\n", param.Name)
 	}
 	sb.WriteString("\t}\n\n")
+
+	// Verify the contract once before the first RPC when VerifyOnBootstrap() is set.
+	sb.WriteString("\tc.ensureBootstrapVerification()\n\n")
 
 	// The generated validation flags must actually gate IDL validation.
 	fmt.Fprintf(sb, "\tif c.validateRequests && c.contract != nil {\n")

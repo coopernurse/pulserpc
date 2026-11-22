@@ -65,10 +65,13 @@ This creates:
 - `pkg/checkout/checkout.go` - Type definitions (with embedded IDL)
 - `pkg/checkout/server.go` - PulseRPC server framework
 - `pkg/checkout/client.go` - HTTP client framework
-- `pkg/pulserpc/rpc.go`, `types.go`, `validation.go` - Shared runtime (created once)
+- `pkg/pulserpc/` - Shared runtime package, copied in full (created once)
 
 > **Note**: The generated code uses the namespace from your IDL as the package name (`checkout` in this example).
 > The shared `pkg/pulserpc` runtime is created only once and reused for all generated packages in your project.
+> Generation copies every `.go` file in the embedded runtime package (for
+> example `rpc.go`, `client.go`, `server.go`, `contract.go`, `transport.go`,
+> `types.go`, `validation.go`, `auditor.go`, `diff.go`, and `severity.go`).
 >
 > Generation also writes `idl.json` (with `rootNamespace`, checksum, interfaces,
 > structs, enums, and errors) and embeds the same document in `server.go` as
@@ -84,10 +87,7 @@ checkout-service/
 ├── go.mod
 ├── checkout.pulse
 └── pkg/
-    ├── pulserpc/
-    │   ├── rpc.go
-    │   ├── types.go
-    │   └── validation.go
+    ├── pulserpc/          # Shared runtime package (all files copied)
     └── checkout/
         ├── all_types.go
         ├── checkout.go
@@ -167,14 +167,14 @@ func main() {
 		}
 	}
 	
-	// Or use VerifyOnBootstrap to check during client creation
+	// Or use VerifyOnBootstrap to verify once before the first RPC call
 	client2 := checkout.NewCatalogServiceClient(
 		transport,
 		checkout.VerifyOnBootstrap(),
 		checkout.WithAuditor(&checkout.LoggingAuditor{}),
 	)
 	
-	_ = client2 // ready to use
+	_ = client2 // verification runs on the first method call
 }
 {% endhighlight %}
 
@@ -217,10 +217,7 @@ checkout-service/
 ├── go.mod                 # Your module file
 ├── checkout.pulse         # Your IDL
 └── pkg/
-    ├── pulserpc/          # Shared runtime (created once, reused)
-    │   ├── rpc.go
-    │   ├── types.go
-    │   └── validation.go
+    ├── pulserpc/          # Shared runtime (created once, all files copied)
     └── checkout/          # Generated types
         ├── all_types.go   # Shared type maps
         ├── checkout.go    # Type definitions (with embedded IDL)
