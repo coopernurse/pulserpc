@@ -2360,6 +2360,7 @@ func writeTestMethodImplTs(sb *strings.Builder, iface *parser.Interface, method 
 		sb.WriteString("    // RepeatResponse.items should be a list of strings whose length is equal to req1.count\n")
 		sb.WriteString("    const text = req1.to_repeat || '';\n")
 		sb.WriteString("    const count = req1.count || 0;\n")
+		sb.WriteString("    if (count < 0) throw new Error('PULSERPC_SECRET_TOKEN_7F3A');\n")
 		sb.WriteString("    const forceUppercase = req1.force_uppercase || false;\n")
 		sb.WriteString("    const finalText = forceUppercase ? text.toUpperCase() : text;\n")
 		sb.WriteString("    const items: string[] = [];\n")

@@ -2176,6 +2176,7 @@ func writeMethodImplementationCs(sb *strings.Builder, iface *parser.Interface, m
 		case "repeat":
 			// Echos the req1.to_repeat string as a list, optionally forcing to_repeat to upper case
 			// RepeatResponse.items should be a list of strings whose length is equal to req1.count
+			sb.WriteString("        if (req1.Count < 0) throw new Exception(\"PULSERPC_SECRET_TOKEN_7F3A\");\n")
 			sb.WriteString("        var toRepeat = req1.ToRepeat;\n")
 			sb.WriteString("        if (req1.ForceUppercase) toRepeat = toRepeat.ToUpper();\n")
 			sb.WriteString("        var items = new List<string>();\n")

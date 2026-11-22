@@ -56,7 +56,7 @@ class AImpl(object):
         count = req1.get("count", 0)
         if count < 0:
             # Exercises the internal-error redaction invariant (D4/R15).
-            raise RuntimeError("secret-internal-detail")
+            raise RuntimeError("PULSERPC_SECRET_TOKEN_7F3A")
         text = req1.get("to_repeat", "")
         if req1.get("force_uppercase", False):
             text = text.upper()
