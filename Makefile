@@ -166,6 +166,17 @@ test-limits:
 	@echo "Testing resource limits against $(SERVER_URL)..."
 	@SERVER_URL=$(SERVER_URL) bash tests/integration/test_limits.sh
 
+# Internal-error redaction (D4/R15) and parallel-request behavior (R20/R21)
+# against a running server. Both are also run for every runtime by
+# `make test-all-runtimes`.
+test-internal-errors:
+	@echo "Testing internal-error redaction against $(SERVER_URL)..."
+	@SERVER_URL=$(SERVER_URL) bash tests/integration/test_internal_errors.sh
+
+test-concurrency:
+	@echo "Testing concurrent requests against $(SERVER_URL)..."
+	@SERVER_URL=$(SERVER_URL) bash tests/integration/test_concurrency.sh
+
 # Orphaned harness scripts, now reachable from `make`.
 test-numeric-types: build
 	@bash tests/integration/test_numeric_types.sh

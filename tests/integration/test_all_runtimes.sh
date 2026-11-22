@@ -17,6 +17,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEST_SERVERS_SCRIPT="$PROJECT_ROOT/scripts/test-servers.sh"
 HTTP_TEST_SCRIPT="$SCRIPT_DIR/test_http_api.sh"
 LIMITS_TEST_SCRIPT="$SCRIPT_DIR/test_limits.sh"
+INTERNAL_ERRORS_TEST_SCRIPT="$SCRIPT_DIR/test_internal_errors.sh"
+CONCURRENCY_TEST_SCRIPT="$SCRIPT_DIR/test_concurrency.sh"
 
 # Runtime ports (matching test-servers.sh configuration)
 # All seven runtimes advertised in docs/RUNTIME_IMPLEMENTATION_GUIDE.md.
@@ -59,6 +61,13 @@ if [ ! -f "$LIMITS_TEST_SCRIPT" ]; then
     echo -e "${RED}ERROR: Limit test script not found at $LIMITS_TEST_SCRIPT${NC}"
     exit 1
 fi
+
+for required_script in "$INTERNAL_ERRORS_TEST_SCRIPT" "$CONCURRENCY_TEST_SCRIPT"; do
+    if [ ! -f "$required_script" ]; then
+        echo -e "${RED}ERROR: Conformance script not found at $required_script${NC}"
+        exit 1
+    fi
+done
 
 # Start all test servers
 echo -e "${YELLOW}Starting all test servers...${NC}"
@@ -129,6 +138,20 @@ for runtime in python ts csharp java go python2 ts-cjs; do
     if ! SERVER_URL="$url" bash "$LIMITS_TEST_SCRIPT"; then
         echo ""
         echo -e "${RED}✗ $runtime runtime: limit tests failed${NC}"
+        runtime_ok=0
+    fi
+
+    echo ""
+    if ! SERVER_URL="$url" bash "$INTERNAL_ERRORS_TEST_SCRIPT"; then
+        echo ""
+        echo -e "${RED}✗ $runtime runtime: internal-error redaction tests failed${NC}"
+        runtime_ok=0
+    fi
+
+    echo ""
+    if ! SERVER_URL="$url" bash "$CONCURRENCY_TEST_SCRIPT"; then
+        echo ""
+        echo -e "${RED}✗ $runtime runtime: concurrency tests failed${NC}"
         runtime_ok=0
     fi
 
