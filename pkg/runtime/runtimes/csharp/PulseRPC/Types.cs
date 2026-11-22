@@ -14,36 +14,7 @@ namespace PulseRPC
         /// </summary>
         public static Dictionary<string, object>? FindStruct(string structName, Dictionary<string, Dictionary<string, object>> allStructs)
         {
-            // Exact match first.
-            if (allStructs.TryGetValue(structName, out var structDef))
-            {
-                return structDef;
-            }
-
-            // A field may reference a struct by a qualified name such as
-            // "inc.Address" while the struct is registered as "Address". Mirror
-            // FindEnum's qualified-name fallback. When two namespaces register the
-            // same base name, resolve deterministically to the first full name in
-            // ordinal order so resolution is stable (rather than arbitrary).
-            if (structName.Contains("."))
-            {
-                var baseName = structName.Substring(structName.LastIndexOf('.') + 1);
-                if (allStructs.TryGetValue(baseName, out structDef))
-                {
-                    return structDef;
-                }
-
-                var candidate = allStructs.Keys
-                    .Where(k => k.EndsWith("." + baseName, StringComparison.Ordinal))
-                    .OrderBy(k => k, StringComparer.Ordinal)
-                    .FirstOrDefault();
-                if (candidate != null)
-                {
-                    return allStructs[candidate];
-                }
-            }
-
-            return null;
+            return ResolveQualifiedName(structName, allStructs);
         }
 
         /// <summary>
@@ -51,18 +22,38 @@ namespace PulseRPC
         /// </summary>
         public static Dictionary<string, object>? FindEnum(string enumName, Dictionary<string, Dictionary<string, object>> allEnums)
         {
-            // Try qualified name first
-            if (allEnums.TryGetValue(enumName, out var enumDef))
-                return enumDef;
-            
-            // Try unqualified name (extract base name from qualified name)
-            if (enumName.Contains("."))
+            return ResolveQualifiedName(enumName, allEnums);
+        }
+
+        /// <summary>
+        /// Shared qualified-name resolution (D16): exact key, then exact base
+        /// name, then first sorted qualified key sharing the base name.
+        /// </summary>
+        private static Dictionary<string, object>? ResolveQualifiedName(string name, Dictionary<string, Dictionary<string, object>> all)
+        {
+            if (all.TryGetValue(name, out var def))
             {
-                var baseName = enumName.Substring(enumName.LastIndexOf('.') + 1);
-                if (allEnums.TryGetValue(baseName, out enumDef))
-                    return enumDef;
+                return def;
             }
-            
+
+            if (name.Contains("."))
+            {
+                var baseName = name.Substring(name.LastIndexOf('.') + 1);
+                if (all.TryGetValue(baseName, out def))
+                {
+                    return def;
+                }
+
+                var candidate = all.Keys
+                    .Where(k => k.EndsWith("." + baseName, StringComparison.Ordinal))
+                    .OrderBy(k => k, StringComparer.Ordinal)
+                    .FirstOrDefault();
+                if (candidate != null && all.TryGetValue(candidate, out def))
+                {
+                    return def;
+                }
+            }
+
             return null;
         }
 
