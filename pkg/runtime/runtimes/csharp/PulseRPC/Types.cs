@@ -51,18 +51,35 @@ namespace PulseRPC
         /// </summary>
         public static Dictionary<string, object>? FindEnum(string enumName, Dictionary<string, Dictionary<string, object>> allEnums)
         {
-            // Try qualified name first
+            // Exact match first.
             if (allEnums.TryGetValue(enumName, out var enumDef))
+            {
                 return enumDef;
-            
-            // Try unqualified name (extract base name from qualified name)
+            }
+
+            // A field may reference an enum by a qualified name such as
+            // "inc.Color" while the enum is registered as "Color". Mirror
+            // FindStruct's qualified-name fallback. When two namespaces register
+            // the same base name, resolve deterministically to the first full
+            // name in ordinal order so resolution is stable.
             if (enumName.Contains("."))
             {
                 var baseName = enumName.Substring(enumName.LastIndexOf('.') + 1);
                 if (allEnums.TryGetValue(baseName, out enumDef))
+                {
                     return enumDef;
+                }
+
+                var candidate = allEnums.Keys
+                    .Where(k => k.EndsWith("." + baseName, StringComparison.Ordinal))
+                    .OrderBy(k => k, StringComparer.Ordinal)
+                    .FirstOrDefault();
+                if (candidate != null)
+                {
+                    return allEnums[candidate];
+                }
             }
-            
+
             return null;
         }
 
