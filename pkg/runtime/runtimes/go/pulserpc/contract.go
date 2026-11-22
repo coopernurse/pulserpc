@@ -346,6 +346,23 @@ func convertToMap(value interface{}) (interface{}, error) {
 		return result, nil
 	}
 
+	// Generated enums (and other named primitives) are distinct Go types.
+	// Normalize them to their underlying primitive so validation sees the
+	// same shape it would after a JSON round trip.
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.String:
+		return rv.String(), nil
+	case reflect.Bool:
+		return rv.Bool(), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(rv.Int()), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return float64(rv.Uint()), nil
+	case reflect.Float32, reflect.Float64:
+		return rv.Float(), nil
+	}
+
 	// For structs, convert to map via JSON
 	jsonBytes, err := json.Marshal(value)
 	if err != nil {

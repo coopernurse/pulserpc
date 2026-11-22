@@ -114,10 +114,14 @@ func ValidateMapE(value interface{}, valueValidator func(interface{}, string) []
 }
 
 func ValidateEnumE(value interface{}, enumName string, allowedValues []string, path string) []ValidationError {
-	strValue, ok := value.(string)
-	if !ok {
+	// Generated enums are named string types (e.g. `type MathOp string`).
+	// A plain type assertion to string rejects those, so accept any value
+	// whose underlying kind is string.
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() || rv.Kind() != reflect.String {
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected string for enum %s, got %T", enumName, value)}}
 	}
+	strValue := rv.String()
 	for _, allowed := range allowedValues {
 		if strValue == allowed {
 			return nil
