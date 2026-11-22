@@ -225,28 +225,28 @@ iface.Functions[funcName] = funcDef;
                 throw new ArgumentException($"Function '{ifaceName}.{funcName}' expects {paramDefs.Count} param(s), {@params.Count} given");
             }
 
-            // Validate each parameter
+            // Validate each parameter and accumulate errors
+            var allErrors = new List<ValidationError>();
             for (int i = 0; i < @params.Count; i++)
             {
                 var paramValue = @params[i];
                 var paramDef = paramDefs[i] as Dictionary<string, object>;
                 if (paramDef == null) continue;
 
-                var paramName = paramDef.TryGetValue("name", out var pn) ? pn?.ToString() ?? "" : "";
                 var paramType = paramDef.TryGetValue("type", out var pt) && pt is Dictionary<string, object> ptDict
                     ? ptDict
                     : new Dictionary<string, object>();
 
                 var isOptional = paramDef.TryGetValue("optional", out var optObj) && optObj is bool opt && opt;
 
-                try
-                {
-                    Validation.ValidateType(paramValue, paramType, Structs, Enums, isOptional);
-                }
-                catch (Exception e)
-                {
-                    throw new ArgumentException($"Function '{ifaceName}.{funcName}' invalid param '{paramName}': {e.Message}", e);
-                }
+                var errs = Validation.ValidateType(paramValue, paramType, Structs, Enums, isOptional, $"param[{i}]");
+                allErrors.AddRange(errs);
+            }
+
+            if (allErrors.Count > 0)
+            {
+                var vr = ValidationResult.Fail(allErrors);
+                throw new RPCError(-32602, $"Function '{ifaceName}.{funcName}' invalid params", vr.ToDictionary());
             }
         }
 
@@ -281,13 +281,22 @@ iface.Functions[funcName] = funcDef;
             // Validate return type
             var isOptional = fn.TryGetValue("returnOptional", out var retOptObj) && retOptObj is bool retOpt && retOpt;
 
-            try
+            if (result == null)
             {
-                Validation.ValidateType(result, returnType, Structs, Enums, isOptional);
+                if (!isOptional)
+                {
+                    var errs = new List<ValidationError> { new ValidationError("", "Value cannot be null for non-optional type") };
+                    var vr = ValidationResult.Fail(errs);
+                    throw new RPCError(-32603, $"Function '{ifaceName}.{funcName}' invalid response", vr.ToDictionary());
+                }
+                return;
             }
-            catch (Exception e)
+
+            var subErrs = Validation.ValidateType(result, returnType, Structs, Enums, isOptional, "");
+            if (subErrs.Count > 0)
             {
-                throw new ArgumentException($"Function '{ifaceName}.{funcName}' invalid response: {e.Message}", e);
+                var vr = ValidationResult.Fail(subErrs);
+                throw new RPCError(-32603, $"Function '{ifaceName}.{funcName}' invalid response", vr.ToDictionary());
             }
         }
     }

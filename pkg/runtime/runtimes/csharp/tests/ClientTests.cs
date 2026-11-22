@@ -213,8 +213,8 @@ namespace PulseRPC.Tests
 
             var client = new Client(transport, validateResponse: true);
 
-            var ex = Assert.Throws<Exception>(() => client.Call("Calc.nullReturn"));
-            Assert.Contains("Response validation failed", ex.Message);
+            var ex = Assert.Throws<RPCError>(() => client.Call("Calc.nullReturn"));
+            Assert.Contains("invalid response", ex.Message);
         }
     }
 }
