@@ -43,8 +43,9 @@ public class Server {
         // Invariant R24/D2: id must be a string, number, or null.
         Object reqId = request.get("id");
 
-        // Check for notification (no 'id' means no response expected). Computed up
-        // front so every error path below can suppress the response (java-01).
+        // Check for notification (no 'id' or null 'id' means no response
+        // expected, per invariant M21). Computed up front so every error path
+        // below can suppress the response (java-01).
         boolean isNotification = (reqId == null);
 
         if (reqId != null && !(reqId instanceof String) && !(reqId instanceof Number)) {
