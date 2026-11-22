@@ -172,6 +172,26 @@ json_type() {
     json_probe "$1" | cut -f1
 }
 
+# json_encode_string <raw-string> prints a JSON string literal for the value.
+# json_get deliberately returns strings without their JSON quotes (other probes
+# depend on that), so a probe comparing against a JSON literal must re-encode
+# string values first. Numbers, booleans, arrays and objects are already valid
+# JSON from json_get and are passed through unchanged.
+json_encode_string() {
+    local value="$1"
+
+    if [ -n "$JSON_PY" ]; then
+        "$JSON_PY" -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$value"
+        return 0
+    fi
+    if [ -n "$JSON_JQ" ]; then
+        "$JSON_JQ" -n --arg v "$value" '$v'
+        return 0
+    fi
+    # Last-resort fallback: escape backslashes and double quotes.
+    printf '"%s"' "$(printf '%s' "$value" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+}
+
 # values_equal <actual-json> <expected-json> compares two JSON values by type
 # and structure. Integers, booleans and strings must match exactly; numbers
 # that are declared as floats (written with a fraction or exponent in the
@@ -257,6 +277,9 @@ do_request() {
         REQUEST_STATUS=$(curl -sS --connect-timeout 5 --max-time "$max_time" -o "$body_file" -D "$headers_file" -w '%{http_code}' \
             -X "$method" "$url" 2>/dev/null || echo "000")
     fi
+    # curl's %{http_code} is 3 digits, but the `|| echo "000"` fallback can
+    # append to it (e.g. 405000). Keep only the leading status code.
+    REQUEST_STATUS="${REQUEST_STATUS:0:3}"
 
     REQUEST_BODY=$(cat "$body_file")
     REQUEST_CONTENT_TYPE=$(tr -d '\r' < "$headers_file" | awk 'BEGIN{IGNORECASE=1} /^Content-Type:/{sub(/^[^:]*:[ \t]*/, ""); print; exit}')
@@ -328,13 +351,23 @@ test_method() {
             ok=0
             detail="${detail}unexpected error object; "
         fi
-        if [ "$(json_type "$expected_field")" = "__MISSING__" ]; then
+        local value_type
+        value_type=$(json_type "$expected_field")
+        if [ "$value_type" = "__MISSING__" ]; then
             ok=0
             detail="${detail}missing expected field: $expected_field; "
         elif [ -n "$expected_value" ]; then
-            local actual_value
+            local actual_value actual_json
             actual_value=$(json_get "$expected_field")
-            if ! values_equal "$actual_value" "$expected_value"; then
+            if [ "$value_type" = "str" ]; then
+                # json_get strips JSON quotes from strings; re-quote before
+                # comparing so `"hello"` matches the unquoted value `hello`.
+                # Numeric/bool/array/object values stay byte-for-byte exact.
+                actual_json=$(json_encode_string "$actual_value")
+            else
+                actual_json="$actual_value"
+            fi
+            if ! values_equal "$actual_json" "$expected_value"; then
                 ok=0
                 detail="${detail}$expected_field value was $actual_value, expected $expected_value; "
             fi
@@ -503,7 +536,10 @@ else
 fi
 record_result "Validation error carries structured data (invalid_fields)" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 
-# R3: every offending parameter gets its own invalid_fields entry.
+# R3: invalid_fields entries are `param[<index>]` selectors. Accumulation is
+# intentionally divergent per R3: Python3/TS collect every offending param,
+# while Go/Java/Python2/C# fail fast and report only the first one. Only one
+# entry is therefore required here, but every present entry must be well formed.
 do_request POST '{"jsonrpc":"2.0","method":"A.add","params":["five","three"],"id":98}'
 probe_ok=1
 probe_detail=""
@@ -514,11 +550,24 @@ if [ "$(json_type "")" != "dict" ]; then
     probe_ok=0; probe_detail="${probe_detail}response is not an object; "
 else
     [ "$(json_get error.code)" = "-32602" ] || { probe_ok=0; probe_detail="${probe_detail}error.code != -32602; "; }
-    [ "$(json_type error.data.invalid_fields)" = "list" ] || { probe_ok=0; probe_detail="${probe_detail}error.data.invalid_fields is not a list; "; }
-    [ "$(json_type error.data.invalid_fields.0)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}invalid_fields has no first entry; "; }
-    [ "$(json_type error.data.invalid_fields.1)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}invalid_fields has no second entry; "; }
+    if [ "$(json_type error.data.invalid_fields)" = "__MISSING__" ]; then
+        probe_ok=0; probe_detail="${probe_detail}error.data.invalid_fields missing; "
+    elif [ "$(json_type error.data.invalid_fields)" != "list" ]; then
+        probe_ok=0; probe_detail="${probe_detail}error.data.invalid_fields is not a list; "
+    elif [ "$(json_type error.data.invalid_fields.0)" = "__MISSING__" ]; then
+        probe_ok=0; probe_detail="${probe_detail}invalid_fields has no entries; "
+    else
+        entry_index=0
+        while [ "$(json_type "error.data.invalid_fields.$entry_index")" != "__MISSING__" ]; do
+            field_entry=$(json_get "error.data.invalid_fields.$entry_index")
+            if ! printf '%s' "$field_entry" | grep -Eq '^param\[[0-9]+\]$'; then
+                probe_ok=0; probe_detail="${probe_detail}invalid_fields[$entry_index] is not a param index selector: $field_entry; "
+            fi
+            entry_index=$((entry_index + 1))
+        done
+    fi
 fi
-record_result "Multiple invalid params list at least two invalid fields" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+record_result "Invalid params list well-formed param[index] selectors" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 
 # Invalid enum values
 test_validation_error "A.calc" "[[33,22],\"subtract\"]" "A.calc with invalid enum value" "-32602"
@@ -840,14 +889,20 @@ for http_method in GET PUT DELETE PATCH HEAD OPTIONS; do
     probe_ok=1
     probe_detail=""
     [ "$REQUEST_STATUS" = "405" ] || { probe_ok=0; probe_detail="${probe_detail}expected HTTP 405, got $REQUEST_STATUS; "; }
-    printf '%s' "$REQUEST_CONTENT_TYPE" | grep -qi 'application/json' || { probe_ok=0; probe_detail="${probe_detail}Content-Type is not application/json; "; }
-    if [ "$(json_type "")" != "dict" ]; then
-        probe_ok=0; probe_detail="${probe_detail}body is not a JSON-RPC error object; "
+    if [ "$http_method" = "HEAD" ]; then
+        # A HEAD response must not carry a body, so only the status can be
+        # asserted; Content-Type/JSON-RPC body checks would be meaningless.
+        :
     else
-        [ "$(json_get jsonrpc)" = "2.0" ] || { probe_ok=0; probe_detail="${probe_detail}jsonrpc != 2.0; "; }
-        [ "$(json_get error.code)" = "-32600" ] || { probe_ok=0; probe_detail="${probe_detail}error.code != -32600; "; }
-        [ "$(json_get error.message)" = "Invalid Request - only POST allowed" ] || { probe_ok=0; probe_detail="${probe_detail}error.message is not the exact D3 text; "; }
-        [ "$(json_get id)" = "null" ] || { probe_ok=0; probe_detail="${probe_detail}id is not null; "; }
+        printf '%s' "$REQUEST_CONTENT_TYPE" | grep -qi 'application/json' || { probe_ok=0; probe_detail="${probe_detail}Content-Type is not application/json; "; }
+        if [ "$(json_type "")" != "dict" ]; then
+            probe_ok=0; probe_detail="${probe_detail}body is not a JSON-RPC error object; "
+        else
+            [ "$(json_get jsonrpc)" = "2.0" ] || { probe_ok=0; probe_detail="${probe_detail}jsonrpc != 2.0; "; }
+            [ "$(json_get error.code)" = "-32600" ] || { probe_ok=0; probe_detail="${probe_detail}error.code != -32600; "; }
+            [ "$(json_get error.message)" = "Invalid Request - only POST allowed" ] || { probe_ok=0; probe_detail="${probe_detail}error.message is not the exact D3 text; "; }
+            [ "$(json_get id)" = "null" ] || { probe_ok=0; probe_detail="${probe_detail}id is not null; "; }
+        fi
     fi
     record_result "$http_method is rejected with 405 and -32600" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 done
