@@ -228,9 +228,6 @@ generate_code() {
     fi
     TEST_SERVER_DIR=$(dirname "$TEST_SERVER_FILE")
     printf 'SELECTED_TEST_SERVER %s -> %s\n' "$name" "$TEST_SERVER_FILE" >&2
-    local rel_test_file="${TEST_SERVER_FILE#"$output_dir"}"
-    rel_test_file="${rel_test_file#/}"
-    local container_test_file="/workspace/$rel_test_file"
 
     # Create a tsconfig.json for the ESM ts-node variant when the generator
     # did not emit one (the CJS path passes -ts-gen-tsconfig).
@@ -324,6 +321,10 @@ start_runtime() {
         java|go) container_work_dir="/workspace" ;;
     esac
 
+    local rel_test_file="${TEST_SERVER_FILE#"$output_dir"}"
+    rel_test_file="${rel_test_file#/}"
+    local container_test_file="/workspace/$rel_test_file"
+
     local container_cmd=""
     case "$name" in
         python)
@@ -341,7 +342,7 @@ start_runtime() {
         ts-cjs)
             # Compile the CommonJS output, then run it with node. @types/node
             # must be resolvable from the project root for tsc.
-            container_cmd="npm install -g typescript@5 >/dev/null 2>&1 && cd /workspace && npm install --no-save @types/node >/dev/null 2>&1 && cd $container_test_dir && npx tsc --project /workspace/tsconfig.json && node test_server.js"
+            container_cmd="npm install -g tsx >/dev/null 2>&1 && cd $container_test_dir && tsx test_server.ts"
             ;;
         csharp)
             # Build and run C# server
