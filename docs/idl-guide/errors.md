@@ -98,8 +98,7 @@ When an error occurs, the JSON-RPC response includes:
   "id": 1,
   "error": {
     "code": 1001,
-    "message": "Not Found",
-    "data": null
+    "message": "Not Found"
   }
 }
 ```
