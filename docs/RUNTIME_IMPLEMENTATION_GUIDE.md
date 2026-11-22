@@ -904,8 +904,8 @@ an error response for malformed input. Generated adapters suppress error
 envelopes as well as success envelopes for notifications.
 
 Batch requests (an array of requests) are **optional** for generated adapters. The
-generated Go, C# and Java servers support them; generated TypeScript and Python
-servers do not. Batch support is therefore not part of the generated-server
+generated Go, C#, Java, TypeScript and Python servers all support them (with the
+100-entry batch cap). Batch support is therefore part of the generated-server
 compliance checklist. Parse errors (-32700) are emitted by the generated Go,
 Python, TypeScript and C# servers; the generated Java server emits -32700 for a
 malformed JSON body.
@@ -1310,7 +1310,7 @@ When implementing a new runtime, ensure:
 - [ ] Client validates parameters and responses
 - [ ] HTTP transport supports custom headers
 - [ ] Server handles `pulserpc-idl` method
-- [ ] Server handles batch requests (optional; Go, C# and Java generated servers do)
+- [ ] Server handles batch requests (all generated servers do, up to the 100-entry cap)
 - [ ] Server handles notifications
 - [ ] Makefile targets for testing
 - [ ] Docker testing setup

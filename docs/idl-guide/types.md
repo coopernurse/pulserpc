@@ -12,7 +12,7 @@ PulseRPC supports a rich type system for defining your service contracts.
 | IDL Type | Description | Go | Java | Python | TypeScript |
 |----------|-------------|-----|------|--------|-----------|
 | `string` | Text/UTF-8 strings | `string` | `String` | `str` | `string` |
-| `int` | 64-bit integers | `int64` | `Long` | `int` | `number` |
+| `int` | Signed 32-bit integers (`[-2147483648, 2147483647]`) | `int` | `int`/`Integer` | `int` | `number` |
 | `float` | 64-bit floating point | `float64` | `Double` | `float` | `number` |
 | `bool` | Boolean values | `bool` | `Boolean` | `bool` | `boolean` |
 
