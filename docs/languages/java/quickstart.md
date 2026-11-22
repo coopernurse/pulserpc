@@ -48,8 +48,9 @@ pulserpc -plugin java-client-server -dir src/main/java -package com.example.myap
 ```
 
 This creates:
-- `src/main/java/com/example/myapp/checkout/` - Type definitions and Server/Client frameworks (package `com.example.myapp.checkout`)
-- `src/main/java/pulserpc/` - Runtime library (package `pulserpc`)
+- `src/main/java/com/example/myapp/checkout/` - Type definitions and per-interface clients (package `com.example.myapp.checkout`)
+- `src/main/java/com/example/myapp/` - Generated `Server.java` and `Client.java` (package `com.example.myapp`)
+- `src/main/java/com/bitmechanic/pulserpc/` - Runtime library (package `com.bitmechanic.pulserpc`)
 
 The IDL is embedded directly in `Server.java` for the `pulserpc-idl` RPC method.
 
