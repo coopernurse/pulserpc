@@ -80,7 +80,7 @@ quality: lint test lint-webui test-webui
 
 # Run quality checks plus slower generator, quickstart, and cross-cutting
 # integration scripts.
-quality-full: build quality test-runtimes test-quickstarts test-generators test-integration-scripts test-openapi
+quality-full: build quality test-runtimes test-quickstarts test-generators test-integration-scripts test-openapi test-limits
 	@echo "Full quality checks completed"
 
 # Install required tools

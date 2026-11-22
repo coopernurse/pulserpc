@@ -15,7 +15,7 @@ import (
 // the same shape the generator passes to both writers.
 func marshalTestIDLJSON(t *testing.T, idl *parser.IDL) []byte {
 	t.Helper()
-	data, err := marshalIDLMetadataGo(idl)
+	data, err := MarshalIDLJSON(idl)
 	if err != nil {
 		t.Fatalf("marshalIDLMetadataGo: %v", err)
 	}

@@ -1,7 +1,6 @@
 package generator
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -92,6 +91,15 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
+	// The copied runtime sources declare `namespace PulseRPC`. When a base
+	// package is set they must live under that package so the generated
+	// `using <base>.PulseRPC;` directives resolve (D8).
+	if paths.PackageBase != "" {
+		if err := rewriteCSharpRuntimeNamespace(paths.ResolveRuntimeDir(), paths.GetRuntimeImport()); err != nil {
+			return fmt.Errorf("failed to rewrite C# runtime namespace: %w", err)
+		}
+	}
+
 	// Get sorted list of all namespaces
 	namespaces := CollectSortedNamespaces(namespaceMap)
 
@@ -151,7 +159,7 @@ func (p *CSharpClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 	idl.Checksum = checksum
 
-	jsonData, err := json.MarshalIndent(idl, "", "  ")
+	jsonData, err := MarshalIDLJSON(idl)
 	if err != nil {
 		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)
 	}
@@ -2581,4 +2589,27 @@ func generateNamespaceClientCs(namespace string, _ *NamespaceTypes, _ map[string
 	sb.WriteString("}\n")
 
 	return sb.String()
+}
+
+// rewriteCSharpRuntimeNamespace rewrites the namespace declaration of every
+// copied runtime source so it lives under `namespace` (e.g.
+// MyApp.Rpc.PulseRPC) when a base package is set. The embedded runtime files
+// declare `namespace PulseRPC` and the generated code imports that qualified
+// name; without the rewrite the generated project does not compile.
+func rewriteCSharpRuntimeNamespace(runtimeDir, namespace string) error {
+	if namespace == "" || namespace == "PulseRPC" {
+		return nil
+	}
+	return filepath.Walk(runtimeDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".cs") {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		content := strings.ReplaceAll(string(data), "namespace PulseRPC", "namespace "+namespace)
+		content = strings.ReplaceAll(content, "using PulseRPC;", "using "+namespace+";")
+		return os.WriteFile(path, []byte(content), 0644)
+	})
 }

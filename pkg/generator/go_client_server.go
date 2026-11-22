@@ -1,7 +1,6 @@
 package generator
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -54,7 +53,7 @@ func (p *GoClientServer) RegisterFlags(fs *flag.FlagSet) {
 // Contract class at startup, and it must be accessible as {root}/idl.json regardless
 // of which namespace mode is active.
 func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) ([]byte, error) {
-	idlJSON, err := marshalIDLMetadataGo(idl)
+	idlJSON, err := MarshalIDLJSON(idl)
 	if err != nil {
 		return nil, err
 	}
@@ -67,57 +66,6 @@ func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) ([]byte
 	return idlJSON, nil
 }
 
-// marshalIDLMetadataGo computes the checksum, persists it on the IDL, and
-// marshals the shared IDL schema exactly once. Every consumer (idl.json and the
-// embedded IDL_JSON constant) must use the returned bytes so the two forms stay
-// byte-identical (C2/D8).
-func marshalIDLMetadataGo(idl *parser.IDL) ([]byte, error) {
-	checksum, err := parser.ComputeChecksum(idl)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute checksum: %w", err)
-	}
-
-	// core-14: persist the checksum on the IDL itself so every serialized form
-	// (idl.json and the generated IDL_JSON constant) carries it.
-	idl.Checksum = checksum
-
-	idlJSON, err := json.MarshalIndent(idlMetadataGo(idl), "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal IDL output to JSON: %w", err)
-	}
-	return idlJSON, nil
-}
-
-// idlMetadataGo builds the D8 IDL JSON schema shared by idl.json and the
-// embedded IDL_JSON constant. Every top-level key is present even when its
-// collection is empty, so both forms always expose the same schema.
-func idlMetadataGo(idl *parser.IDL) map[string]interface{} {
-	interfaces := idl.Interfaces
-	if interfaces == nil {
-		interfaces = []*parser.Interface{}
-	}
-	structs := idl.Structs
-	if structs == nil {
-		structs = []*parser.Struct{}
-	}
-	enums := idl.Enums
-	if enums == nil {
-		enums = []*parser.Enum{}
-	}
-	errors := idl.Errors
-	if errors == nil {
-		errors = []*parser.ErrorDef{}
-	}
-
-	return map[string]interface{}{
-		"rootNamespace": idl.RootNamespace,
-		"interfaces":    interfaces,
-		"structs":       structs,
-		"enums":         enums,
-		"errors":        errors,
-		"checksum":      idl.Checksum,
-	}
-}
 
 // detectRuntimeImportPath determines the fully qualified import path for the pulserpc runtime
 // It returns (packageImportPath, runtimeImportPath, error)

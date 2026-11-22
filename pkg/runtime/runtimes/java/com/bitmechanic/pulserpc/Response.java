@@ -1,5 +1,6 @@
 package com.bitmechanic.pulserpc;
 
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -129,7 +130,14 @@ public class Response {
             response.setResult(envelope.get("result"));
         }
         if (envelope.containsKey("error")) {
-            response.setError((Map<String, Object>) envelope.get("error"));
+            Object err = envelope.get("error");
+            if (err instanceof Map) {
+                response.setError((Map<String, Object>) err);
+            } else {
+                Map<String, Object> wrap = new HashMap<>();
+                wrap.put("message", err == null ? "Unknown error" : String.valueOf(err));
+                response.setError(wrap);
+            }
         }
         return response;
     }

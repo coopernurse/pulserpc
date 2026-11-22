@@ -99,9 +99,28 @@ public class Client {
 
         if (response.hasError()) {
             Map<String, Object> errObj = response.getError();
-            int code = errObj.containsKey("code") ? ((Number) errObj.get("code")).intValue() : -32603;
-            String message = errObj.containsKey("message") ? (String) errObj.get("message") : "Unknown error";
-            Object data = errObj.get("data");
+            int code = -32603;
+            String message = "Unknown error";
+            Object data = null;
+            if (errObj != null) {
+                Object codeObj = errObj.get("code");
+                if (codeObj instanceof Number) {
+                    code = ((Number) codeObj).intValue();
+                } else if (codeObj != null) {
+                    try {
+                        code = Integer.parseInt(codeObj.toString());
+                    } catch (NumberFormatException ignored) {
+                        code = -32603;
+                    }
+                }
+                Object msgObj = errObj.get("message");
+                if (msgObj instanceof String) {
+                    message = (String) msgObj;
+                } else if (msgObj != null) {
+                    message = msgObj.toString();
+                }
+                data = errObj.get("data");
+            }
             throw new RPCError(code, message, data);
         }
 

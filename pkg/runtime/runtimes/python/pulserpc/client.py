@@ -208,14 +208,25 @@ class Client:
         # and exactly one of result/error (audit python-04).
         self._validate_response_envelope(response, req_id)
 
-        # Check for error response
+        # Check for error response.  Malformed error objects (a string, null,
+        # or a missing code/message) must not crash the client; normalize them
+        # into a controlled RPCError (M25).
         if 'error' in response:
             error = response['error']
-            raise RPCError(
-                code=error.get('code', INTERNAL_ERROR),
-                message=error.get('message', 'Unknown error'),
-                data=error.get('data')
-            )
+            if not isinstance(error, dict):
+                error = {
+                    'message': 'Unknown error' if error is None else str(error)
+                }
+            code = error.get('code', INTERNAL_ERROR)
+            try:
+                code = int(code)
+            except (TypeError, ValueError):
+                code = INTERNAL_ERROR
+            message = error.get('message', 'Unknown error')
+            if not isinstance(message, str):
+                message = 'Unknown error' if message is None else str(message)
+            data = error.get('data')
+            raise RPCError(code=code, message=message, data=data)
 
         # Get result
         result = response.get('result')

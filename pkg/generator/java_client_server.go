@@ -1,7 +1,6 @@
 package generator
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -194,7 +193,7 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 	idl.Checksum = checksum
 
-	idlJSON, err := json.MarshalIndent(idl, "", "  ")
+	idlJSON, err := MarshalIDLJSON(idl)
 	if err != nil {
 		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)
 	}

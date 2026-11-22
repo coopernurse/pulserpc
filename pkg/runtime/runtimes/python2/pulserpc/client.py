@@ -124,11 +124,20 @@ class Client(object):
 
         if "error" in response:
             error = response["error"]
-            raise RPCError(
-                code=error.get("code", -32603),
-                message=error.get("message", "Unknown error"),
-                data=error.get("data"),
-            )
+            if not isinstance(error, dict):
+                error = {
+                    "message": "Unknown error" if error is None else str(error)
+                }
+            code = error.get("code", -32603)
+            try:
+                code = int(code)
+            except (TypeError, ValueError):
+                code = -32603
+            message = error.get("message", "Unknown error")
+            if not isinstance(message, str):
+                message = "Unknown error" if message is None else str(message)
+            data = error.get("data")
+            raise RPCError(code=code, message=message, data=data)
 
         result = response.get("result")
 

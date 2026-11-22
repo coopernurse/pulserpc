@@ -462,11 +462,25 @@ namespace PulseRPC
 
         private static RPCError ParseRpcError(object? errorObj)
         {
-            var err = NormalizeResponse(errorObj)
-                ?? throw new InvalidOperationException("Server error object is malformed");
-            var code = err.TryGetValue("code", out var codeObj) ? Convert.ToInt32(codeObj) : -32603;
-            var message = err.TryGetValue("message", out var msgObj)
-                ? msgObj?.ToString() ?? "Unknown error"
+            var err = NormalizeResponse(errorObj);
+            if (err == null)
+            {
+                return new RPCError(-32600, "Invalid response: error must be an object", errorObj);
+            }
+            var code = -32603;
+            if (err.TryGetValue("code", out var codeObj) && codeObj != null)
+            {
+                try
+                {
+                    code = Convert.ToInt32(codeObj);
+                }
+                catch (Exception)
+                {
+                    code = -32603;
+                }
+            }
+            var message = err.TryGetValue("message", out var msgObj) && msgObj != null
+                ? (msgObj.ToString() ?? "Unknown error")
                 : "Unknown error";
             err.TryGetValue("data", out var data);
             return new RPCError(code, message!, data);

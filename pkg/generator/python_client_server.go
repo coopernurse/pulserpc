@@ -1,7 +1,6 @@
 package generator
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -283,7 +282,7 @@ func writeIDLJSON(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 	}
 	idl.Checksum = checksum
 
-	idlJSON, err := json.MarshalIndent(idl, "", "  ")
+	idlJSON, err := MarshalIDLJSON(idl)
 	if err != nil {
 		return fmt.Errorf("failed to marshal IDL to JSON: %w", err)
 	}
