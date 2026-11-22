@@ -172,6 +172,69 @@ json_type() {
     json_probe "$1" | cut -f1
 }
 
+# values_equal <actual-json> <expected-json> compares two JSON values by type
+# and structure. Integers, booleans and strings must match exactly; numbers
+# that are declared as floats (written with a fraction or exponent in the
+# expected value) are compared with a numeric tolerance so that JSON renderings
+# such as 5 and 5.0 are equivalent. Arrays and objects are compared deeply.
+values_equal() {
+    local actual="$1"
+    local expected="$2"
+
+    if [ -n "$JSON_PY" ]; then
+        "$JSON_PY" -c '
+import json, math, sys
+
+def number_equal(a, b):
+    if isinstance(a, float) or isinstance(b, float):
+        x, y = float(a), float(b)
+        if math.isnan(x) or math.isnan(y):
+            return math.isnan(x) and math.isnan(y)
+        if math.isinf(x) or math.isinf(y):
+            return x == y
+        return math.isclose(x, y, rel_tol=1e-9, abs_tol=1e-9)
+    return a == b
+
+def equal(a, b):
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if a is None or b is None:
+        return a is None and b is None
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return number_equal(a, b)
+    if isinstance(a, str) and isinstance(b, str):
+        return a == b
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(equal(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(equal(a[k], b[k]) for k in a)
+    return False
+
+try:
+    actual = json.loads(sys.argv[1])
+    expected = json.loads(sys.argv[2])
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if equal(actual, expected) else 1)
+' "$actual" "$expected"
+        return $?
+    fi
+
+    if [ -n "$JSON_JQ" ]; then
+        local result
+        result=$("$JSON_JQ" -n --argjson a "$actual" --argjson b "$expected" '$a == $b' 2>/dev/null) || return 1
+        [ "$result" = "true" ]
+        return $?
+    fi
+
+    # Last-resort fallback: the grep/sed json_probe cannot reconstruct nested
+    # values, so only compact scalar equality can be checked here.
+    local actual_clean expected_clean
+    actual_clean=$(printf '%s' "$actual" | tr -d '[:space:]')
+    expected_clean=$(printf '%s' "$expected" | tr -d '[:space:]')
+    [ "$actual_clean" = "$expected_clean" ]
+}
+
 # do_request <METHOD> <body> [url] [max-time] sets REQUEST_STATUS/REQUEST_BODY/
 # REQUEST_CONTENT_TYPE.
 do_request() {
@@ -228,7 +291,8 @@ test_method() {
     local params=$2
     local description="${3:-$method}"
     local expected_field="${4:-result}"
-    
+    local expected_value="${5:-}"
+
     local request_json
     if [ "$params" = "null" ] || [ -z "$params" ]; then
         request_json="{\"jsonrpc\":\"2.0\",\"method\":\"$method\",\"id\":1}"
@@ -267,6 +331,13 @@ test_method() {
         if [ "$(json_type "$expected_field")" = "__MISSING__" ]; then
             ok=0
             detail="${detail}missing expected field: $expected_field; "
+        elif [ -n "$expected_value" ]; then
+            local actual_value
+            actual_value=$(json_get "$expected_field")
+            if ! values_equal "$actual_value" "$expected_value"; then
+                ok=0
+                detail="${detail}$expected_field value was $actual_value, expected $expected_value; "
+            fi
         fi
     fi
 
@@ -354,33 +425,33 @@ echo ""
 echo -e "${BLUE}=== Interface A Tests ===${NC}"
 
 # A.add - Simple int addition
-test_method "A.add" "[5,3]" "A.add(5, 3)" "result"
+test_method "A.add" "[5,3]" "A.add(5, 3)" "result" "8"
 
 # A.calc - Array + enum parameter
 # CRITICAL: This exact test case reproduces the C# server bug
 # Original failing request: {"jsonrpc":"2.0","method":"A.calc","params":[[33,22],"add"],"id":1766337019052}
 # Error: "The JSON value could not be converted to MathOp"
-test_method "A.calc" "[[33,22],\"add\"]" "A.calc([33,22], 'add') - CRITICAL BUG TEST" "result"
-test_method "A.calc" "[[10,5],\"multiply\"]" "A.calc([10,5], 'multiply')" "result"
-test_method "A.calc" "[[2.5,4.0,1.5],\"add\"]" "A.calc([2.5,4.0,1.5], 'add')" "result"
+test_method "A.calc" "[[33,22],\"add\"]" "A.calc([33,22], 'add') - CRITICAL BUG TEST" "result" "55.0"
+test_method "A.calc" "[[10,5],\"multiply\"]" "A.calc([10,5], 'multiply')" "result" "50.0"
+test_method "A.calc" "[[2.5,4.0,1.5],\"add\"]" "A.calc([2.5,4.0,1.5], 'add')" "result" "8.0"
 
 # A.sqrt - Float calculation
-test_method "A.sqrt" "[16.0]" "A.sqrt(16.0)" "result"
-test_method "A.sqrt" "[2.25]" "A.sqrt(2.25)" "result"
+test_method "A.sqrt" "[16.0]" "A.sqrt(16.0)" "result" "4.0"
+test_method "A.sqrt" "[2.25]" "A.sqrt(2.25)" "result" "1.5"
 
-# A.repeat - Struct parameter
-test_method "A.repeat" "[{\"to_repeat\":\"hello\",\"count\":3,\"force_uppercase\":false}]" "A.repeat with lowercase" "result"
-test_method "A.repeat" "[{\"to_repeat\":\"world\",\"count\":2,\"force_uppercase\":true}]" "A.repeat with uppercase" "result"
+# A.repeat - Struct parameter (RepeatResponse inherits status from inc.Response)
+test_method "A.repeat" "[{\"to_repeat\":\"hello\",\"count\":3,\"force_uppercase\":false}]" "A.repeat with lowercase" "result" "{\"status\":\"ok\",\"count\":3,\"items\":[\"hello\",\"hello\",\"hello\"]}"
+test_method "A.repeat" "[{\"to_repeat\":\"world\",\"count\":2,\"force_uppercase\":true}]" "A.repeat with uppercase" "result" "{\"status\":\"ok\",\"count\":2,\"items\":[\"WORLD\",\"WORLD\"]}"
 
-# A.say_hi - No parameters
-test_method "A.say_hi" "null" "A.say_hi()" "result"
+# A.say_hi - No parameters (HiResponse has no inherited status field)
+test_method "A.say_hi" "null" "A.say_hi()" "result" "{\"hi\":\"hi\"}"
 
 # A.repeat_num - Array return
-test_method "A.repeat_num" "[42,5]" "A.repeat_num(42, 5)" "result"
+test_method "A.repeat_num" "[42,5]" "A.repeat_num(42, 5)" "result" "[42,42,42,42,42]"
 
 # A.putPerson - Optional field handling (email is optional, test with null)
-test_method "A.putPerson" "[{\"personId\":\"123\",\"firstName\":\"John\",\"lastName\":\"Doe\",\"email\":null}]" "A.putPerson with null email" "result"
-test_method "A.putPerson" "[{\"personId\":\"456\",\"firstName\":\"Jane\",\"lastName\":\"Smith\"}]" "A.putPerson without email field" "result"
+test_method "A.putPerson" "[{\"personId\":\"123\",\"firstName\":\"John\",\"lastName\":\"Doe\",\"email\":null}]" "A.putPerson with null email" "result" "\"123\""
+test_method "A.putPerson" "[{\"personId\":\"456\",\"firstName\":\"Jane\",\"lastName\":\"Smith\"}]" "A.putPerson without email field" "result" "\"456\""
 
 echo ""
 
@@ -391,8 +462,9 @@ echo ""
 echo -e "${BLUE}=== Interface B Tests ===${NC}"
 
 # B.echo - String parameter, optional return
-test_method "B.echo" "[\"hello\"]" "B.echo('hello')" "result"
-test_method "B.echo" "[\"return-null\"]" "B.echo('return-null') - should return null" "result"
+test_method "B.echo" "[\"hello\"]" "B.echo('hello')" "result" "\"hello\""
+# M23: the optional return must be an explicit JSON null, not a missing result.
+test_method "B.echo" "[\"return-null\"]" "B.echo('return-null') - should return null" "result" "null"
 
 echo ""
 
@@ -431,6 +503,23 @@ else
 fi
 record_result "Validation error carries structured data (invalid_fields)" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 
+# R3: every offending parameter gets its own invalid_fields entry.
+do_request POST '{"jsonrpc":"2.0","method":"A.add","params":["five","three"],"id":98}'
+probe_ok=1
+probe_detail=""
+if [ "$REQUEST_STATUS" != "200" ]; then
+    probe_ok=0; probe_detail="${probe_detail}expected HTTP 200, got $REQUEST_STATUS; "
+fi
+if [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0; probe_detail="${probe_detail}response is not an object; "
+else
+    [ "$(json_get error.code)" = "-32602" ] || { probe_ok=0; probe_detail="${probe_detail}error.code != -32602; "; }
+    [ "$(json_type error.data.invalid_fields)" = "list" ] || { probe_ok=0; probe_detail="${probe_detail}error.data.invalid_fields is not a list; "; }
+    [ "$(json_type error.data.invalid_fields.0)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}invalid_fields has no first entry; "; }
+    [ "$(json_type error.data.invalid_fields.1)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}invalid_fields has no second entry; "; }
+fi
+record_result "Multiple invalid params list at least two invalid fields" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
 # Invalid enum values
 test_validation_error "A.calc" "[[33,22],\"subtract\"]" "A.calc with invalid enum value" "-32602"
 test_validation_error "A.calc" "[[33,22],\"ADD\"]" "A.calc with wrong case enum" "-32602"
@@ -459,6 +548,65 @@ test_validation_error "A" "[5,3]" "Method without dot separator" "-32601"
 # Wrong number of parameters
 test_validation_error "A.add" "[5,3,7]" "A.add with too many parameters" "-32602"
 test_validation_error "A.say_hi" "[5]" "A.say_hi with parameters (should have none)" "-32602"
+
+echo ""
+
+# ============================================================================
+# Numeric Boundaries, Declared Errors, and Invalid Requests (D1, R7, M2)
+# ============================================================================
+
+echo -e "${BLUE}=== Numeric Boundaries, Declared Errors, and Invalid Requests ===${NC}"
+
+# D1: int32 boundaries for int parameters (inclusive at both ends).
+test_method "A.add" "[2147483647,0]" "A.add accepts int32 maximum (2147483647)" "result" "2147483647"
+test_validation_error "A.add" "[2147483648,0]" "A.add rejects int32 overflow (2147483648)" "-32602"
+test_method "A.add" "[-2147483648,0]" "A.add accepts int32 minimum (-2147483648)" "result" "-2147483648"
+test_validation_error "A.add" "[-2147483649,0]" "A.add rejects int32 underflow (-2147483649)" "-32602"
+
+# D1: int parameters reject fractional numbers and booleans.
+test_validation_error "A.add" "[5.5,3]" "A.add rejects fractional int parameter" "-32602"
+test_validation_error "A.add" "[true,3]" "A.add rejects boolean for int parameter" "-32602"
+
+# D1: float parameters accept integer literals (5 vs 5.0 rendering) but not
+# booleans. NaN/Infinity literals are only valid if the runtime JSON parser
+# produces them, so that case is informational rather than a hard failure.
+test_method "A.sqrt" "[4]" "A.sqrt accepts integer literal for float parameter" "result" "2.0"
+test_validation_error "A.sqrt" "[true]" "A.sqrt rejects boolean for float parameter" "-32602"
+for float_literal in NaN Infinity -Infinity; do
+    do_request POST "{\"jsonrpc\":\"2.0\",\"method\":\"A.sqrt\",\"params\":[$float_literal],\"id\":1}"
+    if [ "$(json_type error)" = "__MISSING__" ] && [ "$(json_type result)" = "number" ]; then
+        record_result "A.sqrt($float_literal) accepted when the JSON parser produces it" 1 "Response: $REQUEST_BODY"
+    else
+        echo -e "${YELLOW}NOTE${NC}: A.sqrt($float_literal) is parser-dependent (no hard assertion); Response: $REQUEST_BODY"
+    fi
+done
+
+# R7: declared errors use their IDL code; the success path still returns 5.0.
+test_validation_error "A.divide" "[5,0]" "A.divide(5, 0) returns declared error 1001" "1001"
+test_method "A.divide" "[10,2]" "A.divide(10, 2)" "result" "5.0"
+
+# M2: a request without a usable method is an Invalid Request with a null id.
+while IFS='|' read -r method_label method_payload; do
+    [ -n "$method_label" ] || continue
+    do_request POST "$method_payload"
+    probe_ok=1
+    probe_detail=""
+    if [ "$REQUEST_STATUS" != "200" ]; then
+        probe_ok=0; probe_detail="${probe_detail}expected HTTP 200, got $REQUEST_STATUS; "
+    fi
+    if [ "$(json_type "")" != "dict" ]; then
+        probe_ok=0; probe_detail="${probe_detail}response is not a JSON object; "
+    else
+        [ "$(json_get jsonrpc)" = "2.0" ] || { probe_ok=0; probe_detail="${probe_detail}jsonrpc != 2.0; "; }
+        [ "$(json_get id)" = "null" ] || { probe_ok=0; probe_detail="${probe_detail}id is not null; "; }
+        [ "$(json_get error.code)" = "-32600" ] || { probe_ok=0; probe_detail="${probe_detail}error.code != -32600; "; }
+    fi
+    record_result "$method_label returns -32600 with null id" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+done <<'M2_METHOD_CASES'
+Missing method|{"jsonrpc":"2.0","id":31}
+Empty-string method|{"jsonrpc":"2.0","method":"","id":32}
+Numeric method|{"jsonrpc":"2.0","method":123,"id":33}
+M2_METHOD_CASES
 
 echo ""
 
@@ -532,6 +680,77 @@ probe_detail=""
 [ "$(json_get 0.error.code)" = "-32600" ] || { probe_ok=0; probe_detail="${probe_detail}entry error.code != -32600; "; }
 [ "$(json_get 0.id)" = "null" ] || { probe_ok=0; probe_detail="${probe_detail}entry id is not null; "; }
 record_result "Non-object batch entry returns per-entry -32600" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
+# D5: a batch at the documented upper size limit (100) must still be served.
+batch_100="["
+for ((batch_i = 0; batch_i < 100; batch_i++)); do
+    [ "$batch_i" -eq 0 ] || batch_100+=","
+    batch_100+="{\"jsonrpc\":\"2.0\",\"method\":\"A.add\",\"params\":[1,2],\"id\":$batch_i}"
+done
+batch_100+="]"
+do_request POST "$batch_100"
+probe_ok=1
+probe_detail=""
+[ "$(json_type "")" = "list" ] || { probe_ok=0; probe_detail="${probe_detail}response is not an array; "; }
+[ "$(json_type 99)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}batch returned fewer than 100 responses; "; }
+[ "$(json_get 0.id)" = "0" ] || { probe_ok=0; probe_detail="${probe_detail}first response id != 0; "; }
+[ "$(json_get 99.id)" = "99" ] || { probe_ok=0; probe_detail="${probe_detail}last response id != 99; "; }
+[ "$(json_get 0.result)" = "3" ] || { probe_ok=0; probe_detail="${probe_detail}first response result != 3; "; }
+[ "$(json_get 99.result)" = "3" ] || { probe_ok=0; probe_detail="${probe_detail}last response result != 3; "; }
+record_result "Batch of exactly 100 requests is accepted" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$REQUEST_BODY" | cut -c1-300)"
+
+# A batch of two valid requests returns one response per id, with real values.
+do_request POST '[{"jsonrpc":"2.0","method":"A.add","params":[5,3],"id":21},{"jsonrpc":"2.0","method":"A.add","params":[10,5],"id":22}]'
+probe_ok=1
+probe_detail=""
+[ "$(json_type "")" = "list" ] || { probe_ok=0; probe_detail="${probe_detail}response is not an array; "; }
+[ "$(json_type 2)" = "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}batch produced a third response; "; }
+[ "$(json_get 0.id)" = "21" ] || { probe_ok=0; probe_detail="${probe_detail}first id != 21; "; }
+[ "$(json_get 0.result)" = "8" ] || { probe_ok=0; probe_detail="${probe_detail}first result != 8; "; }
+[ "$(json_get 1.id)" = "22" ] || { probe_ok=0; probe_detail="${probe_detail}second id != 22; "; }
+[ "$(json_get 1.result)" = "15" ] || { probe_ok=0; probe_detail="${probe_detail}second result != 15; "; }
+record_result "Batch of two requests returns two matched responses" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
+# Duplicate ids are allowed; each request still gets its own response.
+do_request POST '[{"jsonrpc":"2.0","method":"A.add","params":[1,2],"id":7},{"jsonrpc":"2.0","method":"A.add","params":[3,4],"id":7}]'
+probe_ok=1
+probe_detail=""
+[ "$(json_type "")" = "list" ] || { probe_ok=0; probe_detail="${probe_detail}response is not an array; "; }
+[ "$(json_type 2)" = "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}duplicate-id batch produced a third response; "; }
+[ "$(json_get 0.id)" = "7" ] || { probe_ok=0; probe_detail="${probe_detail}first id != 7; "; }
+[ "$(json_get 1.id)" = "7" ] || { probe_ok=0; probe_detail="${probe_detail}second id != 7; "; }
+case "$(json_get 0.result),$(json_get 1.result)" in
+    3,7|7,3) ;;
+    *) probe_ok=0; probe_detail="${probe_detail}duplicate-id results were not 3 and 7; " ;;
+esac
+record_result "Batch with duplicate ids returns one response per request" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
+# A batch made only of invalid entries stays an array of per-entry errors.
+do_request POST '[{"jsonrpc":"2.0","method":"No.such","id":41},{"jsonrpc":"2.0","method":"A.add","params":[1],"id":42}]'
+probe_ok=1
+probe_detail=""
+[ "$(json_type "")" = "list" ] || { probe_ok=0; probe_detail="${probe_detail}response is not an array; "; }
+[ "$(json_type 0.error)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}first entry has no error; "; }
+[ "$(json_type 1.error)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}second entry has no error; "; }
+[ "$(json_get 0.id)" = "41" ] || { probe_ok=0; probe_detail="${probe_detail}first id != 41; "; }
+[ "$(json_get 1.id)" = "42" ] || { probe_ok=0; probe_detail="${probe_detail}second id != 42; "; }
+case "$(json_get 0.error.code),$(json_get 1.error.code)" in
+    -32601,-32602|-32602,-32601) ;;
+    *) probe_ok=0; probe_detail="${probe_detail}expected error codes -32601 and -32602; " ;;
+esac
+record_result "Batch of only invalid entries returns per-entry errors" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
+# A syntactically malformed entry makes the whole batch a parse error.
+do_request POST '[{"jsonrpc":"2.0","method":"A.add","params":[1,2],"id":51},{"jsonrpc":"2.0",]'
+probe_ok=1
+probe_detail=""
+if [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0; probe_detail="${probe_detail}malformed batch must return a single object, got $(json_type ""); "
+else
+    [ "$(json_get error.code)" = "-32700" ] || { probe_ok=0; probe_detail="${probe_detail}error.code != -32700; "; }
+    [ "$(json_get id)" = "null" ] || { probe_ok=0; probe_detail="${probe_detail}id is not null; "; }
+fi
+record_result "Malformed JSON entry inside a batch returns -32700" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 
 # R23/M28: valid notification -> no body
 do_request POST '{"jsonrpc":"2.0","method":"A.add","params":[1,2]}'
@@ -614,8 +833,9 @@ else
 fi
 record_result "Object id returns -32600" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 
-# D3/R22/S8: non-POST requests -> HTTP 405 with a JSON-RPC -32600 body
-for http_method in GET PUT; do
+# D3/R22/S8: non-POST requests -> HTTP 405 with a JSON-RPC -32600 body and the
+# exact documented reason text.
+for http_method in GET PUT DELETE PATCH HEAD OPTIONS; do
     do_request "$http_method" ""
     probe_ok=1
     probe_detail=""
@@ -626,6 +846,7 @@ for http_method in GET PUT; do
     else
         [ "$(json_get jsonrpc)" = "2.0" ] || { probe_ok=0; probe_detail="${probe_detail}jsonrpc != 2.0; "; }
         [ "$(json_get error.code)" = "-32600" ] || { probe_ok=0; probe_detail="${probe_detail}error.code != -32600; "; }
+        [ "$(json_get error.message)" = "Invalid Request - only POST allowed" ] || { probe_ok=0; probe_detail="${probe_detail}error.message is not the exact D3 text; "; }
         [ "$(json_get id)" = "null" ] || { probe_ok=0; probe_detail="${probe_detail}id is not null; "; }
     fi
     record_result "$http_method is rejected with 405 and -32600" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
