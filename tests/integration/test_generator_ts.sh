@@ -62,9 +62,45 @@ if [ ! -f "$BINARY_PATH" ]; then
     exit 1
 fi
 
-# Step 2: Install global tooling once
-echo -e "${YELLOW}Installing TypeScript and tsx...${NC}"
-npm install -g typescript tsx @types/node >/dev/null 2>&1 || true
+# Step 2: Install global tooling once. Pin TypeScript 5: the generated CJS
+# tsconfig targets moduleResolution=Node10, which TypeScript 6 removed.
+echo -e "${YELLOW}Installing TypeScript 5 and tsx...${NC}"
+if ! npm install -g typescript@5 tsx @types/node >/dev/null 2>&1; then
+    echo -e "${RED}ERROR: Failed to install global TypeScript/tsx tooling${NC}"
+    exit 1
+fi
+
+# CJS-only batch check (M7): the generated HTTP adapter must accept arrays of
+# requests, drop notification responses, and return 204 for a batch containing
+# only notifications. Node is available in the test image for JSON assertions.
+test_cjs_batch_requests() {
+    local server_url="$1"
+    local output_dir="$2"
+    local response status
+
+    response=$(curl -s -X POST "$server_url" -H "Content-Type: application/json" \
+        -d '[{"jsonrpc":"2.0","method":"A.add","params":[1,2],"id":101},{"jsonrpc":"2.0","method":"A.add","params":[3,4],"id":102}]')
+    if ! node -e '
+const body = JSON.parse(process.argv[1]);
+if (!Array.isArray(body) || body.length !== 2) process.exit(1);
+if (body[0].id !== 101 || body[1].id !== 102) process.exit(1);
+if (body[0].result !== 3 || body[1].result !== 7) process.exit(1);
+' "$response"; then
+        echo -e "${RED}  ERROR: batch of two requests did not return two responses: $response${NC}"
+        return 1
+    fi
+
+    status=$(curl -s -o "$output_dir/batch_empty_body.txt" -w '%{http_code}' -X POST "$server_url" \
+        -H "Content-Type: application/json" \
+        -d '[{"jsonrpc":"2.0","method":"A.add","params":[1,2]}]')
+    if [ "$status" != "204" ] || [ -s "$output_dir/batch_empty_body.txt" ]; then
+        echo -e "${RED}  ERROR: notification-only batch must return 204 with no body (got $status)${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}  Batch request checks passed${NC}"
+    return 0
+}
 
 # Test a single module style
 test_style() {
@@ -108,9 +144,26 @@ test_style() {
         # CJS: compile with tsc first, then run with node
         echo -e "${YELLOW}  Installing @types/node for CJS compilation...${NC}"
         cd "$output_dir"
-        npm install --save-dev @types/node > /dev/null 2>&1 || true
+        if ! npm install --save-dev @types/node > /dev/null 2>&1; then
+            echo -e "${RED}  ERROR: failed to install @types/node for ${style}${NC}"
+            return 1
+        fi
         echo -e "${YELLOW}  Compiling with tsc (CommonJS)...${NC}"
-        npx tsc --project tsconfig.json 2>&1 || true
+        if ! npx tsc --project tsconfig.json > tsc.out 2>&1; then
+            # ts-cjs-11: do not swallow compiler errors. The CJS source
+            # transform preserves type-only names as value-level require()
+            # calls, so TS2749/TS2503 diagnostics are expected and emit-safe.
+            # Every OTHER diagnostic is a genuine compile failure and must
+            # fail this style (including injected type errors).
+            local unexpected
+            unexpected=$(grep -vE 'error TS(2749|2503):' tsc.out || true)
+            if [ -n "$unexpected" ]; then
+                echo -e "${RED}  ERROR: tsc reported compile errors for ${style}${NC}"
+                echo "$unexpected"
+                return 1
+            fi
+            echo -e "${YELLOW}  tsc emitted JS with only known type-only diagnostics${NC}"
+        fi
         # Verify compiled JS files exist (type-only errors don't prevent emit)
         if [ ! -f "$test_dir/test_server.js" ]; then
             echo -e "${RED}  ERROR: tsc did not emit test_server.js for ${style}${NC}"
@@ -144,6 +197,16 @@ test_style() {
 
     if [ $wait_count -ge $TIMEOUT ]; then
         echo -e "${RED}  ERROR: Server did not become ready within $TIMEOUT seconds${NC}"
+        echo "  Server log:"
+        cat server.log 2>/dev/null || true
+        kill $server_pid 2>/dev/null || true
+        wait $server_pid 2>/dev/null || true
+        rm -rf "$output_dir"
+        return 1
+    fi
+
+    if [ "$style" = "cjs" ] && ! test_cjs_batch_requests "$server_url" "$output_dir"; then
+        echo -e "${RED}  === Batch tests failed for ${style} ===${NC}"
         echo "  Server log:"
         cat server.log 2>/dev/null || true
         kill $server_pid 2>/dev/null || true

@@ -54,6 +54,20 @@ function testValidateIntFailure() {
   console.log("✓ testValidateIntFailure");
 }
 
+function testValidateIntRejectsNonFinite() {
+  // ts-cjs-01: Infinity/NaN must not satisfy `value === Math.floor(value)`.
+  for (const value of [Infinity, -Infinity, NaN]) {
+    const errs = validateInt(value);
+    assert.equal(errs.length, 1, `expected one error for ${value}`);
+    assert.ok(errs[0].message.includes("Expected integer"), errs[0].message);
+  }
+  // JSON.parse("1e999") produces Infinity — a reachable non-finite input.
+  const parsed = JSON.parse("1e999");
+  assert.strictEqual(parsed, Infinity);
+  assert.equal(validateInt(parsed).length, 1);
+  console.log("✓ testValidateIntRejectsNonFinite");
+}
+
 function testValidateFloatSuccess() {
   assert.deepEqual(validateFloat(3.14), []);
   assert.deepEqual(validateFloat(42), []);
@@ -353,6 +367,7 @@ testValidateStringSuccess();
 testValidateStringFailure();
 testValidateIntSuccess();
 testValidateIntFailure();
+testValidateIntRejectsNonFinite();
 testValidateFloatSuccess();
 testValidateFloatFailure();
 testValidateBoolSuccess();

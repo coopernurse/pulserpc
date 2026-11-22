@@ -26,6 +26,12 @@ test: install
 	@cd pulserpc && npx tsx tests/test_contract.js
 	@cd pulserpc && npx tsx tests/test_client.js
 	@cd pulserpc && npx tsx tests/test_transport.js
+	@cd pulserpc && npx tsx tests/test_server.js
+	@cd pulserpc && npx tsx tests/test_client_validation.js
+	@cd pulserpc && npx tsx tests/test_diff.js
+	@cd pulserpc && npx tsx tests/test_index.js
+	@cd pulserpc && npx tsx tests/test_abstract_transport.js
+	@cd pulserpc && npx tsx tests/test_build_scripts.js
 	@cd pulserpc && npx tsx tests/test_shared.ts
 
 # Test using Docker
@@ -33,7 +39,7 @@ test-docker:
 	@echo "Testing TypeScript CJS runtime in Docker..."
 	@docker run --rm -v $(PWD):/workspace -w /workspace \
 		$(TS_IMAGE) \
-		/bin/bash -c "npm install -g tsx typescript @types/node >/dev/null 2>&1 && cd pulserpc && tsx tests/test_rpc.js && tsx tests/test_types.js && tsx tests/test_validation.js && tsx tests/test_contract.js && tsx tests/test_client.js && tsx tests/test_transport.js && tsx tests/test_shared.ts"
+		/bin/bash -c "npm install -g tsx typescript @types/node >/dev/null 2>&1 && cd pulserpc && tsx tests/test_rpc.js && tsx tests/test_types.js && tsx tests/test_validation.js && tsx tests/test_contract.js && tsx tests/test_client.js && tsx tests/test_transport.js && tsx tests/test_server.js && tsx tests/test_client_validation.js && tsx tests/test_diff.js && tsx tests/test_index.js && tsx tests/test_abstract_transport.js && tsx tests/test_build_scripts.js && tsx tests/test_shared.ts"
 
 # Test generator integration (requires Docker)
 test-integration:
@@ -49,8 +55,8 @@ test-integration:
 		node:18-slim \
 		/bin/bash -c "apt-get update -qq && apt-get install -y -qq curl >/dev/null 2>&1 && bash tests/integration/test_generator_ts.sh"
 
-# Clean build artifacts
+# Clean only generated artifacts. Never delete the hand-written .js test
+# sources under pulserpc/tests/ (ts-cjs-10).
 clean:
-	find . -type f -name "*.js" -not -path "./node_modules/*" -delete 2>/dev/null || true
 	find . -type f -name "*.js.map" -delete 2>/dev/null || true
 	find . -type d -name "node_modules" -exec rm -r {} + 2>/dev/null || true

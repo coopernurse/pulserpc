@@ -108,6 +108,46 @@ async function testClientWrapsRpcError() {
   console.log("✓ testClientWrapsRpcError");
 }
 
+async function testClientNamedParamsOmittedTrailingOptional() {
+  // Calling with a named-param object that omits a trailing optional parameter
+  // must not make client-side request validation fail on an `undefined` slot.
+  const idl = {
+    interfaces: [
+      {
+        name: "Greeter",
+        methods: [
+          {
+            name: "greet",
+            parameters: [
+              { name: "name", type: { builtIn: "string" } },
+              { name: "times", type: { builtIn: "int" }, optional: true },
+            ],
+            returnType: { builtIn: "string" },
+          },
+        ],
+      },
+    ],
+    structs: [],
+    enums: [],
+    errors: [],
+  };
+  const contract = new Contract(idl);
+  const server = new Server({ contract, validateRequests: true });
+  server.addHandler("Greeter", {
+    greet: async (_ctx, name) => `hello ${name}`,
+  });
+  // validateRequest=true is what exercises namedToPositional on the client.
+  const client = await Client.create(
+    new InProcTransport((req) => server.call(req, {})),
+    true,
+    false
+  );
+
+  const result = await client.call("Greeter.greet", { name: "Ann" });
+  assert.strictEqual(result, "hello Ann");
+  console.log("✓ testClientNamedParamsOmittedTrailingOptional");
+}
+
 function testFilenameIsAvailable() {
   assert.ok(typeof __filename === "string", "__filename must be a string in CJS");
   assert.ok(__filename.endsWith("client.ts") || __filename.endsWith("client.js"),
@@ -135,6 +175,7 @@ async function main() {
   await testClientConstructsWithInProcTransport();
   await testClientBasicRequestResponse();
   await testClientWrapsRpcError();
+  await testClientNamedParamsOmittedTrailingOptional();
   testFilenameIsAvailable();
   testFindIDLJsonWalksUp();
   console.log("\nAll client tests passed!");

@@ -27,6 +27,12 @@ export function validateInt(value: any, path: string = ""): ValidationError[] {
   if (typeof value !== "number") {
     return [makeError(path, `Expected number for int, got ${typeof value}`)];
   }
+  if (Number.isNaN(value)) {
+    return [makeError(path, `Expected integer, got NaN`)];
+  }
+  if (!Number.isFinite(value)) {
+    return [makeError(path, `Expected integer, got infinity`)];
+  }
   if (Number.isInteger(value)) {
     return [];
   }

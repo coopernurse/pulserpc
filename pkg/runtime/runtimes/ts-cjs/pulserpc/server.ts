@@ -35,7 +35,22 @@ export class Server {
     this.handlers.set(ifaceName, handler);
   }
 
+  /**
+   * Process a JSON-RPC request. Notifications (requests without an `id`) are
+   * executed but produce no response at all — not even an `id: null` one.
+   */
   async call(req: any, ctx: HandlerCtx = {}): Promise<JsonRpcResponse | null> {
+    const isNotification =
+      typeof req === "object" &&
+      req !== null &&
+      !Array.isArray(req) &&
+      (req.id === undefined || req.id === null);
+
+    const response = await this.callImpl(req, ctx);
+    return isNotification ? null : response;
+  }
+
+  private async callImpl(req: any, ctx: HandlerCtx): Promise<JsonRpcResponse> {
     if (typeof req !== "object" || req === null) {
       return this.errorResponse(
         req?.id ?? null,
@@ -64,15 +79,15 @@ export class Server {
       );
     }
 
+    const reqId = req.id;
+
     if (method === "pulserpc-idl") {
       return {
         jsonrpc: "2.0",
         result: this.contract.idlParsed,
-        id: req.id ?? null,
+        id: reqId,
       };
     }
-
-    const reqId = req.id;
 
     const dotIndex = method.lastIndexOf(".");
     if (dotIndex === -1) {
@@ -134,10 +149,22 @@ export class Server {
     try {
       const args = Object.values(params);
       const result = await func(ctx, ...args);
+
+      if (this.validateResponses) {
+        try {
+          this.contract.validateResponse(ifaceName, funcName, result);
+        } catch (e: any) {
+          if (e instanceof RPCError) {
+            return this.errorResponse(reqId, e.code, e.message, e.data);
+          }
+          return this.errorResponse(reqId, -32603, "Internal error", `Response validation failed: ${e?.message || String(e)}`);
+        }
+      }
+
       return {
         jsonrpc: "2.0",
         result,
-        id: reqId ?? null,
+        id: reqId,
       };
     } catch (e: any) {
       if (e instanceof RPCError) {
@@ -229,6 +256,15 @@ export class Server {
     const positionalParams: any[] = [];
     for (const paramDef of paramDefs) {
       positionalParams.push(namedParams[paramDef.name]);
+    }
+
+    // Trailing optional parameters omitted from a named-param object become
+    // `undefined`; drop them so validateRequest sees a legitimately short array.
+    while (
+      positionalParams.length > 0 &&
+      positionalParams[positionalParams.length - 1] === undefined
+    ) {
+      positionalParams.pop();
     }
 
     return positionalParams;

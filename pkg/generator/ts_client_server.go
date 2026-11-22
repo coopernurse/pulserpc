@@ -39,9 +39,9 @@ const tsWalkUpMaxDepth = 10
 //   - "cjs" — CommonJS, using pkg/runtime/runtimes/ts-cjs/ and a transform
 //     that converts ESM imports/exports to require/module.exports.
 type TSClientServer struct {
-	packageBase    string
-	moduleStyle    string
-	noDetect       bool
+	packageBase     string
+	moduleStyle     string
+	noDetect        bool
 	packageJSONType string
 	tsconfigModule  string
 }
@@ -183,8 +183,8 @@ func readTsconfigModule(outputDir string) (string, string, error) {
 		}
 		var doc struct {
 			CompilerOptions struct {
-				Module            string `json:"module"`
-				ModuleResolution  string `json:"moduleResolution"`
+				Module           string `json:"module"`
+				ModuleResolution string `json:"moduleResolution"`
 			} `json:"compilerOptions"`
 		}
 		if err := json.Unmarshal(data, &doc); err != nil {
@@ -330,7 +330,6 @@ func (p *TSClientServer) resolveEffectiveModuleStyle(fs *flag.FlagSet, outputDir
 	return nil
 }
 
-
 // transformFileForStyle rewrites a TypeScript source file's bytes so they
 // match the given module style. See step 7 of the plan.
 //
@@ -378,26 +377,26 @@ func transformEsmBundler(content []byte) []byte {
 // trimmed line so we don't accidentally match the word `import` inside a
 // string literal or a comment.
 var (
-	cjsImportTypeRE    = regexp.MustCompile(`^import\s+type\s+`)
-	cjsImportNamedRE   = regexp.MustCompile(`^import\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
-	cjsImportStarRE    = regexp.MustCompile(`^import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
-	cjsImportDefaultRE = regexp.MustCompile(`^import\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
-	cjsExportStarFromRE = regexp.MustCompile(`^export\s+\*\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
-	cjsExportNamedFromRE = regexp.MustCompile(`^export\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
-	cjsExportInterfaceRE = regexp.MustCompile(`^export\s+(abstract\s+)?interface\s+\w+`)
-	cjsExportTypeRE = regexp.MustCompile(`^export\s+type\s+`)
+	cjsImportTypeRE          = regexp.MustCompile(`^import\s+type\s+`)
+	cjsImportNamedRE         = regexp.MustCompile(`^import\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsImportStarRE          = regexp.MustCompile(`^import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsImportDefaultRE       = regexp.MustCompile(`^import\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsExportStarFromRE      = regexp.MustCompile(`^export\s+\*\s+from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsExportNamedFromRE     = regexp.MustCompile(`^export\s*\{\s*([^}]+?)\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
+	cjsExportInterfaceRE     = regexp.MustCompile(`^export\s+(abstract\s+)?interface\s+\w+`)
+	cjsExportTypeRE          = regexp.MustCompile(`^export\s+type\s+`)
 	cjsExportAbstractClassRE = regexp.MustCompile(`^export\s+abstract\s+class\s+(\w+)`)
-	cjsExportClassRE = regexp.MustCompile(`^export\s+class\s+(\w+)`)
-	cjsExportEnumRE = regexp.MustCompile(`^export\s+enum\s+(\w+)`)
-	cjsExportFunctionRE = regexp.MustCompile(`^export\s+(async\s+)?function\s+(\w+)`)
-	cjsExportConstRE = regexp.MustCompile(`^export\s+const\s+(\w+)\s*=`)
-	cjsExportNamedRE = regexp.MustCompile(`^export\s*\{\s*([^}]+?)\s*\}\s*;?\s*$`)
+	cjsExportClassRE         = regexp.MustCompile(`^export\s+class\s+(\w+)`)
+	cjsExportEnumRE          = regexp.MustCompile(`^export\s+enum\s+(\w+)`)
+	cjsExportFunctionRE      = regexp.MustCompile(`^export\s+(async\s+)?function\s+(\w+)`)
+	cjsExportConstRE         = regexp.MustCompile(`^export\s+const\s+(\w+)\s*=`)
+	cjsExportNamedRE         = regexp.MustCompile(`^export\s*\{\s*([^}]+?)\s*\}\s*;?\s*$`)
 
 	// Multi-line export patterns: export { on its own line starts a block
 	// that continues until `} from './path'` or `}`.
-	cjsExportOpenBraceRE    = regexp.MustCompile(`^export\s*\{\s*$`)
+	cjsExportOpenBraceRE      = regexp.MustCompile(`^export\s*\{\s*$`)
 	cjsExportCloseBraceFromRE = regexp.MustCompile(`^\s*\}\s*from\s+['"]([^'"]+)['"]\s*;?\s*$`)
-	cjsExportCloseBraceRE   = regexp.MustCompile(`^\s*\}\s*;?\s*$`)
+	cjsExportCloseBraceRE     = regexp.MustCompile(`^\s*\}\s*;?\s*$`)
 )
 
 // multiLineExportState tracks an in-progress multi-line
@@ -909,11 +908,18 @@ func (p *TSClientServer) generateTSConfig(outputDir string) error {
 	// find type declarations for these Node built-ins.
 	if p.moduleStyle == "cjs" {
 		compilerOpts["types"] = []string{"node"}
+		// The CJS transform rewrites ESM imports/exports to require() and
+		// module.exports, leaving script-like files. Force module detection so
+		// same-named top-level bindings in different files do not collide as
+		// global redeclarations when tsc type-checks the generated tree.
+		compilerOpts["moduleDetection"] = "force"
 	}
-	// moduleResolution=Node10 is deprecated in TS 5.x+; suppress the
-	// deprecation diagnostic so tsc --project works without error.
+	// moduleResolution=Node10 is deprecated in TS 5.x; suppress the
+	// deprecation diagnostic so tsc --project works without error. "6.0" is
+	// only valid in TS 6, where Node10 has been removed outright — use the
+	// TS 5 value so the CJS integration test can compile generated output.
 	if resolutionVal == "Node10" {
-		compilerOpts["ignoreDeprecations"] = "6.0"
+		compilerOpts["ignoreDeprecations"] = "5.0"
 	}
 	cfg := tsConfigJSON{
 		CompilerOptions: compilerOpts,
@@ -2126,33 +2132,19 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("    req.on('end', async () => {\n")
 	sb.WriteString("      try {\n")
 	sb.WriteString("        const data = JSON.parse(body);\n")
-	// M7: a batch request is an array of requests. Dispatch each element and
-	// drop the null responses produced by notifications. An all-notification
-	// batch has no body (204).
-	sb.WriteString("        if (Array.isArray(data)) {\n")
-	sb.WriteString("          const responses: any[] = [];\n")
-	sb.WriteString("          for (const item of data) {\n")
-	sb.WriteString("            const resp = await this.rpcServer.call(item);\n")
-	sb.WriteString("            if (resp !== null && resp !== undefined) {\n")
-	sb.WriteString("              responses.push(resp);\n")
-	sb.WriteString("            }\n")
-	sb.WriteString("          }\n")
-	sb.WriteString("          if (responses.length === 0) {\n")
-	sb.WriteString("            res.writeHead(204);\n")
-	sb.WriteString("            res.end();\n")
-	sb.WriteString("          } else {\n")
-	sb.WriteString("            res.writeHead(200, { 'Content-Type': 'application/json' });\n")
-	sb.WriteString("            res.end(JSON.stringify(responses));\n")
-	sb.WriteString("          }\n")
+	sb.WriteString("        // M7: a batch is an array of requests. Notifications (no id) make\n")
+	sb.WriteString("        // Server.call return null and are dropped from the response array.\n")
+	sb.WriteString("        const response = Array.isArray(data)\n")
+	sb.WriteString("          ? (await Promise.all(data.map((item) => this.rpcServer.call(item))))\n")
+	sb.WriteString("              .filter((item) => item !== null && item !== undefined)\n")
+	sb.WriteString("          : await this.rpcServer.call(data);\n")
+	sb.WriteString("        if (response === null || response === undefined ||\n")
+	sb.WriteString("            (Array.isArray(response) && response.length === 0)) {\n")
+	sb.WriteString("          res.writeHead(204);\n")
+	sb.WriteString("          res.end();\n")
 	sb.WriteString("        } else {\n")
-	sb.WriteString("          const response = await this.rpcServer.call(data);\n")
-	sb.WriteString("          if (response === null || response === undefined) {\n")
-	sb.WriteString("            res.writeHead(204);\n")
-	sb.WriteString("            res.end();\n")
-	sb.WriteString("          } else {\n")
-	sb.WriteString("            res.writeHead(200, { 'Content-Type': 'application/json' });\n")
-	sb.WriteString("            res.end(JSON.stringify(response));\n")
-	sb.WriteString("          }\n")
+	sb.WriteString("          res.writeHead(200, { 'Content-Type': 'application/json' });\n")
+	sb.WriteString("          res.end(JSON.stringify(response));\n")
 	sb.WriteString("        }\n")
 	sb.WriteString("      } catch (err: any) {\n")
 	sb.WriteString("        const errorResponse = {\n")
