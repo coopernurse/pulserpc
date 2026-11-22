@@ -968,15 +968,6 @@ func allSortedNamespaceNames(namespaceMap map[string]*NamespaceTypes) []string {
 
 // sortedMapKeys returns a map's string keys in sorted order. Used wherever
 // map iteration would otherwise leak into emitted bytes (C1/D12).
-func sortedMapKeys[T any](m map[string]T) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 // Generate generates TypeScript HTTP server and client code from the parsed IDL
 func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// Check silent flag

@@ -343,15 +343,6 @@ func writeTypeDictCs(sb *strings.Builder, t *parser.Type, structMap map[string]*
 
 // sortedMapKeys returns map keys in ordinal order so map-derived output is
 // byte-deterministic (C1/D12).
-func sortedMapKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 // resolveTypeKey resolves a (possibly qualified) type reference against a set
 // of registry keys using the canonical D16 ordering:
 //

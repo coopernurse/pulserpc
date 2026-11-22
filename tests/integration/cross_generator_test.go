@@ -133,11 +133,16 @@ func TestCrossGeneratorDeterminism(t *testing.T) {
 	for _, variant := range crossGeneratorVariants() {
 		variant := variant
 		t.Run(variant.name, func(t *testing.T) {
-			// Use the same basename under different parents: some generators
-			// derive a package/module name from the output directory, which is
-			// not nondeterminism for a fixed output location.
-			first := generateVariant(t, variant, filepath.Join(t.TempDir(), "generated"))
-			second := generateVariant(t, variant, filepath.Join(t.TempDir(), "generated"))
+			// Generate twice into the same path. Some generators derive a
+			// package/module path from the output location; comparing different
+			// paths would report that as nondeterminism even though the output
+			// is stable for a fixed location.
+			dir := filepath.Join(t.TempDir(), "generated")
+			first := generateVariant(t, variant, dir)
+			if err := os.RemoveAll(dir); err != nil {
+				t.Fatalf("remove %s: %v", dir, err)
+			}
+			second := generateVariant(t, variant, dir)
 
 			if len(first) != len(second) {
 				t.Fatalf("file count differs: %d vs %d", len(first), len(second))
