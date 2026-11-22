@@ -123,9 +123,27 @@ CI confirmed all checks green after the fix wave: CI (9 jobs), CI Conformance
 (`Multi-runtime conformance (Docker)` and `Quickstart guides (Docker)`), and
 Documentation CI. Gaps 1–8 and 11–12 are closed.
 
-Remaining: 9 (client-side conformance), 10 (generator artifacts), 13 (grammar
-negatives — intentionally unit-only), 14 (playground/path/meta — out of scope),
-and the R17/D6/D7/C10/R27 items in WP7.
+### Wave 2
+
+- **Gap 10 closed.** Cross-generator determinism (C1/D12), IDL artifact
+  checksum/schema checks (C2/C4), and a new embedded-`IDL_JSON` object check
+  (C5) now run by default in `go test ./tests/integration/...`; the obsolete
+  `PULSERPC_CROSS_GENERATOR` gate and its meta-test were removed.
+- **D7/C10 closed.** `conform.pulse` now has optional `int`/`bool`/`float`
+  fields and an `A.echoOptional` method implemented by all seven runtimes.
+  Probes assert required fields exactly and each optional field individually,
+  accepting D7's documented null-or-omitted representation. The first probe
+  revision was too strict (exact whole-object equality) and was relaxed after
+  CI exposed the legitimate divergence.
+
+CI is green for the merged wave-2 head (`34d10be`): CI (9 jobs) and CI
+Conformance (multi-runtime + quickstarts).
+
+Remaining: 9 (client-side conformance — existing per-runtime client-envelope
+unit tests cover M5/M14/M24; a standalone cross-runtime client harness is a
+larger follow-up), 13 (grammar negatives — intentionally unit-only), 14
+(playground/path/meta — out of scope), and R17 (response cap), D6 (timeout),
+and R27 (enum-return fixture) in WP7.
 
 ## Sequencing
 
