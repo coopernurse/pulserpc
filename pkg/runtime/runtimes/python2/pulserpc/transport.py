@@ -46,7 +46,7 @@ class HttpTransport(Transport):
                  max_response_size=MAX_RESPONSE_BODY_SIZE):
         """Initialize HTTP transport
 
-        A single trailing ``/`` is normalized away from ``url`` (R30).
+        Every trailing ``/`` is stripped from ``url`` via ``url.rstrip("/")`` (R30).
         ``headers`` are merged over the default Content-Type (R29).
         """
         self.url = url.rstrip("/") if url else url
