@@ -60,7 +60,7 @@ fi
 # Check for tsc
 if ! command -v npx tsc >/dev/null 2>&1; then
     echo -e "${YELLOW}Installing TypeScript globally...${NC}"
-    npm install -g typescript >/dev/null 2>&1 || {
+    npm install -g typescript@5 >/dev/null 2>&1 || {
         echo -e "${RED}ERROR: Failed to install TypeScript${NC}"
         exit 1
     }
@@ -85,7 +85,8 @@ echo -e "${YELLOW}Installing dependencies...${NC}"
 npm install --silent >/dev/null 2>&1
 
 echo -e "${YELLOW}Building TypeScript...${NC}"
-npx tsc >/dev/null 2>&1
+# Surface compiler diagnostics so failures are diagnosable in CI.
+npx tsc
 
 # 4. Start server
 echo -e "${YELLOW}Starting server on port $SERVER_PORT...${NC}"

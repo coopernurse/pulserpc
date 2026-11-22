@@ -26,7 +26,11 @@ interface ServerOptions {
   validateResponses?: boolean;
 }
 
-type HandlerMethod = Record<string, (ctx: any, ...args: any[]) => any>;
+// Service implementations are usually class instances. TypeScript does not
+// give classes a string index signature, so a strict Record<...> here rejects
+// the documented `addHandler(name, new ServiceImpl())` form even though it is
+// valid at runtime.
+type HandlerMethod = { [methodName: string]: any };
 
 const INTERNAL_ERROR = "Internal error";
 
