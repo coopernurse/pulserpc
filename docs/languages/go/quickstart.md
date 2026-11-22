@@ -69,6 +69,11 @@ This creates:
 
 > **Note**: The generated code uses the namespace from your IDL as the package name (`checkout` in this example).
 > The shared `pkg/pulserpc` runtime is created only once and reused for all generated packages in your project.
+>
+> Generation also writes `idl.json` (with `rootNamespace`, checksum, interfaces,
+> structs, enums, and errors) and embeds the same document in `server.go` as
+> `IDL_JSON`. The generated adapter enforces a 1 MiB request body, a 100-entry
+> batch limit, and a 30-second client timeout.
 
 ## 3. Project Structure
 

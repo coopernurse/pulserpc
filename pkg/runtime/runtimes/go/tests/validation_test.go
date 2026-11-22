@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"testing"
 
 	"github.com/coopernurse/pulserpc/pkg/runtime/runtimes/go/pulserpc"
@@ -255,5 +256,34 @@ func TestValidateType(t *testing.T) {
 	}
 	if err := pulserpc.ValidateType("VALUE1", enumType, allStructs, allEnums, false); err != nil {
 		t.Errorf("Expected nil error for enum, got %v", err)
+	}
+}
+
+// R25/D1: IDL int is signed 32-bit. In-range whole numbers pass; out-of-range
+// integral values, fractions, NaN/Inf, and bools fail.
+func TestValidateIntRange(t *testing.T) {
+	valid := []interface{}{
+		int(math.MinInt32), int(math.MaxInt32),
+		int64(math.MinInt32), int64(math.MaxInt32),
+		float64(math.MinInt32), float64(math.MaxInt32),
+	}
+	for _, value := range valid {
+		if err := pulserpc.ValidateInt(value); err != nil {
+			t.Errorf("ValidateInt(%v) = %v, want nil", value, err)
+		}
+	}
+
+	invalid := []interface{}{
+		int64(math.MaxInt32) + 1, int64(math.MinInt32) - 1,
+		float64(math.MaxInt32) + 1, float64(math.MinInt32) - 1,
+		int64(math.MaxInt32) * 2,
+		1.5, -1.5,
+		math.NaN(), math.Inf(1), math.Inf(-1),
+		true,
+	}
+	for _, value := range invalid {
+		if err := pulserpc.ValidateInt(value); err == nil {
+			t.Errorf("ValidateInt(%v) = nil, want an error", value)
+		}
 	}
 }

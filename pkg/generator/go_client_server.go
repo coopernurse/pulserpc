@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/coopernurse/pulserpc/pkg/parser"
@@ -61,15 +62,7 @@ func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 	// (idl.json and the generated IDL_JSON constant) carries it.
 	idl.Checksum = checksum
 
-	output := map[string]interface{}{
-		"interfaces": idl.Interfaces,
-		"structs":    idl.Structs,
-		"enums":      idl.Enums,
-		"errors":     idl.Errors,
-		"checksum":   checksum,
-	}
-
-	idlJSON, err := json.MarshalIndent(output, "", "  ")
+	idlJSON, err := json.MarshalIndent(idlMetadataGo(idl), "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal IDL output to JSON: %w", err)
 	}
@@ -80,6 +73,37 @@ func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 	}
 	PrintFileCreated(idlPath, fs)
 	return nil
+}
+
+// idlMetadataGo builds the D8 IDL JSON schema shared by idl.json and the
+// embedded IDL_JSON constant. Every top-level key is present even when its
+// collection is empty, so both forms always expose the same schema.
+func idlMetadataGo(idl *parser.IDL) map[string]interface{} {
+	interfaces := idl.Interfaces
+	if interfaces == nil {
+		interfaces = []*parser.Interface{}
+	}
+	structs := idl.Structs
+	if structs == nil {
+		structs = []*parser.Struct{}
+	}
+	enums := idl.Enums
+	if enums == nil {
+		enums = []*parser.Enum{}
+	}
+	errors := idl.Errors
+	if errors == nil {
+		errors = []*parser.ErrorDef{}
+	}
+
+	return map[string]interface{}{
+		"rootNamespace": idl.RootNamespace,
+		"interfaces":    interfaces,
+		"structs":       structs,
+		"enums":         enums,
+		"errors":        errors,
+		"checksum":      idl.Checksum,
+	}
 }
 
 // detectRuntimeImportPath determines the fully qualified import path for the pulserpc runtime
@@ -203,14 +227,21 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// Group types by namespace
 	namespaceMap := GroupTypesByNamespace(idl)
 
+	// D12: iterate namespaces in sorted order so generation is byte-deterministic.
+	namespaceNames := make([]string, 0, len(namespaceMap))
+	for ns := range namespaceMap {
+		namespaceNames = append(namespaceNames, ns)
+	}
+	sort.Strings(namespaceNames)
+
 	// Get the primary namespace for package name
 	// Prefer the namespace that has interfaces (the main IDL file)
 	// over namespaces that only have imported types
 	primaryNs := ""
 
 	// First, try to find a namespace with interfaces
-	for ns, types := range namespaceMap {
-		if ns != "" && len(types.Interfaces) > 0 {
+	for _, ns := range namespaceNames {
+		if ns != "" && len(namespaceMap[ns].Interfaces) > 0 {
 			primaryNs = ns
 			break
 		}
@@ -218,7 +249,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 	// If no namespace has interfaces, pick the first non-empty one
 	if primaryNs == "" {
-		for ns := range namespaceMap {
+		for _, ns := range namespaceNames {
 			if ns != "" {
 				primaryNs = ns
 				break
@@ -240,8 +271,9 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		return fmt.Errorf("failed to write idl.json: %w", err)
 	}
 
-	// Generate namespace subdirectories and files
-	for namespace, types := range namespaceMap {
+	// Generate namespace subdirectories and files in sorted order.
+	for _, namespace := range namespaceNames {
+		types := namespaceMap[namespace]
 		if namespace == "" {
 			continue // Skip types without namespace (shouldn't happen with required namespaces)
 		}
@@ -616,7 +648,11 @@ func findReferencedNamespacesInType(t *parser.Type, structMap map[string]*parser
 	}
 }
 
-// findNamespaceForType finds which namespace a type belongs to
+// findNamespaceForType finds which namespace a type belongs to.
+//
+// D16: resolution order is exact key, exact base-name key, then the first key
+// in sorted order sharing the base name. Map iteration order is never used, so
+// generation is deterministic when duplicate base names exist.
 func findNamespaceForType(typeName string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) string {
 	// Check if type is already qualified
 	if strings.Contains(typeName, ".") {
@@ -624,9 +660,9 @@ func findNamespaceForType(typeName string, structMap map[string]*parser.Struct, 
 		return parts[0]
 	}
 
-	// Check struct map for namespace info
-	// The structMap keys are full type names with namespace
-	for fullName := range structMap {
+	// Check struct map for namespace info. The structMap keys are full type
+	// names with namespace.
+	for _, fullName := range sortedTypeKeys(structMap) {
 		if GetBaseName(fullName) == typeName {
 			if strings.Contains(fullName, ".") {
 				parts := strings.Split(fullName, ".")
@@ -636,7 +672,7 @@ func findNamespaceForType(typeName string, structMap map[string]*parser.Struct, 
 	}
 
 	// Check enum map
-	for fullName := range enumMap {
+	for _, fullName := range sortedEnumKeys(enumMap) {
 		if GetBaseName(fullName) == typeName {
 			if strings.Contains(fullName, ".") {
 				parts := strings.Split(fullName, ".")
@@ -646,6 +682,26 @@ func findNamespaceForType(typeName string, structMap map[string]*parser.Struct, 
 	}
 
 	return ""
+}
+
+// sortedTypeKeys returns struct map keys in ascending order.
+func sortedTypeKeys(structMap map[string]*parser.Struct) []string {
+	keys := make([]string, 0, len(structMap))
+	for key := range structMap {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// sortedEnumKeys returns enum map keys in ascending order.
+func sortedEnumKeys(enumMap map[string]*parser.Enum) []string {
+	keys := make([]string, 0, len(enumMap))
+	for key := range enumMap {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // generateNamespaceGo generates a Go file for a single namespace
@@ -662,8 +718,13 @@ func generateNamespaceGo(namespace string, types *NamespaceTypes, structMap map[
 	// Since ALL_STRUCTS/ALL_ENUMS were removed, namespace files don't need pulserpc import
 	sb.WriteString("import (\n")
 
-	// Add imports for referenced namespaces
+	// Add imports for referenced namespaces in sorted order (D12).
+	refNamespaces := make([]string, 0, len(referencedNamespaces))
 	for refNs := range referencedNamespaces {
+		refNamespaces = append(refNamespaces, refNs)
+	}
+	sort.Strings(refNamespaces)
+	for _, refNs := range refNamespaces {
 		importPath := packageImportPath + "/" + refNs
 		sb.WriteString(fmt.Sprintf("	\"%s\"\n", importPath))
 	}
@@ -779,6 +840,7 @@ func generateServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	// Write imports
 	sb.WriteString("import (\n")
 	sb.WriteString("	\"encoding/json\"\n")
+	sb.WriteString("	\"errors\"\n")
 	sb.WriteString("	\"fmt\"\n")
 	sb.WriteString("	\"io\"\n")
 	sb.WriteString("	\"net/http\"\n")
@@ -786,15 +848,21 @@ func generateServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	// Import the shared pulserpc runtime
 	sb.WriteString(fmt.Sprintf("	\"%s\"\n", runtimeImportPath))
 
-	// Add cross-namespace imports
+	// Add cross-namespace imports in sorted order (D12).
+	importPaths := make([]string, 0, len(nsImports))
 	for _, importPath := range nsImports {
+		importPaths = append(importPaths, importPath)
+	}
+	sort.Strings(importPaths)
+	for _, importPath := range importPaths {
 		sb.WriteString(fmt.Sprintf("	\"%s\"\n", importPath))
 	}
 
 	sb.WriteString(")\n\n")
 
-	// Embed IDL JSON directly in server.go for pulserpc-idl RPC method
-	idlJSON, err := json.MarshalIndent(idl, "", "  ")
+	// Embed IDL JSON directly in server.go for pulserpc-idl RPC method. Use the
+	// same normalized schema as idl.json (D8) so both forms always agree.
+	idlJSON, err := json.MarshalIndent(idlMetadataGo(idl), "", "  ")
 	if err == nil {
 		sb.WriteString("// IDL_JSON contains the IDL definition used to generate this code\n")
 		sb.WriteString("const IDL_JSON = ")
@@ -906,44 +974,71 @@ func writePulseRPCServerGo(sb *strings.Builder) {
 	sb.WriteString("	return s.server.ListenAndServe()\n")
 	sb.WriteString("}\n\n")
 
+	sb.WriteString("// ServeHTTP exposes the JSON-RPC adapter as an http.Handler.\n")
+	sb.WriteString("func (s *PulseRPCServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {\n")
+	sb.WriteString("	s.handleRequest(w, r)\n")
+	sb.WriteString("}\n\n")
+
 	// Generate handleRequest method that uses pulserpc.Server
 	writeServerHandleRequestGoRefactored(sb)
 }
 
 // writeServerHandleRequestGoRefactored generates the handleRequest method using pulserpc.Server
 func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
+	sb.WriteString("// D5: request and batch limits enforced by the generated adapter.\n")
+	sb.WriteString("const maxRequestBodySize = 1 << 20 // 1 MiB\n")
+	sb.WriteString("const maxBatchSize = 100\n\n")
+
 	sb.WriteString("// handleRequest handles HTTP requests by delegating to pulserpc.Server.Call()\n")
 	sb.WriteString("func (s *PulseRPCServer) handleRequest(w http.ResponseWriter, r *http.Request) {\n")
 	sb.WriteString("	if r.Method != http.MethodPost {\n")
-	sb.WriteString("		http.Error(w, \"Method Not Allowed\", http.StatusMethodNotAllowed)\n")
+	sb.WriteString("		// D3: non-POST requests return HTTP 405 with a JSON-RPC error body.\n")
+	sb.WriteString("		w.Header().Set(\"Content-Type\", \"application/json\")\n")
+	sb.WriteString("		w.WriteHeader(http.StatusMethodNotAllowed)\n")
+	sb.WriteString("		json.NewEncoder(w).Encode(errorResponse(nil, -32600, \"Invalid Request - only POST allowed\", nil))\n")
 	sb.WriteString("		return\n")
 	sb.WriteString("	}\n\n")
 
+	sb.WriteString("	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)\n")
 	sb.WriteString("	body, err := io.ReadAll(r.Body)\n")
 	sb.WriteString("	if err != nil {\n")
-	sb.WriteString("		s.sendErrorResponse(w, nil, -32700, \"Parse error\", fmt.Sprintf(\"Failed to read body: %v\", err))\n")
+	sb.WriteString("		var maxBytesErr *http.MaxBytesError\n")
+	sb.WriteString("		if errors.As(err, &maxBytesErr) {\n")
+	sb.WriteString("			s.sendErrorResponse(w, nil, -32600, \"Request body too large\", nil)\n")
+	sb.WriteString("			return\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("		s.sendErrorResponse(w, nil, -32700, \"Parse error\", nil)\n")
 	sb.WriteString("		return\n")
 	sb.WriteString("	}\n\n")
 
 	sb.WriteString("	var requestData interface{}\n")
 	sb.WriteString("	if err := json.Unmarshal(body, &requestData); err != nil {\n")
-	sb.WriteString("		s.sendErrorResponse(w, nil, -32700, \"Parse error\", fmt.Sprintf(\"Invalid JSON: %v\", err))\n")
+	sb.WriteString("		s.sendErrorResponse(w, nil, -32700, \"Parse error\", nil)\n")
 	sb.WriteString("		return\n")
 	sb.WriteString("	}\n\n")
 
 	sb.WriteString("	// Handle batch requests\n")
 	sb.WriteString("	if requests, ok := requestData.([]interface{}); ok {\n")
 	sb.WriteString("		if len(requests) == 0 {\n")
-	sb.WriteString("			s.sendErrorResponse(w, nil, -32600, \"Invalid Request\", \"Empty batch array\")\n")
+	sb.WriteString("			s.sendErrorResponse(w, nil, -32600, \"Invalid Request\", nil)\n")
+	sb.WriteString("			return\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("		if len(requests) > maxBatchSize {\n")
+	sb.WriteString("			s.sendErrorResponse(w, nil, -32600, \"Batch exceeds maximum size\", nil)\n")
 	sb.WriteString("			return\n")
 	sb.WriteString("		}\n")
 	sb.WriteString("		var responses []interface{}\n")
 	sb.WriteString("		for _, req := range requests {\n")
-	sb.WriteString("			if reqMap, ok := req.(map[string]interface{}); ok {\n")
-	sb.WriteString("				resp := s.rpcServer.Call(reqMap)\n")
-	sb.WriteString("				if resp != nil {\n")
-	sb.WriteString("					responses = append(responses, resp)\n")
-	sb.WriteString("				}\n")
+	sb.WriteString("			reqMap, ok := req.(map[string]interface{})\n")
+	sb.WriteString("			if !ok {\n")
+	sb.WriteString("				// M19: non-object entries get a per-entry -32600 and the\n")
+	sb.WriteString("				// overall response keeps the batch array shape.\n")
+	sb.WriteString("				responses = append(responses, errorResponse(nil, -32600, \"Invalid Request\", nil))\n")
+	sb.WriteString("				continue\n")
+	sb.WriteString("			}\n")
+	sb.WriteString("			resp := s.rpcServer.Call(reqMap)\n")
+	sb.WriteString("			if resp != nil {\n")
+	sb.WriteString("				responses = append(responses, resp)\n")
 	sb.WriteString("			}\n")
 	sb.WriteString("		}\n")
 	sb.WriteString("		if len(responses) == 0 {\n")
@@ -966,12 +1061,13 @@ func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
 	sb.WriteString("		w.Header().Set(\"Content-Type\", \"application/json\")\n")
 	sb.WriteString("		json.NewEncoder(w).Encode(response)\n")
 	sb.WriteString("	} else {\n")
-	sb.WriteString("		s.sendErrorResponse(w, nil, -32600, \"Invalid Request\", \"Request must be an object or array\")\n")
+	sb.WriteString("		s.sendErrorResponse(w, nil, -32600, \"Invalid Request\", nil)\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("}\n\n")
 
-	sb.WriteString("// sendErrorResponse sends a JSON-RPC error response\n")
-	sb.WriteString("func (s *PulseRPCServer) sendErrorResponse(w http.ResponseWriter, requestID interface{}, code int, message string, data interface{}) {\n")
+	sb.WriteString("// errorResponse builds a JSON-RPC error object. An unknown id is emitted\n")
+	sb.WriteString("// as null per the JSON-RPC 2.0 specification.\n")
+	sb.WriteString("func errorResponse(requestID interface{}, code int, message string, data interface{}) map[string]interface{} {\n")
 	sb.WriteString("	errObj := map[string]interface{}{\n")
 	sb.WriteString("		\"code\":    code,\n")
 	sb.WriteString("		\"message\": message,\n")
@@ -979,15 +1075,17 @@ func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
 	sb.WriteString("	if data != nil {\n")
 	sb.WriteString("		errObj[\"data\"] = data\n")
 	sb.WriteString("	}\n")
-	sb.WriteString("	response := map[string]interface{}{\n")
+	sb.WriteString("	return map[string]interface{}{\n")
 	sb.WriteString("		\"jsonrpc\": \"2.0\",\n")
 	sb.WriteString("		\"error\":   errObj,\n")
+	sb.WriteString("		\"id\":      requestID,\n")
 	sb.WriteString("	}\n")
-	sb.WriteString("	if requestID != nil {\n")
-	sb.WriteString("		response[\"id\"] = requestID\n")
-	sb.WriteString("	}\n")
+	sb.WriteString("}\n\n")
+
+	sb.WriteString("// sendErrorResponse sends a JSON-RPC error response\n")
+	sb.WriteString("func (s *PulseRPCServer) sendErrorResponse(w http.ResponseWriter, requestID interface{}, code int, message string, data interface{}) {\n")
 	sb.WriteString("	w.Header().Set(\"Content-Type\", \"application/json\")\n")
-	sb.WriteString("	json.NewEncoder(w).Encode(response)\n")
+	sb.WriteString("	json.NewEncoder(w).Encode(errorResponse(requestID, code, message, data))\n")
 	sb.WriteString("}\n")
 }
 
@@ -1030,8 +1128,13 @@ func generateClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	// Import the shared pulserpc runtime
 	sb.WriteString(fmt.Sprintf("	\"%s\"\n", runtimeImportPath))
 
-	// Add cross-namespace imports
+	// Add cross-namespace imports in sorted order (D12).
+	importPaths := make([]string, 0, len(nsImports))
 	for _, importPath := range nsImports {
+		importPaths = append(importPaths, importPath)
+	}
+	sort.Strings(importPaths)
+	for _, importPath := range importPaths {
 		sb.WriteString(fmt.Sprintf("	\"%s\"\n", importPath))
 	}
 
@@ -1127,7 +1230,7 @@ func writeHTTPTransportGo(sb *strings.Builder) {
 	sb.WriteString("	return &HTTPTransport{\n")
 	sb.WriteString("		baseURL: strings.TrimSuffix(baseURL, \"/\"),\n")
 	sb.WriteString("		headers: headers,\n")
-	sb.WriteString("		client:  &http.Client{},\n")
+	sb.WriteString("		client:  &http.Client{Timeout: 30 * time.Second},\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("}\n\n")
 
@@ -1468,7 +1571,6 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("// Test server implementation for integration testing\n\n")
 	sb.WriteString("package main\n\n")
 	sb.WriteString("import (\n")
-	sb.WriteString("	\"encoding/json\"\n")
 	sb.WriteString("	\"fmt\"\n")
 	sb.WriteString("	\"math\"\n")
 	sb.WriteString("	\"net/http\"\n")
@@ -1494,24 +1596,9 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	}
 	sb.WriteString("\n")
 	sb.WriteString("\tmux := http.NewServeMux()\n")
-	sb.WriteString("\tmux.HandleFunc(\"/\", func(w http.ResponseWriter, r *http.Request) {\n")
-	sb.WriteString("\t\tif r.Method != http.MethodPost {\n")
-	sb.WriteString("\t\t\tw.WriteHeader(http.StatusMethodNotAllowed)\n")
-	sb.WriteString("\t\t\treturn\n")
-	sb.WriteString("\t\t}\n\n")
-	sb.WriteString("\t\tvar req map[string]interface{}\n")
-	sb.WriteString("\t\tif err := json.NewDecoder(r.Body).Decode(&req); err != nil {\n")
-	sb.WriteString("\t\t\tsendError(w, nil, -32700, \"Parse error\", err.Error())\n")
-	sb.WriteString("\t\t\treturn\n")
-	sb.WriteString("\t\t}\n\n")
-	sb.WriteString("\t\tresp := server.Call(req)\n")
-	sb.WriteString("\t\tif resp == nil {\n")
-	sb.WriteString("\t\t\tw.WriteHeader(http.StatusNoContent)\n")
-	sb.WriteString("\t\t\treturn\n")
-	sb.WriteString("\t\t}\n")
-	sb.WriteString("\t\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-	sb.WriteString("\t\tjson.NewEncoder(w).Encode(resp)\n")
-	sb.WriteString("\t})\n\n")
+	sb.WriteString("\t// Reuse the generated adapter so limits, batches, and error shapes are\n")
+	sb.WriteString("\t// exercised by the integration test server too.\n")
+	sb.WriteString("\tmux.Handle(\"/\", server)\n\n")
 	sb.WriteString("\tmux.HandleFunc(\"/idl.json\", func(w http.ResponseWriter, r *http.Request) {\n")
 	sb.WriteString("\t\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
 	sb.WriteString("\t\t// IDL_JSON is already JSON text - marshal it would produce a quoted\n")
@@ -1523,19 +1610,6 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("\tif err := http.ListenAndServe(addr, mux); err != nil {\n")
 	sb.WriteString("\t\tfmt.Printf(\"Server error: %v\\n\", err)\n")
 	sb.WriteString("\t}\n")
-	sb.WriteString("}\n\n")
-	sb.WriteString("func sendError(w http.ResponseWriter, id interface{}, code int, message string, data string) {\n")
-	sb.WriteString("\terrResp := map[string]interface{}{\n")
-	sb.WriteString("\t\t\"jsonrpc\": \"2.0\",\n")
-	sb.WriteString("\t\t\"error\": map[string]interface{}{\n")
-	sb.WriteString("\t\t\t\"code\":    code,\n")
-	sb.WriteString("\t\t\t\"message\": message,\n")
-	sb.WriteString("\t\t\t\"data\":    data,\n")
-	sb.WriteString("\t\t},\n")
-	sb.WriteString("\t\t\"id\": id,\n")
-	sb.WriteString("\t}\n")
-	sb.WriteString("\tw.Header().Set(\"Content-Type\", \"application/json\")\n")
-	sb.WriteString("\tjson.NewEncoder(w).Encode(errResp)\n")
 	sb.WriteString("}\n\n")
 
 	return sb.String()
@@ -1660,6 +1734,9 @@ func generateTestClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("package main\n\n")
 	sb.WriteString("import (\n")
 	sb.WriteString("	\"bytes\"\n")
+	if len(idl.Interfaces) > 0 {
+		sb.WriteString("	\"context\"\n")
+	}
 	sb.WriteString("	\"fmt\"\n")
 	sb.WriteString("	\"net/http\"\n")
 	sb.WriteString("	\"os\"\n")
@@ -1667,6 +1744,27 @@ func generateTestClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	// Import the generated package (primaryNs)
 	fmt.Fprintf(&sb, "	. \"%s\"\n", primaryNs)
 	sb.WriteString(")\n\n")
+
+	sb.WriteString("// divergentIDLTransport is a stub transport that reports a server IDL\n")
+	sb.WriteString("// different from this client's embedded IDL (R31).\n")
+	sb.WriteString("type divergentIDLTransport struct{}\n\n")
+	sb.WriteString("func (divergentIDLTransport) Call(method string, params []interface{}) (map[string]interface{}, error) {\n")
+	sb.WriteString("	if method != \"pulserpc-idl\" {\n")
+	sb.WriteString("		return nil, fmt.Errorf(\"unexpected method %s\", method)\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("	return map[string]interface{}{\n")
+	sb.WriteString("		\"jsonrpc\": \"2.0\",\n")
+	sb.WriteString("		\"id\":      1,\n")
+	sb.WriteString("		\"result\": map[string]interface{}{\n")
+	sb.WriteString("			\"rootNamespace\": \"divergent\",\n")
+	sb.WriteString("			\"checksum\":      \"divergent-checksum\",\n")
+	sb.WriteString("			\"interfaces\":    []interface{}{},\n")
+	sb.WriteString("			\"structs\":       []interface{}{},\n")
+	sb.WriteString("			\"enums\":         []interface{}{},\n")
+	sb.WriteString("			\"errors\":        []interface{}{},\n")
+	sb.WriteString("		},\n")
+	sb.WriteString("	}, nil\n")
+	sb.WriteString("}\n\n")
 
 	sb.WriteString("func waitForServer(url string, timeout time.Duration) bool {\n")
 	sb.WriteString("	start := time.Now()\n")
@@ -1708,6 +1806,18 @@ func generateTestClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("\n")
 
 	sb.WriteString("	errors := []string{}\n\n")
+
+	// R31: exercise VerifyCompatibility with a stub transport that serves a
+	// divergent IDL. This runs only when the generated test files are used.
+	if len(idl.Interfaces) > 0 {
+		first := idl.Interfaces[0]
+		fmt.Fprintf(&sb, "	divergentClient := New%sClient(divergentIDLTransport{})\n", first.Name)
+		sb.WriteString("	if result := divergentClient.VerifyCompatibility(context.Background()); result.Compatible {\n")
+		sb.WriteString("		errors = append(errors, \"VerifyCompatibility accepted a divergent server IDL\")\n")
+		sb.WriteString("	} else if result.ServerChecksum != \"divergent-checksum\" {\n")
+		sb.WriteString("		errors = append(errors, \"VerifyCompatibility did not use the fetched server checksum\")\n")
+		sb.WriteString("	}\n\n")
+	}
 
 	// Generate test cases for each method
 	for _, iface := range idl.Interfaces {

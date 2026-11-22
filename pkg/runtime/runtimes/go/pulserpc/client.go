@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,7 +23,7 @@ type Client struct {
 	localIDL          interface{}
 	validateRequest   bool
 	validateResponse  bool
-	requestID         int
+	requestID         uint64
 	ifaces            map[string]*InterfaceClientProxy
 	auditor           ContractAuditor
 	verifyOnBootstrap bool
@@ -132,9 +133,9 @@ func (c *Client) Call(method string, params interface{}) (interface{}, error) {
 	}
 
 	// Generate a unique request ID and hand it to the transport so the
-	// serialized request and the expected response envelope agree.
-	c.requestID++
-	reqID := c.requestID
+	// serialized request and the expected response envelope agree. Atomic so
+	// concurrent calls never share an id (R20).
+	reqID := atomic.AddUint64(&c.requestID, 1)
 
 	response, err := c.sendRequest(reqID, method, params)
 	if err != nil {

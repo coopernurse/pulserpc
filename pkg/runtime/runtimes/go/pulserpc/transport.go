@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 )
 
 // Transport interface for RPC transports
@@ -109,12 +111,13 @@ type HTTPTransport struct {
 	Client  *http.Client
 }
 
-// NewHTTPTransport creates a new HTTP transport
+// NewHTTPTransport creates a new HTTP transport. The base URL has any trailing
+// slash removed (D13/R30) and requests time out after 30 seconds (D6/R19).
 func NewHTTPTransport(baseURL string, headers map[string]string) *HTTPTransport {
 	return &HTTPTransport{
-		BaseURL: baseURL,
+		BaseURL: strings.TrimSuffix(baseURL, "/"),
 		Headers: headers,
-		Client:  &http.Client{},
+		Client:  &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
