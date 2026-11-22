@@ -1743,6 +1743,9 @@ func writeTestMethodImplGo(sb *strings.Builder, iface *parser.Interface, method 
 		sb.WriteString("	return result, nil\n")
 	case "putperson":
 		sb.WriteString("	return p.PersonId, nil\n")
+	case "echooptional":
+		// echo the whole Person back so optional built-ins round-trip
+		sb.WriteString("	return p, nil\n")
 	default:
 		// Default implementation
 		if method.ReturnType != nil {

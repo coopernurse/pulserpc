@@ -45,6 +45,9 @@ struct Person {
     firstName string
     lastName  string
     email     string   [optional]
+    score     int      [optional]
+    active    bool     [optional]
+    ratio     float    [optional]
 }
 
 interface A {
@@ -81,6 +84,9 @@ interface A {
   // we use this to test the '[optional]' enforcement,
   // as we invoke it with a null email
   putPerson(p Person) string
+
+  // echoes p unchanged, to test optional built-in null round-tripping
+  echoOptional(p Person) Person
 
   // find an item by id, can return null
   findItem(id string) RepeatResponse [optional] raises(NotFoundError)
