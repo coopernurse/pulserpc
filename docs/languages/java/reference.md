@@ -107,14 +107,37 @@ sourceSets {
 | IDL Type | Java Type | Example |
 |----------|-----------|---------|
 | `string` | `String` | `"hello"` |
-| `int` | `Long` | `42L` |
-| `float` | `Double` | `3.14` |
-| `bool` | `Boolean` | `true`, `false` |
+| `int` | `int` (`Integer` when optional) | `42` |
+| `float` | `double` (`Double` when optional) | `3.14` |
+| `bool` | `boolean` (`Boolean` when optional) | `true`, `false` |
 | `[]Type` | `List<Type>` | `Arrays.asList(1, 2, 3)` |
 | `map[string]Type` | `Map<String, Type>` | `Collections.singletonMap("key", "value")` |
-| `Enum` | `Enum` | `OrderStatus.PENDING` |
-| `Struct` | Class with getters | `new Product(...)` |
-| `T [optional]` | `Optional<T>` | `Optional.of(value)` |
+| `Enum` | `Enum` (serialized by name) | `OrderStatus.PENDING` |
+| `Struct` | Class with getters/setters | `new Product(...)` |
+| `T [optional]` | Boxed `T` or `null` | `null` |
+
+`int` is signed 32-bit on the wire (`-2147483648`..`2147483647`); values outside
+that range, fractional numbers, booleans, and NaN/Infinity are rejected.
+
+## Optional Fields
+
+Optional built-in fields and optional return values use boxed Java types so
+absence is representable as `null`:
+
+```java
+public class Product {
+    private String name;       // required string
+    private Integer stock;     // optional int  -> Integer
+    private Boolean active;    // optional bool -> Boolean
+    private Double price;      // optional float -> Double
+    private String note;       // optional string stays String
+}
+
+// Methods with an optional return type return the boxed type or null
+public Integer getStock() { return stock; }
+```
+
+Required built-ins stay primitive (`int`, `boolean`, `double`).
 
 ## Generated Classes
 
@@ -140,28 +163,25 @@ Cart cart = new Cart(
 );
 ```
 
-## Optional Fields
+## Optional Return Types
 
-Optional return types use `Optional<T>`:
+Optional return types use the boxed Java type or `null`:
 
 ```java
-import java.util.Optional;
-
-// Methods with optional return type
-public Optional<Product> getProduct(String productId) {
+// Methods with optional return type return the boxed type or null
+public Product getProduct(String productId) {
     for (Product p : products) {
         if (p.getProductId().equals(productId)) {
-            return Optional.of(p);
+            return p;
         }
     }
-    return Optional.empty();  // Not found
+    return null;  // Not found
 }
 
 // Client usage
-Optional<Product> result = catalog.getProduct("prod001");
-if (result.isPresent()) {
-    Product product = result.get();
-    System.out.println(product.getName());
+Product result = catalog.getProduct("prod001");
+if (result != null) {
+    System.out.println(result.getName());
 }
 ```
 
@@ -212,6 +232,31 @@ Common error codes:
 - `-32603`: Internal error
 - `1000+`: Custom application errors
 
+### Wire invariants
+
+Generated Java adapters follow the same wire contract as every other PulseRPC
+runtime:
+
+- **`id`** must be a string, number, or `null`. Booleans, objects, and arrays
+  are rejected with `-32600`; numeric ids are echoed by value.
+- **Non-POST requests** return HTTP `405` with a JSON-RPC `-32600` body and
+  `"id":null`.
+- **Internal errors** return `-32603` with the fixed message `"Internal error"`
+  and no `data`. Exception messages and stack traces are logged server-side
+  only.
+- **Resource limits**: request body `1 MiB`, response body `10 MiB`, batch
+  entries `100`. Oversized requests return `-32600 "Request body too large"`;
+  oversized batches return `-32600 "Batch exceeds maximum size"`. The values
+  live in `com.bitmechanic.pulserpc.HttpLimits`.
+- **HTTP client timeouts**: 30 s request timeout, 10 s connect timeout.
+- **Custom headers and base URLs**: `HTTPTransport` accepts an optional header
+  map and strips trailing slashes from the base URL:
+
+  ```java
+  Transport transport = new HTTPTransport(
+      "http://localhost:8080/", jsonParser, Map.of("Authorization", "Bearer ..."));
+  ```
+
 ## Server Implementation
 
 Implement generated interfaces:
@@ -230,10 +275,11 @@ class CatalogServiceImpl implements CatalogService {
         return products;
     }
 
-    public Optional<Product> getProduct(String productId) {
+    public Product getProduct(String productId) {
         return products.stream()
             .filter(p -> p.getProductId().equals(productId))
-            .findFirst();
+            .findFirst()
+            .orElse(null);
     }
 }
 
@@ -278,11 +324,11 @@ for (Product p : products) {
     System.out.println(p.getName() + " - $" + p.getPrice());
 }
 
-// Optional methods return Optional
-Optional<Product> result = catalog.getProduct("prod001");
-result.ifPresent(product -> {
-    System.out.println(product.getName());
-});
+// Optional methods return the boxed type or null
+Product result = catalog.getProduct("prod001");
+if (result != null) {
+    System.out.println(result.getName());
+}
 ```
 
 ## JSON Library Support
@@ -323,7 +369,7 @@ Cart cart = cart.addToCart(new AddToCartRequest(
 
 ## Best Practices
 
-1. **Use Optional correctly**: Return `Optional.of()` for values, `Optional.empty()` for null
+1. **Use null for optional values**: Optional returns are boxed (`Integer`, `Boolean`, `Double`) or object references; return `null` when absent
 2. **Stream for collections**: Use Java streams for filtering and mapping
 3. **Immutable where possible**: Consider making generated classes immutable
 4. **Use Jackson annotations**: Add `@JsonProperty` for custom field names

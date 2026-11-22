@@ -9,6 +9,7 @@ This directory contains the Java runtime library for PulseRPC, providing validat
 - **RPCError.java**: Exception class for JSON-RPC 2.0 errors
 - **Validation.java**: Static validation methods for all PulseRPC types
 - **Types.java**: Helper methods for type operations and inheritance resolution
+- **HttpLimits.java**: Canonical request/response/batch limits and HTTP timeouts
 
 ### JSON Parser Abstraction
 
