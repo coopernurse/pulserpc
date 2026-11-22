@@ -96,6 +96,20 @@ async function testEnvelopeValidation() {
   console.log("✓ testEnvelopeValidation");
 }
 
+async function testNumericIdComparedByValue() {
+  // M24/D2: numeric ids are compared by value. An echoed id that is
+  // numerically equal to the request id must be accepted, regardless of how
+  // the number was produced on the wire.
+  const { client } = await createClient(false);
+  (client.transport as StubTransport).template = (req: JsonRpcRequest) => ({
+    jsonrpc: "2.0",
+    result: "ok",
+    id: parseFloat(String(req.id)),
+  });
+  assert.strictEqual(await client.call("Svc.req", ["x"]), "ok");
+  console.log("✓ testNumericIdComparedByValue");
+}
+
 async function testErrorCodeZeroIsPreserved() {
   const { client } = await createClient(false);
   (client.transport as StubTransport).template = {
@@ -262,6 +276,7 @@ async function testVerifyCompatibilityUsesSeverityEnum() {
 
 (async () => {
   await testEnvelopeValidation();
+  await testNumericIdComparedByValue();
   await testErrorCodeZeroIsPreserved();
   await testNullResultValidation();
   await testRequestValidation();

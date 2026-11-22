@@ -132,6 +132,20 @@ def test_error_response_is_surfaced_with_its_code():
     assert exc.value.code == INVALID_PARAMS
 
 
+# --- M27/D2: a malformed error object must not be trusted ----------------------
+
+def test_malformed_error_code_and_message_are_not_trusted():
+    # A non-numeric code and a non-string message must be normalized to a safe
+    # fallback RPCError rather than accepted verbatim.
+    client = scripted_client([
+        {'jsonrpc': '2.0', 'error': {'code': 'not-a-number', 'message': 42}, 'id': 1}
+    ])
+    with pytest.raises(RPCError) as exc:
+        client.call('Demo.echo', ['x'])
+    assert exc.value.code == INTERNAL_ERROR
+    assert isinstance(exc.value.message, str)
+
+
 # --- python-03: client-side validation of null results -------------------------
 
 def test_client_rejects_null_for_required_return():
