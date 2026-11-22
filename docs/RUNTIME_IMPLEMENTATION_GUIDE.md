@@ -52,10 +52,13 @@ catalog (`docs/audit/invariants.md`,
 these identifiers.
 
 **D1 — `int` is signed 32-bit.** Valid values are integral JSON numbers in
-`[-2147483648, 2147483647]`. Fractional numbers, NaN/Infinity, booleans, and
-out-of-range values are invalid in every runtime. Generated native types may be
-wider, but request/response validation enforces the range. This is a documented
-breaking change from the earlier unbounded-`int` behavior.
+`[-2147483648, 2147483647]`. For `int`, fractional numbers, NaN/Infinity,
+booleans, and out-of-range values are invalid in every runtime. Generated native
+types may be wider, but request/response validation enforces the range. This is a
+documented breaking change from the earlier unbounded-`int` behavior. `float` is
+not affected by this rule: it is an IEEE-754 double, and runtime validation
+accepts any number, including `NaN` and `±Infinity` (a JSON parser can produce
+them even though they are not standard JSON literals).
 
 **D2 — `id` is a string, number, or null.** Servers reject boolean, object, and
 array ids with `-32600`. Numeric ids are compared by value. An absent or
@@ -238,6 +241,9 @@ The Contract class encapsulates IDL parsing and request/response validation. Thi
 - **Single point of IDL parsing**: Parses the IDL JSON once and stores parsed interface/struct/enum definitions
 - **Centralized validation**: `validate_request()` and `validate_response()` methods use the parsed IDL
 - **Interface metadata**: `get_interface(name)` and `has_interface(name)` helpers for runtime lookup
+- **IDL metadata**: `meta` holds the key/value pairs from `{"type": "meta", ...}`
+  items in the Barrister list form (the `type` key itself is not copied). The
+  PulseRPC dict form has no `meta` key (D8), so it yields an empty `meta` map
 
 **Class structure**:
 ```python
@@ -251,6 +257,7 @@ class Contract:
     interfaces: Dict[str, Interface]
     structs: Dict[str, StructDef]
     enums: Dict[str, EnumDef]
+    meta: Dict[str, Any]  # key/value pairs from Barrister list-form `meta` items
 
     def __init__(self, idl_data):
         """Initialize from IDL JSON (supports both PulseRPC dict and Barrister list formats)"""
@@ -1361,9 +1368,9 @@ pkg/runtime/runtimes/java/
 
 #### Generated Code Structure
 When generating with `-dir src/main/java -package com.myapp.rpc`:
-- **Runtime package**: `pulserpc` → `{dir}/pulserpc/`
-  - Files: `src/main/java/pulserpc/RPCError.java`, etc.
-  - Package declaration: `package pulserpc;`
+- **Runtime package**: `com.bitmechanic.pulserpc` → `{dir}/com/bitmechanic/pulserpc/`
+  - Files: `src/main/java/com/bitmechanic/pulserpc/RPCError.java`, etc.
+  - Package declaration: `package com.bitmechanic.pulserpc;`
   
 - **Namespace packages**: `{package}.{namespace}` → `{dir}/{package-dirs}/{namespace}/`
   - Example: namespace `user` → `src/main/java/com/myapp/rpc/user/`
@@ -1374,14 +1381,14 @@ When generating with `-dir src/main/java -package com.myapp.rpc`:
 1. **Package declarations are fully-qualified** using the `-package` prefix
 2. **Directory structure mirrors packages** (Maven/Gradle convention)
 3. **Cross-namespace imports are fully-qualified** with `{package}.{namespace}`
-4. **Runtime stays in simple `pulserpc` package** (not under `-package` hierarchy)
+4. **Runtime stays in `com.bitmechanic.pulserpc`** (not under `-package` hierarchy)
 5. **Build tools work seamlessly** - just add `{dir}` as a source directory
 
 #### Java Runtime Structure:
 ```
 pkg/runtime/runtimes/java/
-├── pulserpc/                          # Runtime library
-│   ├── RPCError.java                  # package pulserpc;
+├── com/bitmechanic/pulserpc/          # Runtime library
+│   ├── RPCError.java                  # package com.bitmechanic.pulserpc;
 │   ├── Validation.java
 │   └── Types.java
 ├── tests/
@@ -1392,8 +1399,9 @@ pkg/runtime/runtimes/java/
 
 #### Generated Files:
 - `{package}/{namespace}/Idl.java` - Contains `ALL_STRUCTS` and `ALL_ENUMS` as static maps, package `{package}.{namespace}`
-- `{package}/{namespace}/Server.java` - HTTP server with **embedded IDL JSON**, package `{package}.{namespace}`
-- `{package}/{namespace}/Client.java` - Client classes, package `{package}.{namespace}`
+- `{package}/{namespace}/{Interface}Client.java` - Typed client for one interface, package `{package}.{namespace}`
+- `{package}/Server.java` - HTTP server with **embedded IDL JSON**, package `{package}`
+- `{package}/Client.java` - Standalone client with contract verification, package `{package}`
 - `{package}/{namespace}/{Type}.java` - Generated struct/enum classes, package `{package}.{namespace}`
 
 #### Java Build Integration:

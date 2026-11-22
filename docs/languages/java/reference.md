@@ -18,11 +18,13 @@ When using `-package com.example.myapp` with namespace `checkout`:
 | `src/main/java/com/example/myapp/checkout/Checkout.java` | `package com.example.myapp.checkout;` |
 | `src/main/java/com/example/myapp/checkout/CheckoutService.java` | `package com.example.myapp.checkout;` |
 | `src/main/java/com/example/myapp/checkout/CheckoutClient.java` | `package com.example.myapp.checkout;` |
-| `src/main/java/pulserpc/RPCError.java` | `package pulserpc;` |
+| `src/main/java/com/bitmechanic/pulserpc/RPCError.java` | `package com.bitmechanic.pulserpc;` |
 
 **Key points:**
 - Namespace packages are fully-qualified: `{package}.{namespace}`
-- Runtime always lives in `pulserpc` package (not qualified by `-package`)
+- Runtime always lives in `com.bitmechanic.pulserpc` (not qualified by `-package`)
+- The generated `Server.java` and standalone `Client.java` live in the base package
+  (`com.example.myapp`), not in a namespace package
 - Directory structure mirrors package structure
 
 ### Multi-Namespace Projects
@@ -31,7 +33,7 @@ For projects with multiple namespaces (e.g., `common.pulse`, `book.pulse`, `user
 
 ```
 src/main/java/
-├── pulserpc/                          # Runtime (package pulserpc)
+├── com/bitmechanic/pulserpc/          # Runtime (package com.bitmechanic.pulserpc)
 │   ├── RPCError.java
 │   ├── Client.java
 │   └── Server.java
@@ -52,10 +54,10 @@ import com.example.myapp.common.CommonTypes;
 import com.example.myapp.book.BookService;
 ```
 
-Runtime imports use simple package:
+Runtime imports use the `com.bitmechanic.pulserpc` package:
 ```java
-import pulserpc.RPCError;
-import pulserpc.*;
+import com.bitmechanic.pulserpc.RPCError;
+import com.bitmechanic.pulserpc.*;
 ```
 
 ### Maven Configuration
@@ -442,7 +444,10 @@ PulseRPC provides contract compatibility verification to detect when client and 
 ### Using Auditors
 
 ```java
-import com.bitmechanic.pulserpc.*;
+import com.example.myapp.Client;        // generated standalone client (base package)
+import com.bitmechanic.pulserpc.*;      // ContractAuditor, VerificationResult, ContractDelta
+
+JsonParser jsonParser = new JacksonJsonParser(); // or GsonJsonParser
 
 // Create client with FailFast auditor - throws if incompatible contract detected
 Client client = new Client("http://localhost:8080", jsonParser)
@@ -458,6 +463,12 @@ if (!result.isCompatible()) {
     }
 }
 ```
+
+The generated `Client` (in your base package) fetches the server's IDL over the
+`pulserpc-idl` method and diffs it against the IDL embedded at generation time.
+The runtime `com.bitmechanic.pulserpc.Client` is a different class: it takes a
+`Transport` (`Client.create(transport, validateRequest, validateResponse, ...)`)
+and has no `Client(String baseUrl, JsonParser)` constructor.
 
 ### Built-in Auditors
 
@@ -480,6 +491,7 @@ if (!result.isCompatible()) {
 | Property | Type | Description |
 |----------|------|-------------|
 | `isCompatible()` | `boolean` | True if no Error-level deltas |
+| `getError()` | `String` | Non-null when verification could not complete (e.g. the IDL fetch failed); otherwise `null` |
 | `getServerChecksum()` | `String` | SHA-256 hash of server IDL |
 | `getClientChecksum()` | `String` | SHA-256 hash of client IDL |
 | `getDeltas()` | `List<ContractDelta>` | List of changes detected |
