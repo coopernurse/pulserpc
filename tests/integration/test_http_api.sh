@@ -410,6 +410,27 @@ test_validation_error "A.calc" "[[33,22]]" "A.calc with missing enum parameter" 
 test_validation_error "A.add" "[\"five\",3]" "A.add with string instead of int" "-32602"
 test_validation_error "A.sqrt" "[\"not-a-number\"]" "A.sqrt with string instead of float" "-32602"
 
+# Structured validation data (conformance): error.data must be an object with
+# invalid_fields listing the offending parameter path. Locks in the shape that
+# Python/TS already emit; Go/Java/C# currently emit a plain string (FAIL).
+do_request POST '{"jsonrpc":"2.0","method":"A.add","params":["five",3],"id":99}'
+probe_ok=1
+probe_detail=""
+if [ "$REQUEST_STATUS" != "200" ]; then
+    probe_ok=0; probe_detail="${probe_detail}expected HTTP 200, got $REQUEST_STATUS; "
+fi
+if [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0; probe_detail="${probe_detail}response is not an object; "
+else
+    [ "$(json_get error.code)" = "-32602" ] || { probe_ok=0; probe_detail="${probe_detail}error.code != -32602; "; }
+    if [ "$(json_type error.data)" != "dict" ]; then
+        probe_ok=0; probe_detail="${probe_detail}error.data is not an object (got $(json_type error.data)); "
+    else
+        [ "$(json_get error.data.invalid_fields)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}error.data.invalid_fields missing; "; }
+    fi
+fi
+record_result "Validation error carries structured data (invalid_fields)" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
 # Invalid enum values
 test_validation_error "A.calc" "[[33,22],\"subtract\"]" "A.calc with invalid enum value" "-32602"
 test_validation_error "A.calc" "[[33,22],\"ADD\"]" "A.calc with wrong case enum" "-32602"
