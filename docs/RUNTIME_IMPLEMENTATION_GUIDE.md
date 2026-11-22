@@ -1216,7 +1216,7 @@ When implementing a new runtime, ensure:
 - [ ] Client validates parameters and responses
 - [ ] HTTP transport supports custom headers
 - [ ] Server handles `pulserpc-idl` method
-- [ ] Server handles batch requests (optional; only Go and C# generated servers do)
+- [ ] Server handles batch requests (optional; Go, C# and Java generated servers do)
 - [ ] Server handles notifications
 - [ ] Makefile targets for testing
 - [ ] Docker testing setup

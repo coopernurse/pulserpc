@@ -49,8 +49,8 @@ func TestGeneratedAdaptersSurfaceRPCErrors(t *testing.T) {
 	})
 }
 
-// core-10: batch requests are documented as optional because only Go/C#
-// generated servers implement them.
+// core-10: batch requests are documented as optional. Go, C#, and Java
+// generated servers implement them; TypeScript and Python do not.
 func TestRuntimeGuideMarksBatchOptional(t *testing.T) {
 	guidePath := "docs/RUNTIME_IMPLEMENTATION_GUIDE.md"
 	if _, err := os.Stat(guidePath); err != nil {
