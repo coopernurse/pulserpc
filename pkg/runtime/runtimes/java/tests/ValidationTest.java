@@ -118,7 +118,7 @@ public class ValidationTest {
             Validation.validateArray(mixedArray, Validation::validateString);
             Assert.fail("Expected IllegalArgumentException");
         } catch (IllegalArgumentException e) {
-            Assert.assertTrue(e.getMessage().contains("validation failed"));
+            Assert.assertTrue(e.getMessage().contains("Expected string"));
         }
     }
 
@@ -139,7 +139,7 @@ public class ValidationTest {
             Validation.validateMap(mixedMap, Validation::validateString);
             Assert.fail("Expected IllegalArgumentException");
         } catch (IllegalArgumentException e) {
-            Assert.assertTrue(e.getMessage().contains("validation failed"));
+            Assert.assertTrue(e.getMessage().contains("Expected string"));
         }
     }
 

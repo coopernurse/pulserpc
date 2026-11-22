@@ -107,6 +107,8 @@ public class Server {
         if (validateRequests && contract != null) {
             try {
                 contract.validateRequest(ifaceName, funcName, positionalParams);
+            } catch (RPCError rpcErr) {
+                return isNotification ? null : errorResponse(reqId, rpcErr.getCode(), rpcErr.getMessage(), rpcErr.getData());
             } catch (IllegalArgumentException ex) {
                 return isNotification ? null : errorResponse(reqId, -32602, "Invalid params", ex.getMessage());
             }
@@ -139,7 +141,7 @@ public class Server {
         if (validateResponses && contract != null) {
             try {
                 contract.validateResponse(ifaceName, funcName, result);
-            } catch (IllegalArgumentException ex) {
+            } catch (Exception ex) {
                 InternalErrors.log("response validation for " + ifaceName + "." + funcName, ex);
                 return isNotification ? null : errorResponse(reqId, -32603, "Internal error", null);
             }
