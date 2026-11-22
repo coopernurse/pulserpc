@@ -21,25 +21,36 @@ namespace PulseRPC
             }
         }
 
+        /// <summary>Minimum IDL int value (signed 32-bit, D1/R25).</summary>
+        public const long IntMin = -2147483648L;
+
+        /// <summary>Maximum IDL int value (signed 32-bit, D1/R25).</summary>
+        public const long IntMax = 2147483647L;
+
         /// <summary>
-        /// Validate that value is an int
+        /// Validate that value is an int in the signed 32-bit range. IDL int is
+        /// [-2147483648, 2147483647] in every runtime (D1/R25).
         /// </summary>
         public static void ValidateInt(object? value)
         {
             if (value is int)
             {
+                // A CLR int is always within the IDL range.
                 return;
             }
-            // Accept whole-number floats/doubles, but never NaN or Infinity.
-            if (value is double d && !double.IsNaN(d) && !double.IsInfinity(d) && d == Math.Floor(d))
+            if (value is long l && l >= IntMin && l <= IntMax)
             {
                 return;
             }
-            if (value is long)
+            // Accept whole-number doubles within range, but never NaN or Infinity.
+            if (value is double d &&
+                !double.IsNaN(d) && !double.IsInfinity(d) &&
+                d == Math.Floor(d) && d >= IntMin && d <= IntMax)
             {
                 return;
             }
-            throw new ArgumentException($"Expected int, got {value?.GetType().Name ?? "null"}");
+            throw new ArgumentException(
+                $"Expected int in range [{IntMin}, {IntMax}], got {value?.GetType().Name ?? "null"}");
         }
 
         /// <summary>

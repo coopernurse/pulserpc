@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -61,23 +62,36 @@ namespace PulseRPC
     /// </summary>
     public class HttpTransport : ITransport
     {
-        private static readonly System.Text.Json.JsonSerializerOptions _jsonOptions = new System.Text.Json.JsonSerializerOptions
+        /// <summary>Maximum response body size accepted by the client (10 MiB, D5).</summary>
+        public const long MaxResponseBytes = 10L * 1024 * 1024;
+
+        /// <summary>Request timeout applied to every client call (30 s, D6).</summary>
+        public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+
+        internal static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new System.Text.Json.JsonSerializerOptions
         {
             PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
         };
 
         static HttpTransport()
         {
-            _jsonOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+            // Enums are wire strings, never ordinals (C11/R27).
+            JsonOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
         }
 
         private readonly HttpClient _httpClient;
         private readonly string _baseUrl;
 
+        /// <summary>Normalized base URL (no trailing slash, R30).</summary>
+        public string BaseUrl => _baseUrl;
+
+        /// <summary>The underlying client, exposed for diagnostics and tests.</summary>
+        internal HttpClient HttpClient => _httpClient;
+
         public HttpTransport(string baseUrl, Dictionary<string, string>? headers = null)
         {
             _baseUrl = baseUrl.TrimEnd('/');
-            _httpClient = new HttpClient();
+            _httpClient = new HttpClient { Timeout = RequestTimeout };
             if (headers != null)
             {
                 foreach (var header in headers)
@@ -85,6 +99,44 @@ namespace PulseRPC
                     _httpClient.DefaultRequestHeaders.Add(header.Key, header.Value);
                 }
             }
+        }
+
+        /// <summary>
+        /// Test/diagnostic constructor: uses a caller-supplied handler so response
+        /// streaming and the size cap can be exercised without a network.
+        /// </summary>
+        internal HttpTransport(string baseUrl, HttpMessageHandler handler)
+        {
+            _baseUrl = baseUrl.TrimEnd('/');
+            _httpClient = new HttpClient(handler, disposeHandler: false) { Timeout = RequestTimeout };
+        }
+
+        /// <summary>
+        /// Reads a stream into a byte array, returning null as soon as the limit
+        /// is exceeded. The live stream is never buffered past the cap (R17), and
+        /// <paramref name="initialCapacity"/> (usually the Content-Length) lets the
+        /// buffer be allocated once instead of growing.
+        /// </summary>
+        public static async Task<byte[]?> ReadLimitedAsync(Stream stream, long limit, long? initialCapacity = null)
+        {
+            var capacity = 0L;
+            if (initialCapacity.HasValue && initialCapacity.Value > 0)
+            {
+                capacity = Math.Min(initialCapacity.Value, limit);
+            }
+
+            using var buffer = capacity > 0 ? new MemoryStream((int)capacity) : new MemoryStream();
+            var chunk = new byte[8192];
+            int read;
+            while ((read = await stream.ReadAsync(chunk, 0, chunk.Length)) > 0)
+            {
+                if (buffer.Length + read > limit)
+                {
+                    return null;
+                }
+                buffer.Write(chunk, 0, read);
+            }
+            return buffer.ToArray();
         }
 
         public Task<Dictionary<string, object?>> CallAsync(string method, object[] parameters)
@@ -103,13 +155,28 @@ namespace PulseRPC
                 request["params"] = @params;
             }
 
-            var json = System.Text.Json.JsonSerializer.Serialize(request, _jsonOptions);
+            var json = System.Text.Json.JsonSerializer.Serialize(request, JsonOptions);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var response = await _httpClient.PostAsync(_baseUrl, content);
+            // ResponseHeadersRead keeps the body as a live stream so
+            // ReadLimitedAsync bounds it; without it HttpClient would buffer the
+            // whole body (unbounded) before the 10 MiB cap could apply (R17).
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, _baseUrl) { Content = content };
+            using var response = await _httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
 
-            var responseJson = await response.Content.ReadAsStringAsync();
+            byte[]? bodyBytes;
+            using (var responseStream = await response.Content.ReadAsStreamAsync())
+            {
+                bodyBytes = await ReadLimitedAsync(responseStream, MaxResponseBytes, response.Content.Headers.ContentLength);
+            }
+            if (bodyBytes == null)
+            {
+                throw new RPCError(-32603, "Internal error",
+                    $"Response body exceeds maximum size of {MaxResponseBytes} bytes");
+            }
+
+            var responseJson = Encoding.UTF8.GetString(bodyBytes);
             var responseDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object?>>(responseJson);
 
             // Validate the JSON-RPC 2.0 envelope before interpreting it so a

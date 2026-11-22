@@ -16,6 +16,13 @@ namespace PulseRPC
         private readonly bool _validateResponses;
 
         /// <summary>
+        /// Optional server-side sink for internal error details. The wire never
+        /// carries exception text or stack traces (D4/R15); callers that want
+        /// diagnostics supply a logger here.
+        /// </summary>
+        public Action<string, Exception>? InternalErrorLogger { get; set; }
+
+        /// <summary>
         /// Creates a new Server instance
         /// </summary>
         public Server(Contract contract, bool validateRequests = true, bool validateResponses = true)
@@ -23,6 +30,21 @@ namespace PulseRPC
             _contract = contract;
             _validateRequests = validateRequests;
             _validateResponses = validateResponses;
+        }
+
+        private void LogInternalError(string context, Exception ex)
+        {
+            if (InternalErrorLogger != null)
+            {
+                InternalErrorLogger(context, ex);
+                return;
+            }
+
+            // Default diagnostics deliberately omit the exception message and
+            // stack trace: handler text can contain secrets and must never be
+            // written anywhere implicitly. Supply InternalErrorLogger to get
+            // the full detail (R15/D4).
+            Console.Error.WriteLine($"[PulseRPC] {context}: {ex.GetType().FullName}");
         }
 
         /// <summary>
@@ -40,8 +62,14 @@ namespace PulseRPC
         public Dictionary<string, object>? Call(Dictionary<string, object> request)
         {
             // Parse the id first: a notification (no id) must never receive a
-            // response, including an error response (M4/R11).
+            // response, including an error response (M4/R11). An id is only
+            // allowed to be a string, a number, or null (D2/R24); booleans,
+            // objects, and arrays are invalid requests.
             var reqId = request == null ? null : (request.TryGetValue("id", out var idVal) ? idVal : null);
+            if (reqId is bool || reqId is System.Collections.IDictionary || reqId is System.Collections.IList)
+            {
+                return ErrorResponse(null, -32600, "Invalid Request", "id must be a string, number, or null");
+            }
             var isNotification = reqId == null;
 
             Dictionary<string, object>? Fail(int code, string message, object? data = null)
@@ -140,7 +168,8 @@ namespace PulseRPC
                 {
                     return Fail(rpcErr.Code, rpcErr.Message, rpcErr.Data);
                 }
-                return Fail(-32603, "Internal error", innerEx.Message);
+                LogInternalError($"Exception invoking {ifaceName}.{funcName}", innerEx);
+                return Fail(-32603, "Internal error");
             }
             catch (RPCError rpcErr)
             {
@@ -152,7 +181,8 @@ namespace PulseRPC
             }
             catch (Exception ex)
             {
-                return Fail(-32603, "Internal error", ex.Message);
+                LogInternalError($"Exception invoking {ifaceName}.{funcName}", ex);
+                return Fail(-32603, "Internal error");
             }
 
             // Validate response if validation is enabled - null results for a
@@ -165,8 +195,8 @@ namespace PulseRPC
                 }
                 catch (ArgumentException ex)
                 {
-                    return Fail(-32603, "Internal error",
-                        $"Response validation failed: {ex.Message}");
+                    LogInternalError($"Response validation failed for {ifaceName}.{funcName}", ex);
+                    return Fail(-32603, "Internal error");
                 }
             }
 
@@ -265,9 +295,10 @@ namespace PulseRPC
         }
 
         /// <summary>
-        /// Creates a JSON-RPC error response
+        /// Creates a JSON-RPC error response. Internal (not private) so the
+        /// envelope shape can be asserted by tests.
         /// </summary>
-        private Dictionary<string, object> ErrorResponse(object? reqId, int code, string message, object? data)
+        internal Dictionary<string, object> ErrorResponse(object? reqId, int code, string message, object? data)
         {
             var errObj = new Dictionary<string, object>
             {
@@ -282,29 +313,27 @@ namespace PulseRPC
             var response = new Dictionary<string, object>
             {
                 ["jsonrpc"] = "2.0",
-                ["error"] = errObj
+                ["error"] = errObj,
+                // JSON-RPC 2.0 requires an id member; it is null when the
+                // request id is unknown or invalid (M22/M25).
+                ["id"] = reqId!
             };
-            if (reqId != null)
-            {
-                response["id"] = reqId;
-            }
             return response;
         }
 
         /// <summary>
-        /// Creates a JSON-RPC success response
+        /// Creates a JSON-RPC success response. The id member is always present
+        /// (null only when the request id is unknown), matching ErrorResponse and
+        /// the D3 envelope shape. Internal (not private) for envelope tests.
         /// </summary>
-        private Dictionary<string, object> SuccessResponse(object? reqId, object? result)
+        internal Dictionary<string, object> SuccessResponse(object? reqId, object? result)
         {
             var response = new Dictionary<string, object>
             {
                 ["jsonrpc"] = "2.0",
-                ["result"] = result!
+                ["result"] = result!,
+                ["id"] = reqId!
             };
-            if (reqId != null)
-            {
-                response["id"] = reqId;
-            }
             return response;
         }
 

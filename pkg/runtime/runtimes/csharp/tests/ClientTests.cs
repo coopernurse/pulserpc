@@ -136,7 +136,9 @@ namespace PulseRPC.Tests
             var call = transport.Calls.Last(c => c.Method == "Calc.add");
             sentId = call.Id;
             Assert.NotNull(sentId);
-            Assert.IsType<int>(sentId);
+            // R20: caller-owned ids are GUID strings, unique without a shared counter.
+            Assert.IsType<string>(sentId);
+            Assert.True(Guid.TryParse((string)sentId!, out _));
         }
 
         [Fact]

@@ -16,7 +16,7 @@ func TestGeneratedCSharpServerSuppressesNotificationErrors(t *testing.T) {
 	for _, want := range []string{
 		"private async Task<Dictionary<string, object?>?> HandleSingleRequest(",
 		"private async Task<Dictionary<string, object?>?> HandleSingleRequestCore(",
-		"bool isNotification = !requestJson.ContainsKey(\"id\");",
+		"bool isNotification = !requestJson.TryGetValue(\"id\", out var notificationId) || notificationId == null;",
 		"if (isNotification && response != null && response.ContainsKey(\"error\"))",
 	} {
 		if !strings.Contains(code, want) {
