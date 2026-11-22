@@ -139,11 +139,30 @@ Documentation CI. Gaps 1–8 and 11–12 are closed.
 CI is green for the merged wave-2 head (`34d10be`): CI (9 jobs) and CI
 Conformance (multi-runtime + quickstarts).
 
-Remaining: 9 (client-side conformance — existing per-runtime client-envelope
-unit tests cover M5/M14/M24; a standalone cross-runtime client harness is a
-larger follow-up), 13 (grammar negatives — intentionally unit-only), 14
-(playground/path/meta — out of scope), and R17 (response cap), D6 (timeout),
-and R27 (enum-return fixture) in WP7.
+### Wave 3
+
+- **Gap 9 closed.** A new `tests/integration/client_conformance_test.go`
+  exercises nine canonical envelope cases (wrong version, id mismatch,
+  result+error, neither, malformed error code/message, numeric-id equality,
+  null required/optional results) against the Go client. The same case list was
+  added to Java (new `ClientEnvelopeTest.java`), C#, Python, ts-node, and ts-cjs.
+  Malformed error objects are normalized to a safe internal-error fallback in
+  those runtimes rather than rejected outright.
+- **R17/D6 locked in.** Generator invariant assertions now cover the 10 MiB
+  response cap and 30s timeouts in Python/TS/C# generated transports; a Go
+  behavioral timeout test and a C# 10s connect timeout were added. The caps and
+  timeouts themselves already existed in the runtime transports from earlier
+  commits.
+- **R27/C11 closed.** `A.pick(MathOp) MathOp` returns an enum over the wire;
+  all seven runtimes were probed for declared string serialization and invalid
+  enum rejection. CI exposed a real Go bug: `convertToMap`/`ValidateEnumE`
+  rejected named string types, so enum-returning methods produced `-32603`.
+  The runtime now normalizes named primitives, with a regression test.
+
+All originally identified gaps except the intentionally out-of-scope grammar
+and playground/security items are now closed. Remaining follow-ups are
+non-conformance concerns (e.g. C# `-package` namespace handling, generated Java
+`verifyOnBootstrap()` wiring).
 
 ## Sequencing
 
