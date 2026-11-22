@@ -30,12 +30,12 @@ namespace PulseRPC
             {
                 return;
             }
-            // Accept whole-number floats/doubles
-            if (value is double d && d == Math.Floor(d))
+            // Accept whole-number floats/doubles, but never NaN or Infinity.
+            if (value is double d && !double.IsNaN(d) && !double.IsInfinity(d) && d == Math.Floor(d))
             {
                 return;
             }
-            if (value is long l && l == Math.Floor((double)l))
+            if (value is long)
             {
                 return;
             }
@@ -47,9 +47,19 @@ namespace PulseRPC
         /// </summary>
         public static void ValidateFloat(object? value)
         {
-            if (value is not float && value is not double && value is not int)
+            // Keep the numeric acceptance set consistent with ValidateInt (long
+            // included) and reject non-finite values (R2).
+            if (value is not float && value is not double && value is not int && value is not long)
             {
                 throw new ArgumentException($"Expected float, got {value?.GetType().Name ?? "null"}");
+            }
+            if (value is double d && (double.IsNaN(d) || double.IsInfinity(d)))
+            {
+                throw new ArgumentException("Expected a finite float value");
+            }
+            if (value is float f && (float.IsNaN(f) || float.IsInfinity(f)))
+            {
+                throw new ArgumentException("Expected a finite float value");
             }
         }
 

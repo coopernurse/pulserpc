@@ -14,7 +14,36 @@ namespace PulseRPC
         /// </summary>
         public static Dictionary<string, object>? FindStruct(string structName, Dictionary<string, Dictionary<string, object>> allStructs)
         {
-            return allStructs.TryGetValue(structName, out var structDef) ? structDef : null;
+            // Exact match first.
+            if (allStructs.TryGetValue(structName, out var structDef))
+            {
+                return structDef;
+            }
+
+            // A field may reference a struct by a qualified name such as
+            // "inc.Address" while the struct is registered as "Address". Mirror
+            // FindEnum's qualified-name fallback. When two namespaces register the
+            // same base name, resolve deterministically to the first full name in
+            // ordinal order so resolution is stable (rather than arbitrary).
+            if (structName.Contains("."))
+            {
+                var baseName = structName.Substring(structName.LastIndexOf('.') + 1);
+                if (allStructs.TryGetValue(baseName, out structDef))
+                {
+                    return structDef;
+                }
+
+                var candidate = allStructs.Keys
+                    .Where(k => k.EndsWith("." + baseName, StringComparison.Ordinal))
+                    .OrderBy(k => k, StringComparer.Ordinal)
+                    .FirstOrDefault();
+                if (candidate != null)
+                {
+                    return allStructs[candidate];
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

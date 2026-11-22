@@ -9,6 +9,12 @@ namespace PulseRPC
     {
         public static List<ContractDelta> DiffIDL(object clientIDL, object serverIDL)
         {
+            // IDLs may arrive as JsonElement values (from Deserialize<object>) at
+            // the root or nested anywhere in the document. Normalize recursively
+            // so field metadata such as "optional" is readable by the extractors.
+            clientIDL = NormalizeIdl(clientIDL);
+            serverIDL = NormalizeIdl(serverIDL);
+
             var deltas = new List<ContractDelta>();
 
             var clientInterfaces = ExtractInterfaces(clientIDL);
@@ -28,6 +34,33 @@ namespace PulseRPC
             deltas.AddRange(DiffErrors(clientErrors, serverErrors));
 
             return deltas;
+        }
+
+        private static object NormalizeIdl(object idl)
+        {
+            if (idl is JsonElement element)
+            {
+                return ConvertJsonElement(element);
+            }
+            if (idl is Dictionary<string, object> dict)
+            {
+                var result = new Dictionary<string, object>();
+                foreach (var kvp in dict)
+                {
+                    result[kvp.Key] = NormalizeIdl(kvp.Value);
+                }
+                return result;
+            }
+            if (idl is System.Collections.IList list)
+            {
+                var result = new List<object>();
+                foreach (var item in list)
+                {
+                    result.Add(NormalizeIdl(item));
+                }
+                return result;
+            }
+            return idl;
         }
 
         private static Dictionary<string, Dictionary<string, object>> ExtractInterfaces(object idl)

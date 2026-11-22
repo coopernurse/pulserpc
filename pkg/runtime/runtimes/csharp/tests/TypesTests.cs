@@ -176,6 +176,77 @@ namespace PulseRPC.Tests
             Assert.Equal("int", idFieldType!["builtIn"].ToString());
             Assert.Equal("name", fields[1]["name"].ToString());
         }
+
+        // csharp-07: qualified struct names must resolve like qualified enums.
+        [Fact]
+        public void FindStruct_QualifiedName_FallsBackToBaseName()
+        {
+            var allStructs = new Dictionary<string, Dictionary<string, object>>
+            {
+                { "User", new Dictionary<string, object> { { "fields", new List<object>() } } }
+            };
+
+            Assert.Same(allStructs["User"], Types.FindStruct("inc.User", allStructs));
+        }
+
+        [Fact]
+        public void FindStruct_QualifiedName_MatchesRegisteredQualifiedName()
+        {
+            var allStructs = new Dictionary<string, Dictionary<string, object>>
+            {
+                { "inc.User", new Dictionary<string, object> { { "fields", new List<object>() } } }
+            };
+
+            Assert.Same(allStructs["inc.User"], Types.FindStruct("inc.User", allStructs));
+        }
+
+        [Fact]
+        public void FindStruct_AmbiguousBaseName_ResolvesDeterministically()
+        {
+            var allStructs = new Dictionary<string, Dictionary<string, object>>
+            {
+                { "z.User", new Dictionary<string, object> { { "fields", new List<object>() } } },
+                { "a.User", new Dictionary<string, object> { { "fields", new List<object>() } } }
+            };
+
+            // Two namespaces define "User"; resolution is stable (first ordinal key).
+            Assert.Same(allStructs["a.User"], Types.FindStruct("other.User", allStructs));
+            Assert.Same(allStructs["a.User"], Types.FindStruct("other.User", allStructs));
+        }
+
+        [Fact]
+        public void ValidateType_QualifiedStructName_Resolves()
+        {
+            var allStructs = new Dictionary<string, Dictionary<string, object>>
+            {
+                {
+                    "User",
+                    new Dictionary<string, object>
+                    {
+                        {
+                            "fields",
+                            new List<Dictionary<string, object>>
+                            {
+                                new Dictionary<string, object>
+                                {
+                                    { "name", "city" },
+                                    { "type", new Dictionary<string, object> { { "builtIn", "string" } } },
+                                    { "optional", false }
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+            var allEnums = new Dictionary<string, Dictionary<string, object>>();
+            var typeDef = new Dictionary<string, object> { { "userDefined", "inc.User" } };
+
+            Validation.ValidateType(
+                new Dictionary<string, object?> { { "city", "Paris" } }, typeDef, allStructs, allEnums);
+
+            Assert.Throws<ArgumentException>(() => Validation.ValidateType(
+                new Dictionary<string, object?>(), typeDef, allStructs, allEnums));
+        }
     }
 }
 

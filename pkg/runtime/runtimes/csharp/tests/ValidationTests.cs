@@ -360,6 +360,48 @@ namespace PulseRPC.Tests
             Assert.Throws<ArgumentException>(() => 
                 Validation.ValidateType(new Dictionary<string, object?> { { "a", "not int" } }, typeDef, allStructs, allEnums));
         }
+
+        // csharp-10: enum values are strings on the wire; integers must be rejected.
+        [Fact]
+        public void ValidateEnum_IntegerValue_IsRejected()
+        {
+            Assert.Throws<ArgumentException>(() =>
+                Validation.ValidateEnum(0, "Color", new List<string> { "red", "green" }));
+            Assert.Throws<ArgumentException>(() =>
+                Validation.ValidateEnum(1L, "Color", new List<string> { "red", "green" }));
+            Validation.ValidateEnum("red", "Color", new List<string> { "red", "green" });
+        }
+
+        // csharp-11: document and verify the C# scalar acceptance matrix.
+        [Fact]
+        public void ScalarAcceptanceMatrix_IntLongDoubleFloatBoolNaNInfinity()
+        {
+            // int: accepts int, long and whole doubles; rejects bool, NaN and Infinity.
+            Validation.ValidateInt(5);
+            Validation.ValidateInt(5L);
+            Validation.ValidateInt(5.0);
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(true));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(double.NaN));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(double.PositiveInfinity));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(double.NegativeInfinity));
+
+            // float: accepts int, long, float and double; rejects bool, NaN and Infinity.
+            Validation.ValidateFloat(5);
+            Validation.ValidateFloat(5L);
+            Validation.ValidateFloat(5.0);
+            Validation.ValidateFloat(5f);
+            Assert.Throws<ArgumentException>(() => Validation.ValidateFloat(true));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateFloat(double.NaN));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateFloat(double.PositiveInfinity));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateFloat(float.NaN));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateFloat(float.PositiveInfinity));
+
+            // string and bool accept only their own CLR type.
+            Validation.ValidateString("x");
+            Validation.ValidateBool(true);
+            Assert.Throws<ArgumentException>(() => Validation.ValidateString(5));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateBool(1));
+        }
     }
 }
 
