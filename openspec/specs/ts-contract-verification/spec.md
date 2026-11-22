@@ -47,12 +47,12 @@ The TypeScript runtime SHALL provide a `VerificationResult` interface with the f
 - `deltas`: ContractDelta[] - List of all deltas found
 - `timestamp`: Date - When verification was performed
 
-### Requirement: IContractAuditor Interface
+### Requirement: ContractAuditor Interface
 
-The TypeScript runtime SHALL provide an `IContractAuditor` interface:
+The TypeScript runtime SHALL provide an `ContractAuditor` interface:
 
 ```typescript
-interface IContractAuditor {
+interface ContractAuditor {
   audit(result: VerificationResult): void;
   name(): string;
 }
@@ -62,18 +62,18 @@ Auditors are invoked after every verification call, regardless of whether deltas
 
 ### Requirement: Built-in NoOp Auditor
 
-The TypeScript runtime SHALL provide a `NoOpAuditor` class that implements `IContractAuditor` and performs no action. This allows users to inspect results directly without automatic handling.
+The TypeScript runtime SHALL provide a `NoOpAuditor` class that implements `ContractAuditor` and performs no action. This allows users to inspect results directly without automatic handling.
 
 ### Requirement: Built-in Logging Auditor
 
-The TypeScript runtime SHALL provide a `LoggingAuditor` class that implements `IContractAuditor` and logs:
+The TypeScript runtime SHALL provide a `LoggingAuditor` class that implements `ContractAuditor` and logs:
 - Error-level for Error severity deltas
 - Warning-level for Warning severity deltas
 - Info-level for Info severity deltas
 
 ### Requirement: Built-in FailFast Auditor
 
-The TypeScript runtime SHALL provide a `FailFastAuditor` class that implements `IContractAuditor` and throws an error if any Error severity deltas are found.
+The TypeScript runtime SHALL provide a `FailFastAuditor` class that implements `ContractAuditor` and throws an error if any Error severity deltas are found.
 
 ### Requirement: Client Loads Local IDL from idl.json
 
@@ -116,15 +116,15 @@ The TypeScript client SHALL provide a `verifyCompatibility(): Promise<Verificati
 ### Requirement: Client Constructor Options
 
 The TypeScript client constructor SHALL accept an options object with the following properties:
-- `auditor`: `IContractAuditor` instance for automatic auditing (optional)
+- `auditor`: `ContractAuditor` instance for automatic auditing (optional)
 - `verifyOnBootstrap`: boolean to trigger automatic verification during client initialization (optional, default false)
 
 #### Scenario: Client with auditor option
-- **WHEN** `new Client(transport, { auditor: new LoggingAuditor() })` is instantiated
+- **WHEN** `const client = await Client.create(transport, { auditor: new LoggingAuditor() })` is called
 - **THEN** verification results are passed to the auditor after each call
 
 #### Scenario: Client with verifyOnBootstrap option
-- **WHEN** `new Client(transport, { verifyOnBootstrap: true })` is instantiated
+- **WHEN** `const client = await Client.create(transport, { verifyOnBootstrap: true })` is called
 - **THEN** `verifyCompatibility()` is called automatically after bootstrap
 
 ### Requirement: SetLocalIDL Method

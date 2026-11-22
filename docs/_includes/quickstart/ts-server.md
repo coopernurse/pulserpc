@@ -28,17 +28,17 @@ const carts = new Map<string, any>();
 const orders = new Map<string, any>();
 
 class CatalogServiceImpl extends CatalogService {
-  listProducts(_ctx: Record<string, any>): any[] {
+  async listProducts(_ctx: Record<string, any>): Promise<any[]> {
     return products;
   }
 
-  getProduct(_ctx: Record<string, any>, productId: string): any | null {
+  async getProduct(_ctx: Record<string, any>, productId: string): Promise<any | null> {
     return products.find((p: any) => p.productId === productId) || null;
   }
 }
 
 class CartServiceImpl extends CartService {
-  addToCart(_ctx: Record<string, any>, request: any): any {
+  async addToCart(_ctx: Record<string, any>, request: any): Promise<any> {
     let cartId = request.cartId || `cart_${Math.floor(Math.random() * 9000 + 1000)}`;
 
     let cart = carts.get(cartId);
@@ -66,11 +66,11 @@ class CartServiceImpl extends CartService {
     return cart;
   }
 
-  getCart(_ctx: Record<string, any>, cartId: string): any | null {
+  async getCart(_ctx: Record<string, any>, cartId: string): Promise<any | null> {
     return carts.get(cartId) || null;
   }
 
-  clearCart(_ctx: Record<string, any>, cartId: string): boolean {
+  async clearCart(_ctx: Record<string, any>, cartId: string): Promise<boolean> {
     const cart = carts.get(cartId);
     if (cart) {
       cart.items = [];
@@ -82,7 +82,7 @@ class CartServiceImpl extends CartService {
 }
 
 class OrderServiceImpl extends OrderService {
-  createOrder(_ctx: Record<string, any>, request: any): any {
+  async createOrder(_ctx: Record<string, any>, request: any): Promise<any> {
     const cart = carts.get(request.cartId);
     if (!cart) {
       throw new RPCError(1001, 'CartNotFound: Cart does not exist');
@@ -107,7 +107,7 @@ class OrderServiceImpl extends OrderService {
     return { orderId, message: 'Order created successfully' };
   }
 
-  getOrder(_ctx: Record<string, any>, orderId: string): any | null {
+  async getOrder(_ctx: Record<string, any>, orderId: string): Promise<any | null> {
     return orders.get(orderId) || null;
   }
 }
@@ -126,13 +126,13 @@ class RPCHandler {
     this.rpcServer = rpcServer;
   }
 
-  handle(req: http.IncomingMessage, res: http.ServerResponse): void {
+  async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     let body = '';
     req.on('data', (chunk) => { body += chunk.toString(); });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const data = JSON.parse(body);
-        const response = this.rpcServer.call(data);
+        const response = await this.rpcServer.call(data);
         if (response === null || response === undefined) {
           res.writeHead(204);
           res.end();
