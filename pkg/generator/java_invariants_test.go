@@ -289,6 +289,12 @@ public class JsonNode {
 public class JavaType {
 }
 `,
+		"com/fasterxml/jackson/databind/DeserializationFeature.java": `package com.fasterxml.jackson.databind;
+
+public class DeserializationFeature {
+    public static final DeserializationFeature FAIL_ON_UNKNOWN_PROPERTIES = new DeserializationFeature();
+}
+`,
 		"com/fasterxml/jackson/databind/TypeFactory.java": `package com.fasterxml.jackson.databind;
 
 import java.lang.reflect.Type;
@@ -309,6 +315,7 @@ public class ObjectMapper {
     public <T> T readValue(String json, JavaType type) { return null; }
     public <T> T treeToValue(JsonNode node, Class<T> clazz) { return null; }
     public TypeFactory getTypeFactory() { return new TypeFactory(); }
+    public ObjectMapper configure(Object feature, boolean state) { return this; }
 }
 `,
 		"com/google/gson/annotations/SerializedName.java": `package com.google.gson.annotations;
@@ -478,7 +485,8 @@ func TestGeneratedJavaAdapterInvariants(t *testing.T) {
 		for _, want := range []string{
 			"HttpLimits.checkDeclaredLength(declaredLength, HttpLimits.MAX_REQUEST_BODY, \"Request body\");",
 			"HttpLimits.readBounded(requestBodyStream, HttpLimits.MAX_REQUEST_BODY, \"Request body\");",
-			"try (java.io.InputStream requestBodyStream = exchange.getRequestBody()) {",
+			"java.io.InputStream requestBodyStream = exchange.getRequestBody();",
+			"requestBodyStream.close();",
 			"sendError(exchange, 200, -32600, \"Request body too large\");",
 		} {
 			if !strings.Contains(server, want) {

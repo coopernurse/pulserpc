@@ -1,5 +1,6 @@
 package com.bitmechanic.pulserpc;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.lang.reflect.Type;
@@ -17,6 +18,9 @@ public class JacksonJsonParser implements JsonParser {
      */
     public JacksonJsonParser() {
         this.objectMapper = new ObjectMapper();
+        // M12: requests may carry extra fields; ignore them instead of
+        // failing deserialization of an otherwise valid struct.
+        this.objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
     /**
