@@ -166,7 +166,7 @@ generate_code() {
 
     # The Python 2 generator intentionally emits only idl.json + the runtime.
     # Supply the shared conformance server used by the HTTP harness.
-    if [ "$name" = "python2" ]; then
+    if [ "$name" = "python" ] || [ "$name" = "python2" ]; then
         local idl_src
         idl_src=$(find "$output_dir" -type f -name idl.json | head -1)
         if [ -z "$idl_src" ]; then
@@ -174,6 +174,8 @@ generate_code() {
             return 1
         fi
         cp "$idl_src" "$output_dir/idl.json"
+    fi
+    if [ "$name" = "python2" ]; then
         cp "$PROJECT_ROOT/tests/integration/servers/python2_conform_server.py" \
             "$output_dir/test_server.py"
         TEST_SERVER_DIR="$output_dir"
@@ -213,6 +215,9 @@ generate_code() {
         return 1
     fi
     TEST_SERVER_DIR=$(dirname "$TEST_SERVER_FILE")
+    local rel_test_file="${TEST_SERVER_FILE#"$output_dir"}"
+    rel_test_file="${rel_test_file#/}"
+    local container_test_file="/workspace/$rel_test_file"
 
     # Create a tsconfig.json for the ESM ts-node variant when the generator
     # did not emit one (the CJS path passes -ts-gen-tsconfig).
@@ -308,18 +313,22 @@ start_runtime() {
 
     local container_cmd=""
     case "$name" in
-        python|python2)
-            # The runtime package lives at /workspace/pulserpc.
+        python)
+            # test_server.py opens idl.json from cwd and imports the runtime
+            # package from /workspace; run it by absolute path from the root.
+            container_cmd="cd /workspace && PYTHONPATH=/workspace python3 $container_test_file"
+            ;;
+        python2)
             container_cmd="cd $container_test_dir && PYTHONPATH=/workspace $start_cmd"
             ;;
         ts)
             # Install TypeScript tools and run the ESM server with ts-node.
-            container_cmd="cd $container_test_dir && npm install -g typescript@5 ts-node@10 @types/node@20 >/dev/null 2>&1 && ts-node --project /workspace/tsconfig.json test_server.ts"
+            container_cmd="npm install -g tsx >/dev/null 2>&1 && cd $container_test_dir && tsx --tsconfig /workspace/tsconfig.json test_server.ts"
             ;;
         ts-cjs)
             # Compile the CommonJS output, then run it with node. @types/node
             # must be resolvable from the project root for tsc.
-            container_cmd="npm install -g typescript@5 >/dev/null 2>&1 && cd /workspace && npm install --no-save @types/node >/dev/null 2>&1 && cd $container_test_dir && npx tsc --project /workspace/tsconfig.json >/dev/null 2>&1 && node test_server.js"
+            container_cmd="npm install -g typescript@5 >/dev/null 2>&1 && cd /workspace && npm install --no-save @types/node >/dev/null 2>&1 && cd $container_test_dir && npx tsc --project /workspace/tsconfig.json && node test_server.js"
             ;;
         csharp)
             # Build and run C# server
