@@ -42,6 +42,33 @@ public class ValidationTest {
     }
 
     @Test
+    public void testValidateIntSigned32BitRange() {
+        // Invariant R25/D1: IDL ints are signed 32-bit.
+        Validation.validateInt(Integer.MAX_VALUE);
+        Validation.validateInt(Integer.MIN_VALUE);
+        Validation.validateInt(2147483647L);
+        Validation.validateInt(-2147483648L);
+        Validation.validateInt(2147483647.0);
+        Validation.validateInt(-2147483648.0);
+
+        Object[] invalid = {
+            2147483648L, -2147483649L,
+            2147483648.0, -2147483649.0,
+            Double.POSITIVE_INFINITY, Double.NaN,
+            1.5, Double.valueOf(1.25)
+        };
+        for (Object value : invalid) {
+            try {
+                Validation.validateInt(value);
+                Assert.fail("Expected IllegalArgumentException for " + value);
+            } catch (IllegalArgumentException e) {
+                Assert.assertTrue("message should name int: " + e.getMessage(),
+                    e.getMessage().contains("Expected int"));
+            }
+        }
+    }
+
+    @Test
     public void testValidateFloat() {
         // java-08: integer values of every Number type are valid floats.
         Validation.validateFloat(5);
