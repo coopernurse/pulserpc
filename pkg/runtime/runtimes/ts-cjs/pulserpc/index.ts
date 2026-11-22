@@ -15,7 +15,14 @@ export {
 } from "./contract";
 export { Client, ClientOptions } from "./client";
 export { Server, ServerOptions, HandlerCtx, Handler } from "./server";
-export { Transport, HttpTransport, InProcTransport } from "./transport";
+export {
+  Transport,
+  HttpTransport,
+  InProcTransport,
+  HTTP_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+  normalizeBaseUrl,
+} from "./transport";
 export {
   validateType,
   validateString,
@@ -26,6 +33,8 @@ export {
   validateMap,
   validateEnum,
   validateStruct,
+  INT32_MIN,
+  INT32_MAX,
 } from "./validation";
 export { diffIDL, classifySeverity } from "./diff";
 export {

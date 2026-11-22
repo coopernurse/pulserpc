@@ -1,7 +1,8 @@
 /**
  * Unit tests for the transport-independent Server: response validation,
- * notification silence, id echo and trailing-optional parameters
- * (ts-node-01, ts-node-02, ts-node-03, ts-node-06).
+ * notification silence, id echo, parameter handling, internal-error redaction
+ * and JSON-RPC envelope shapes (ts-node-01, ts-node-02, ts-node-03, ts-node-06;
+ * R15/R24, M18-M28).
  */
 
 import { strict as assert } from "assert";
@@ -22,11 +23,26 @@ function idl(): Record<string, any> {
             returnType: { builtIn: "string" },
           },
           {
+            name: "pair",
+            parameters: [
+              { name: "a", type: { builtIn: "int" } },
+              { name: "b", type: { builtIn: "string" } },
+            ],
+            returnType: { builtIn: "string" },
+          },
+          {
             name: "wrong",
             parameters: [],
             returnType: { builtIn: "string" },
           },
+          {
+            name: "nullable",
+            parameters: [],
+            returnType: { builtIn: "string" },
+            returnOptional: true,
+          },
           { name: "boom", parameters: [], returnType: { builtIn: "string" } },
+          { name: "declared", parameters: [], returnType: { builtIn: "string" } },
           {
             name: "opt",
             parameters: [
@@ -51,8 +67,11 @@ function makeServer(validateResponses: boolean): Server {
   });
   server.addHandler("Svc", {
     greet(_ctx: any, name: string) { return `hi ${name}`; },
+    pair(_ctx: any, a: number, b: string) { return `${a}:${b}`; },
     wrong(_ctx: any) { return 123; }, // wrong type for a string return
-    boom(_ctx: any) { throw new Error("boom"); },
+    nullable(_ctx: any) { return null; },
+    boom(_ctx: any) { throw new Error("secret-token-123"); },
+    declared(_ctx: any) { throw new RPCError(1002, "NotFound", { detail: "missing" }); },
     opt(_ctx: any, a: number, b?: string) { return b === undefined ? a : Number(b); },
   });
   return server;
@@ -65,12 +84,30 @@ function request(method: string, params?: any, id?: string | number): JsonRpcReq
   return req;
 }
 
+async function withSilentConsoleError<T>(fn: () => Promise<T>): Promise<{ result: T; logged: string }> {
+  const originalError = console.error;
+  const lines: string[] = [];
+  console.error = (...args: any[]) => { lines.push(args.map(String).join(" ")); };
+  try {
+    const result = await fn();
+    return { result, logged: lines.join("\n") };
+  } finally {
+    console.error = originalError;
+  }
+}
+
 async function testResponseValidation() {
   const validating = makeServer(true);
-  const rejecting = await validating.call(request("Svc.wrong", undefined, 1));
-  assert.ok(rejecting !== null);
-  assert.strictEqual(rejecting!.error?.code, -32603, "wrong-typed result must become an error response");
-  assert.strictEqual("result" in rejecting!, false);
+  const rejecting = await withSilentConsoleError(() =>
+    validating.call(request("Svc.wrong", undefined, 1))
+  );
+  assert.ok(rejecting.result !== null);
+  assert.strictEqual(rejecting.result!.error?.code, -32603);
+  assert.strictEqual("result" in rejecting.result!, false);
+  // R15/D4: no detail leaks, but the failure is logged server-side.
+  assert.strictEqual(rejecting.result!.error?.message, "Internal error");
+  assert.strictEqual((rejecting.result!.error as any).data, undefined);
+  assert.match(rejecting.logged, /Response validation failed/);
 
   const permissive = makeServer(false);
   const passing = await permissive.call(request("Svc.wrong", undefined, 1));
@@ -85,13 +122,15 @@ async function testNotificationsProduceNoResponse() {
   assert.strictEqual(await server.call(request("Svc.greet", ["x"])), null);
 
   // A failing notification is also silent.
-  const originalError = console.error;
-  console.error = () => {};
-  try {
+  await withSilentConsoleError(async () => {
     assert.strictEqual(await server.call(request("Svc.boom")), null);
-  } finally {
-    console.error = originalError;
-  }
+  });
+
+  // M21: id:null is also a notification, and the handler still runs.
+  assert.strictEqual(
+    await server.call({ jsonrpc: "2.0", method: "Svc.greet", params: ["x"], id: null }),
+    null
+  );
 
   // id: 0 is a valid id and must be echoed, not treated as absent.
   const echoed = await server.call(request("Svc.greet", ["x"], 0));
@@ -107,6 +146,7 @@ async function testRequestValidationAndErrorData() {
   assert.ok(bad !== null);
   assert.strictEqual(bad!.error?.code, -32602);
   assert.strictEqual(bad!.id, 7);
+  // -32602 validation errors are user-facing and keep their data.
   assert.strictEqual((bad!.error as any).data.valid, false);
   assert.deepStrictEqual((bad!.error as any).data.invalidFields, ["param[0]"]);
 
@@ -133,20 +173,112 @@ async function testTrailingOptionalParams() {
   console.log("✓ testTrailingOptionalParams");
 }
 
-async function testHandlerErrorMapping() {
+async function testObjectFormParams() {
   const server = makeServer(true);
-  const originalError = console.error;
-  console.error = () => {};
-  let response: JsonRpcResponse | null;
-  try {
-    response = await server.call(request("Svc.boom", undefined, 11));
-  } finally {
-    console.error = originalError;
+
+  // M20: object-form params map by IDL name, not object key order.
+  const reordered = await server.call(request("Svc.pair", { b: "two", a: 1 }, 1));
+  assert.strictEqual(reordered!.result, "1:two");
+
+  // Unknown keys are rejected explicitly instead of being silently dropped.
+  const unknownKey = await server.call(request("Svc.pair", { a: 1, b: "two", extra: 3 }, 2));
+  assert.strictEqual(unknownKey!.error?.code, -32602);
+  assert.match(String((unknownKey!.error as any).data), /Unknown parameter 'extra'/);
+
+  // Primitive params are rejected explicitly.
+  const primitive = await server.call(request("Svc.pair", 5 as any, 3));
+  assert.strictEqual(primitive!.error?.code, -32602);
+  assert.match(String((primitive!.error as any).data), /object or array/);
+  console.log("✓ testObjectFormParams");
+}
+
+async function testHandlerErrorRedaction() {
+  const server = makeServer(true);
+  const { result, logged } = await withSilentConsoleError(() =>
+    server.call(request("Svc.boom", undefined, 11))
+  );
+  assert.ok(result !== null);
+  assert.strictEqual(result!.error?.code, -32603);
+  assert.strictEqual(result!.id, 11);
+  // R15/D4: fixed message, no data, no exception text on the wire.
+  assert.strictEqual(result!.error?.message, "Internal error");
+  assert.strictEqual((result!.error as any).data, undefined);
+  assert.strictEqual(JSON.stringify(result).includes("secret-token"), false);
+  // The exception detail is still available server-side.
+  assert.match(logged, /secret-token-123/);
+  console.log("✓ testHandlerErrorRedaction");
+}
+
+async function testDeclaredRpcErrorIsPreserved() {
+  const server = makeServer(true);
+  const response = await server.call(request("Svc.declared", undefined, 12));
+  assert.strictEqual(response!.error?.code, 1002);
+  assert.strictEqual(response!.error?.message, "NotFound");
+  assert.deepStrictEqual((response!.error as any).data, { detail: "missing" });
+  console.log("✓ testDeclaredRpcErrorIsPreserved");
+}
+
+async function testIdTypes() {
+  const server = makeServer(true);
+  // M24/D2: string and numeric ids are echoed by value.
+  const stringId = await server.call(request("Svc.greet", ["a"], "abc"));
+  assert.strictEqual(stringId!.id, "abc");
+  const numberId = await server.call(request("Svc.greet", ["a"], 42));
+  assert.strictEqual(numberId!.id, 42);
+
+  // R24: boolean/object/array ids are rejected with -32600 and id:null.
+  for (const badId of [true, { x: 1 }, [1]] as any[]) {
+    const response = await server.call({
+      jsonrpc: "2.0",
+      method: "Svc.greet",
+      params: ["a"],
+      id: badId,
+    } as any);
+    assert.ok(response !== null, "an invalid id must still receive an error response");
+    assert.strictEqual(response!.error?.code, -32600, `id ${JSON.stringify(badId)}`);
+    assert.strictEqual(response!.id, null);
   }
-  assert.strictEqual(response!.error?.code, -32603);
-  assert.strictEqual(response!.id, 11);
-  assert.ok(new RPCError(-32603, "x") instanceof RPCError);
-  console.log("✓ testHandlerErrorMapping");
+  console.log("✓ testIdTypes");
+}
+
+async function testJsonRpcVersionEnforced() {
+  // M27: requests must declare jsonrpc "2.0"; responses always do.
+  const server = makeServer(false);
+  const bad = await server.call({
+    jsonrpc: "1.0",
+    method: "Svc.greet",
+    params: ["a"],
+    id: 9,
+  } as any);
+  assert.ok(bad !== null);
+  assert.strictEqual(bad!.jsonrpc, "2.0");
+  assert.strictEqual(bad!.error?.code, -32600);
+  console.log("✓ testJsonRpcVersionEnforced");
+}
+
+async function testNonObjectRequestEntry() {
+  // M19: the generated batch adapter delegates every entry (including
+  // primitives) to Server.call, which must return a per-entry -32600.
+  const server = makeServer(true);
+  for (const entry of [5, "x", null, []] as any[]) {
+    const response = await server.call(entry);
+    assert.ok(response !== null, `entry ${JSON.stringify(entry)} must produce a response`);
+    assert.strictEqual(response!.error?.code, -32600, `entry ${JSON.stringify(entry)}`);
+    assert.strictEqual(response!.id, null);
+  }
+  console.log("✓ testNonObjectRequestEntry");
+}
+
+async function testNullResultIsExplicit() {
+  const server = makeServer(true);
+  const response = await server.call(request("Svc.nullable", undefined, 3));
+  assert.ok(response !== null);
+  assert.strictEqual(response!.result, null);
+  assert.ok(
+    JSON.stringify(response).includes('"result":null'),
+    "M23: a null result must be serialized explicitly"
+  );
+  console.log("✓ testNullResultIsExplicit");
 }
 
 async function testParamCountRuleWithValidationDisabled() {
@@ -180,7 +312,13 @@ async function testParamCountRuleWithValidationDisabled() {
   await testNotificationsProduceNoResponse();
   await testRequestValidationAndErrorData();
   await testTrailingOptionalParams();
-  await testHandlerErrorMapping();
+  await testObjectFormParams();
+  await testHandlerErrorRedaction();
+  await testDeclaredRpcErrorIsPreserved();
+  await testIdTypes();
+  await testJsonRpcVersionEnforced();
+  await testNonObjectRequestEntry();
+  await testNullResultIsExplicit();
   await testParamCountRuleWithValidationDisabled();
   console.log("\nAll server tests passed!");
 })().catch((e) => {

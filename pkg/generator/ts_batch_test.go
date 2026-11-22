@@ -17,7 +17,7 @@ func TestGeneratedTsTestServerHandlesBatchRequests(t *testing.T) {
 		"this.rpcServer.call(item)",
 		"item !== null && item !== undefined",
 		"res.writeHead(204)",
-		"res.end(JSON.stringify(response))",
+		"res.end(payload)",
 	}
 	for _, marker := range markers {
 		if !strings.Contains(code, marker) {
@@ -27,7 +27,7 @@ func TestGeneratedTsTestServerHandlesBatchRequests(t *testing.T) {
 
 	// A batch must be detected before the single-request response is emitted.
 	batch := strings.Index(code, "Array.isArray(data)")
-	emit := strings.Index(code, "res.end(JSON.stringify(response))")
+	emit := strings.Index(code, "res.end(payload)")
 	if batch < 0 || emit < 0 || batch > emit {
 		t.Errorf("batch detection (%d) must precede response emission (%d)", batch, emit)
 	}

@@ -10,12 +10,12 @@ layout: default
 | IDL Type | TypeScript Type | Example |
 |----------|-----------------|---------|
 | `string` | `string` | `"hello"` |
-| `int` | `number` | `42` |
-| `float` | `number` | `3.14` |
+| `int` | `number` (signed 32-bit, validated) | `42` |
+| `float` | `number` (IEEE-754 double) | `3.14` |
 | `bool` | `boolean` | `true`, `false` |
 | `[]Type` | `Type[]` | `[1, 2, 3]` |
 | `map[string]Type` | `{[key: string]: Type}` | `{"key": "value"}` |
-| `Enum` | String union type | `"pending" \| "paid"` |
+| `Enum` | Generated `enum` with string values | `"pending" \| "paid"` |
 | `Struct` | Class | `new Product({...})` |
 | `T [optional]` | `T \| undefined` | `string \| undefined` |
 
@@ -463,3 +463,81 @@ class ProductServiceImpl extends ProductService {
   }
 }
 ```
+
+## Wire Behavior and Limits
+
+These rules apply identically to `ts-node` (ESM) and `ts-cjs` (CommonJS)
+runtimes and to the generated test server.
+
+### Integer range (D1)
+
+IDL `int` is a **signed 32-bit** integer: `-2147483648` through
+`2147483647`. TypeScript types both `int` and `float` as `number`, so
+validation enforces the range at runtime. Fractional values, `NaN`,
+`Infinity`, booleans, and values outside the range are rejected with
+`-32602`. This is a documented breaking change from earlier releases, which
+accepted any integral JavaScript number.
+
+`float` remains an IEEE-754 double (`number`); enums are their declared
+string names on the wire, never ordinals.
+
+### JSON-RPC ids (D2/R24)
+
+`id` must be a string, a number, or `null`. A boolean, object, or array id is
+rejected with `-32600` and the response `id` is `null`. A request with
+`id: null` (or no `id` member) is a notification: the handler runs but no
+response is written.
+
+### Non-POST requests (D3/R22)
+
+The generated test server accepts only `POST`. Any other method returns HTTP
+**405** with a JSON-RPC body:
+
+```json
+{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request - only POST allowed"},"id":null}
+```
+
+### Internal errors (D4/R15)
+
+Handler exceptions and response-validation failures are logged server-side
+(`console.error`) and returned as:
+
+```json
+{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":1}
+```
+
+No exception text, stack trace, or validation detail is sent to the client.
+Declared `RPCError` values keep their code, message, and `data`; `-32602`
+request-validation messages and data are also user-facing and preserved.
+`error.data` is omitted entirely when there is no data.
+
+### Resource limits (D5/R16-R18)
+
+| Limit | Value | Behaviour |
+|-------|-------|-----------|
+| Request body | 1 MiB | `-32600 "Request body too large"`; the adapter stops buffering |
+| Batch entries | 100 | `-32600 "Batch exceeds maximum size"`; no entries are dispatched |
+| Response body (client) | 10 MiB | `HttpTransport` rejects with `Response body too large: ...` |
+| HTTP timeout (client) | 30 s | `HttpTransport` aborts via `AbortController` |
+
+Constants are exported by the runtime: `HTTP_TIMEOUT_MS` and
+`MAX_RESPONSE_BYTES`. `HttpTransport` also accepts custom headers and
+normalizes a single trailing `/` from the base URL.
+
+An empty batch returns one `-32600` error object, not an array. Non-object
+batch entries produce a per-entry `-32600` inside the response array. A batch
+containing only notifications returns HTTP 204 with no body.
+
+### Optional values (D7)
+
+TypeScript represents optional values as `T | undefined` in generated types.
+On the wire, an optional field may be omitted or `null`; required fields may
+not be `null`. Request validation accepts trailing optional parameters being
+omitted from either positional or named-parameter requests.
+
+### Deterministic output (D12)
+
+Generation is byte-deterministic: namespaces, imports, runtime files, and
+type registrations are emitted in sorted order, so regenerating the same IDL
+produces identical bytes. The generator test suite compares full output trees
+across runs.

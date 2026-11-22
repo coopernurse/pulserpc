@@ -3,6 +3,17 @@
  *
  * Transport-independent server that processes JSON-RPC requests
  * and dispatches to registered handlers.
+ *
+ * Wire invariants implemented here (see docs/audit/invariants-additional.md):
+ * - R15/D4: internal errors never leak handler/validation detail. The response
+ *   is always `-32603 "Internal error"` with no `data`; the underlying
+ *   exception is logged server-side only.
+ * - R24/D2: `id` must be a string, number, or null. Booleans, objects and
+ *   arrays are rejected with `-32600`.
+ * - M20: object-form (named) params are mapped to the IDL signature order and
+ *   unknown keys are rejected explicitly with `-32602`.
+ * - M21: a request with `id: null` is treated as a notification.
+ * - M22: `error.data` is omitted when there is no data.
  */
 
 import { RPCError } from "./rpc";
@@ -17,6 +28,8 @@ export interface ServerOptions {
 
 export type HandlerCtx = Record<string, any>;
 export type Handler = Record<string, (ctx: HandlerCtx, ...args: any[]) => any>;
+
+const INTERNAL_ERROR = "Internal error";
 
 export class Server {
   handlers: Map<string, Handler>;
@@ -36,33 +49,49 @@ export class Server {
   }
 
   /**
-   * Process a JSON-RPC request. Notifications (requests without an `id`) are
-   * executed but produce no response at all — not even an `id: null` one.
+   * Process a JSON-RPC request. Notifications (requests without an `id`, or
+   * with `id: null`) are executed but produce no response at all.
    */
-  async call(req: any, ctx: HandlerCtx = {}): Promise<JsonRpcResponse | null> {
+  async call(req: JsonRpcRequest, ctx: HandlerCtx = {}): Promise<JsonRpcResponse | null> {
     const isNotification =
       typeof req === "object" &&
       req !== null &&
       !Array.isArray(req) &&
-      (req.id === undefined || req.id === null);
+      ((req as any).id === undefined || (req as any).id === null);
 
     const response = await this.callImpl(req, ctx);
     return isNotification ? null : response;
   }
 
   private async callImpl(req: any, ctx: HandlerCtx): Promise<JsonRpcResponse> {
-    if (typeof req !== "object" || req === null) {
+    if (typeof req !== "object" || req === null || Array.isArray(req)) {
       return this.errorResponse(
-        req?.id ?? null,
+        null,
         -32600,
         "Invalid Request",
         "Request must be an object"
       );
     }
 
+    // R24: id must be a string or number (null means "id unknown").
+    const reqId = req.id;
+    if (
+      reqId !== undefined &&
+      reqId !== null &&
+      typeof reqId !== "string" &&
+      typeof reqId !== "number"
+    ) {
+      return this.errorResponse(
+        null,
+        -32600,
+        "Invalid Request",
+        "id must be a string, number, or null"
+      );
+    }
+
     if (req.jsonrpc !== "2.0") {
       return this.errorResponse(
-        req.id ?? null,
+        reqId ?? null,
         -32600,
         "Invalid Request",
         "jsonrpc version must be '2.0'"
@@ -72,20 +101,18 @@ export class Server {
     const method = req.method;
     if (!method || typeof method !== "string") {
       return this.errorResponse(
-        req.id ?? null,
+        reqId ?? null,
         -32600,
         "Invalid Request",
         "Method must be a string"
       );
     }
 
-    const reqId = req.id;
-
     if (method === "pulserpc-idl") {
       return {
         jsonrpc: "2.0",
         result: this.contract.idlParsed,
-        id: reqId,
+        id: reqId ?? null,
       };
     }
 
@@ -108,75 +135,91 @@ export class Server {
     }
 
     const func = handler[funcName].bind(handler);
+    const paramDefs = this.contract.getInterface(ifaceName)?.getFunction(funcName)?.parameters;
 
-    let params = req.params;
+    let positional: any[];
+    const rawParams = req.params;
 
-    if (Array.isArray(params)) {
-      if (this.validateRequests) {
-        try {
-          this.contract.validateRequest(ifaceName, funcName, params);
-        } catch (e: any) {
-          const code = e instanceof RPCError ? e.code : -32602;
-          return this.errorResponse(reqId, code, e.message || "Invalid params", e.data);
+    if (Array.isArray(rawParams)) {
+      positional = rawParams;
+    } else if (rawParams === undefined || rawParams === null) {
+      positional = [];
+    } else if (typeof rawParams === "object") {
+      // M20: object-form params are accepted, mapped by IDL parameter name in
+      // signature order. Unknown keys are rejected rather than silently
+      // dropped or used to shift argument positions.
+      if (!paramDefs) {
+        positional = Object.values(rawParams);
+      } else {
+        const allowed = new Set(paramDefs.map((p: any) => p.name));
+        for (const key of Object.keys(rawParams)) {
+          if (!allowed.has(key)) {
+            return this.errorResponse(
+              reqId,
+              -32602,
+              "Invalid params",
+              `Unknown parameter '${key}' for ${method}`
+            );
+          }
+        }
+        positional = paramDefs.map((p: any) => (rawParams as Record<string, any>)[p.name]);
+        while (positional.length > 0 && positional[positional.length - 1] === undefined) {
+          positional.pop();
         }
       }
-
-      try {
-        params = this.positionalToNamedParams(ifaceName, funcName, params);
-      } catch (e: any) {
-        return this.errorResponse(reqId, -32602, "Invalid params", e.message);
-      }
-    } else if (params === undefined || params === null) {
-      params = {};
-    }
-
-    if (typeof params !== "object" || Array.isArray(params)) {
+    } else {
       return this.errorResponse(reqId, -32602, "Invalid params", "Parameters must be an object or array");
     }
 
-    if (this.validateRequests && !Array.isArray(req.params)) {
-      const paramList = this.namedToPositionalParams(ifaceName, funcName, params);
-      if (paramList !== null) {
-        try {
-          this.contract.validateRequest(ifaceName, funcName, paramList);
-        } catch (e: any) {
-          const code = e instanceof RPCError ? e.code : -32602;
-          return this.errorResponse(reqId, code, e.message || "Invalid params", e.data);
-        }
+    if (this.validateRequests) {
+      try {
+        this.contract.validateRequest(ifaceName, funcName, positional);
+      } catch (e: any) {
+        const code = e instanceof RPCError ? e.code : -32602;
+        return this.errorResponse(reqId, code, e.message || "Invalid params", e.data);
+      }
+    } else if (paramDefs) {
+      try {
+        this.contract.checkParamCount(ifaceName, funcName, paramDefs, positional.length);
+      } catch (e: any) {
+        return this.errorResponse(reqId, -32602, "Invalid params", e.message);
       }
     }
 
     try {
-      const args = Object.values(params);
-      const result = await func(ctx, ...args);
+      const result = await func(ctx, ...positional);
 
       if (this.validateResponses) {
         try {
           this.contract.validateResponse(ifaceName, funcName, result);
         } catch (e: any) {
-          if (e instanceof RPCError) {
-            return this.errorResponse(reqId, e.code, e.message, e.data);
-          }
-          return this.errorResponse(reqId, -32603, "Internal error", `Response validation failed: ${e?.message || String(e)}`);
+          // R15/D4: response-validation detail is a server-side concern.
+          console.error(`Response validation failed for ${method}:`, e);
+          return this.errorResponse(reqId, -32603, INTERNAL_ERROR);
         }
       }
 
       return {
         jsonrpc: "2.0",
         result,
-        id: reqId,
+        id: reqId ?? null,
       };
     } catch (e: any) {
       if (e instanceof RPCError) {
         return this.errorResponse(reqId, e.code, e.message, e.data);
-      } else {
-        console.error(`Handler exception for ${method}:`, e);
-        return this.errorResponse(reqId, -32603, "Internal error", `Handler exception: ${e?.message || String(e)}`);
       }
+      // R15/D4: log the exception, return the fixed internal-error message.
+      console.error(`Handler exception for ${method}:`, e);
+      return this.errorResponse(reqId, -32603, INTERNAL_ERROR);
     }
   }
 
-  errorResponse(reqId: any, code: number, message: string, data?: any): JsonRpcResponse {
+  errorResponse(
+    reqId: string | number | null | undefined,
+    code: number,
+    message: string,
+    data?: any
+  ): JsonRpcResponse {
     const error: { code: number; message: string; data?: any } = {
       code,
       message,
@@ -185,88 +228,10 @@ export class Server {
       error.data = data;
     }
 
-    const response: JsonRpcResponse = {
+    return {
       jsonrpc: "2.0",
       error,
+      id: reqId ?? null,
     };
-    if (reqId !== null && reqId !== undefined) {
-      response.id = reqId;
-    }
-
-    return response;
-  }
-
-  positionalToNamedParams(ifaceName: string, funcName: string, positionalParams: any[]): Record<string, any> {
-    const iface = this.contract.getInterface(ifaceName);
-    if (!iface) {
-      return positionalParams.reduce<Record<string, any>>((acc, v, i) => {
-        acc[String(i)] = v;
-        return acc;
-      }, {});
-    }
-
-    const func = iface.getFunction(funcName);
-    if (!func) {
-      return positionalParams.reduce<Record<string, any>>((acc, v, i) => {
-        acc[String(i)] = v;
-        return acc;
-      }, {});
-    }
-
-    const paramDefs = func.parameters || [];
-
-    if (positionalParams.length !== paramDefs.length) {
-      const requiredCount = paramDefs.filter((p: any) => !p.optional).length;
-      if (
-        positionalParams.length < requiredCount ||
-        positionalParams.length > paramDefs.length
-      ) {
-        throw new Error(
-          `Parameter count mismatch: expected ${paramDefs.length}, got ${positionalParams.length}`
-        );
-      }
-    }
-
-    const namedParams: Record<string, any> = {};
-    for (let i = 0; i < positionalParams.length; i++) {
-      if (i < paramDefs.length) {
-        const paramName = paramDefs[i].name;
-        namedParams[paramName] = positionalParams[i];
-      } else {
-        namedParams[String(i)] = positionalParams[i];
-      }
-    }
-
-    return namedParams;
-  }
-
-  namedToPositionalParams(ifaceName: string, funcName: string, namedParams: Record<string, any>): any[] | null {
-    const iface = this.contract.getInterface(ifaceName);
-    if (!iface) {
-      return null;
-    }
-
-    const func = iface.getFunction(funcName);
-    if (!func) {
-      return null;
-    }
-
-    const paramDefs = func.parameters || [];
-
-    const positionalParams: any[] = [];
-    for (const paramDef of paramDefs) {
-      positionalParams.push(namedParams[paramDef.name]);
-    }
-
-    // Trailing optional parameters omitted from a named-param object become
-    // `undefined`; drop them so validateRequest sees a legitimately short array.
-    while (
-      positionalParams.length > 0 &&
-      positionalParams[positionalParams.length - 1] === undefined
-    ) {
-      positionalParams.pop();
-    }
-
-    return positionalParams;
   }
 }

@@ -1131,6 +1131,10 @@ func TestTsStaticClientMethodCalls(t *testing.T) {
 }
 
 func TestTsTestsAreDeterministic(t *testing.T) {
+	// Keep the first iteration's output outside the loop and byte-compare every
+	// later iteration against it. Comparing a map to itself (the previous
+	// implementation) made this test vacuous.
+	var firstFiles map[string][]byte
 	for iteration := 0; iteration < 3; iteration++ {
 		t.Run(fmt.Sprintf("iteration_%d", iteration), func(t *testing.T) {
 			tmpDir, err := os.MkdirTemp("", "pulserpc-ts-det-")
@@ -1230,20 +1234,27 @@ func TestTsTestsAreDeterministic(t *testing.T) {
 			}
 
 			if iteration == 0 {
-				t.Logf("Collected %d files from first iteration", len(collectedFiles))
-				for relPath := range collectedFiles {
+				firstFiles = collectedFiles
+				t.Logf("Collected %d files from first iteration", len(firstFiles))
+				for relPath := range firstFiles {
 					t.Logf("  %s", relPath)
 				}
+				return
 			}
 
+			for relPath := range firstFiles {
+				if _, ok := collectedFiles[relPath]; !ok {
+					t.Errorf("file missing in iteration %d: %s", iteration, relPath)
+				}
+			}
 			for relPath, content := range collectedFiles {
-				firstContent, ok := collectedFiles[relPath]
+				firstContent, ok := firstFiles[relPath]
 				if !ok {
-					t.Errorf("File missing in iteration %d: %s", iteration, relPath)
+					t.Errorf("unexpected file in iteration %d: %s", iteration, relPath)
 					continue
 				}
-				if iteration > 0 && !bytesEqual(firstContent, content) {
-					t.Errorf("File content differs in iteration %d: %s\nFirst iteration:\n%s\nCurrent iteration:\n%s",
+				if !bytesEqual(firstContent, content) {
+					t.Errorf("file content differs in iteration %d: %s\nFirst iteration:\n%s\nCurrent iteration:\n%s",
 						iteration, relPath, string(firstContent), string(content))
 				}
 			}
@@ -2474,6 +2485,9 @@ func tsRunGenWithFlags(t *testing.T, idl *parser.IDL, outputDir string, settings
 	gen := NewTSClientServer()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.String("dir", "", "output dir")
+	// generate-test-files is registered by the CLI, not by the generator, so
+	// register it here for tests that need it.
+	fs.Bool("generate-test-files", false, "generate test files")
 	gen.RegisterFlags(fs)
 	if err := fs.Set("dir", outputDir); err != nil {
 		t.Fatalf("set dir: %v", err)

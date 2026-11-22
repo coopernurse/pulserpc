@@ -10,7 +10,14 @@ export type { Interface, FunctionDef, VerificationResult, ContractAuditor } from
 export { Client } from "./client.js";
 export type { ClientOptions } from "./client.js";
 export { Server } from "./server.js";
-export { Transport, HttpTransport, InProcTransport } from "./transport.js";
+export {
+  Transport,
+  HttpTransport,
+  InProcTransport,
+  HTTP_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+  normalizeBaseUrl,
+} from "./transport.js";
 export type { JsonRpcRequest, JsonRpcResponse } from "./transport.js";
 export * from "./types.js";
 export * from "./validation.js";

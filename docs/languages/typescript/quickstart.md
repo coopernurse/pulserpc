@@ -59,6 +59,12 @@ This creates:
 - `client.ts` - HTTP client framework
 - `pulserpc/` - Runtime library
 
+Generated servers enforce a 1 MiB request body and 100-entry batch limit,
+accept only `POST`, treat `id: null` as a notification, and never echo
+exception detail on internal errors. `int` values are validated against the
+signed 32-bit range. See the [TypeScript Reference](reference.html#wire-behavior-and-limits)
+for the exact wire shapes and limits.
+
 The IDL is embedded directly in `server.ts` for the `pulserpc-idl` RPC method.
 
 ## 3. Implement the Server (10-15 min)
