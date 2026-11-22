@@ -91,10 +91,42 @@ Wave 2 (after wave 1 merges and CI reports):
 - WP3 touches all seven generator test-server paths; a missed runtime breaks
   container startup. Verify generation for each plugin before merging.
 
+## Wave 1 results
+
+All four work packages landed and were merged. New hard-gate scripts are wired
+into the seven-runtime matrix and exposed as `make test-internal-errors` and
+`make test-concurrency`; a meta-test guards the wiring and forbids reintroducing
+`TESTS_SKIPPED` in the limit/redaction probes.
+
+The first CI run with the tightened gates failed, which was the intended result:
+it separated harness bugs from genuine product divergences.
+
+**Harness corrections** (`test_http_api.sh`):
+- String results were compared as unquoted text against JSON string literals.
+- `HEAD` cannot carry a response body per HTTP semantics; status is asserted,
+  Content-Type/body are not. Curl status strings are normalized to 3 digits.
+- The multi-error probe was relaxed to the documented R3 model (fail-fast in
+  Go/Java/Python2/C#, accumulating in Python3/TS).
+
+**Product fixes:**
+- Invalid `method` envelopes (missing/empty/non-string) now return `id: null`
+  in all seven runtimes and in the generated Java server.
+- Generated `A.divide` test handlers now implement the declared `1001`
+  `ValidationError` on division by zero and real division otherwise.
+- The Python 2 conformance server handles DELETE/PATCH/OPTIONS/HEAD with a
+  405 JSON-RPC response instead of the base-class HTML 501.
+- D4 redaction is deterministic in every runtime via the negative-count
+  `A.repeat` handler throwing `PULSERPC_SECRET_TOKEN_7F3A`; the old SKIP-based
+  probe was removed.
+
+Gaps 1–8 and 11–12 are therefore closed, pending final CI confirmation.
+Remaining: 9 (client-side conformance), 10 (generator artifacts), 13 (grammar
+negatives — intentionally unit-only), 14 (playground/path/meta — out of scope),
+and the R17/D6/D7/C10/R27 items in WP7.
+
 ## Sequencing
 
-1. Wave 1: four parallel worktrees (WP1–WP4).
-2. Orchestrator merges, wires new scripts, pushes.
-3. CI Conformance is the arbiter; dispatch fix-up agents for any real violations
-   revealed by the new hard gates.
+1. Wave 1: four parallel worktrees (WP1–WP4) — done.
+2. Orchestrator merged, wired new scripts, pushed.
+3. CI Conformance arbitrated; fix-up wave applied and re-pushed.
 4. Wave 2: WP5–WP7, then update this document with final status.
