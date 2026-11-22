@@ -19,7 +19,7 @@ layout: default
 | `[]Type` | `[]Type` | `[]int{1, 2, 3}` |
 | `map[string]Type` | `map[string]Type` | `map[string]string{"key": "value"}` |
 | `Enum` | `EnumName` + `EnumValue_Value` | `OrderStatusPending` |
-| `Struct` | `*Struct` | `&Product{...}` |
+| `Struct` | `Struct` (value type; `*Struct` only when `[optional]`) | `Product{...}` |
 | `T [optional]` | `*T` (pointer + `omitempty`) | `*string`, `*int` |
 
 > **`int` is signed 32-bit on the wire.** Go's native `int` may be wider, but
@@ -30,6 +30,10 @@ layout: default
 > **Optional fields omit their value when nil.** Optional fields are pointers
 > tagged with `omitempty`, so a nil value is absent from the serialized struct
 > rather than encoded as `null`.
+>
+> **Required struct fields are values.** Non-optional struct fields, slice
+> elements, and method parameters use the struct value type (`Cart`,
+> `[]CartItem`). Only `[optional]` structs become pointers (`*Cart`).
 
 ## Generated Structs
 
@@ -50,7 +54,7 @@ product := &checkout.Product{
 
 cart := &checkout.Cart{
     CartId:   "cart_1234",
-    Items:    []*checkout.CartItem{},
+    Items:    []checkout.CartItem{},
     Subtotal: 0.0,
 }
 ```
@@ -136,8 +140,8 @@ import (
 
 type CatalogService struct{}
 
-func (s *CatalogService) ListProducts() ([]*checkout.Product, error) {
-    return []*checkout.Product{
+func (s *CatalogService) ListProducts() ([]checkout.Product, error) {
+    return []checkout.Product{
         {ProductId: "p1", Name: "Item 1", Price: 10.0, Stock: 5},
         {ProductId: "p2", Name: "Item 2", Price: 20.0, Stock: 3},
     }, nil
@@ -267,7 +271,7 @@ order := &checkout.Order{
     OrderId: "order_123",
     Cart: &checkout.Cart{
         CartId:   "cart_123",
-        Items:    []*checkout.CartItem{...},
+        Items:    []checkout.CartItem{...},
         Subtotal: 59.98,
     },
     ShippingAddress: &checkout.Address{
