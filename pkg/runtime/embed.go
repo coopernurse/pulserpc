@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -96,8 +97,8 @@ func GetRuntimeFiles(lang string) (map[string][]byte, error) {
 // For lang == "ts", style selects between the runtime trees:
 //   - "" (default), "esm-node", "node", "esm" → ts-node (Node ESM) tree
 //   - "esm-bundler", "bundler"               → ts-node tree; caller must apply
-//                                              the bundler post-process transform
-//                                              to strip the ".js" import suffix
+//     the bundler post-process transform
+//     to strip the ".js" import suffix
 //   - "cjs", "commonjs"                       → ts-cjs (CommonJS) tree
 //
 // Unknown styles produce an error.
@@ -156,7 +157,9 @@ func GetRuntimeFilesForStyle(lang, style string) (map[string][]byte, error) {
 			continue
 		}
 
-		filePath := filepath.Join(basePath, entry.Name())
+		// embed.FS paths always use forward slashes regardless of the host OS.
+		// filepath.Join emits backslashes on Windows, which embed.FS rejects.
+		filePath := path.Join(basePath, entry.Name())
 		data, err := fs.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read embedded runtime file %s: %w", entry.Name(), err)
