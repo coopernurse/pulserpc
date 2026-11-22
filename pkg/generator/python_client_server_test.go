@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -1528,5 +1529,236 @@ func TestPythonGeneratorCtxPropagatesToOutput(t *testing.T) {
 	}
 	if !strings.Contains(testServerStr, "def createUser(self, ctx, user):") {
 		t.Errorf("test_server.py should contain createUser with ctx first")
+	}
+}
+
+// --- C1/D12: byte-deterministic output ---------------------------------------
+
+func TestBuildCrossNamespaceImportsIsSorted(t *testing.T) {
+	refs := []crossNamespaceRef{
+		{TargetNS: "zeta", BaseName: "Zed"},
+		{TargetNS: "alpha", BaseName: "Beta"},
+		{TargetNS: "zeta", BaseName: "Alpha"},
+		{TargetNS: "alpha", BaseName: "Alpha"},
+	}
+	got := buildCrossNamespaceImports(refs, "")
+	want := "from alpha import Alpha, Beta\nfrom zeta import Alpha, Zed\n\n"
+	if got != want {
+		t.Fatalf("buildCrossNamespaceImports must be sorted:\nwant %q\ngot  %q", want, got)
+	}
+}
+
+func TestGenerateModelsPyIsDeterministic(t *testing.T) {
+	namespaceMap := map[string]*NamespaceTypes{
+		"zeta": {Structs: []*parser.Struct{{
+			Name:   "zeta.Zed",
+			Fields: []*parser.Field{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+		}}},
+		"alpha": {Structs: []*parser.Struct{{
+			Name:   "alpha.Able",
+			Fields: []*parser.Field{{Name: "id", Type: &parser.Type{BuiltIn: "string"}}},
+		}}},
+	}
+
+	first := generateModelsPy(&parser.IDL{}, namespaceMap, "")
+	for i := 0; i < 20; i++ {
+		if again := generateModelsPy(&parser.IDL{}, namespaceMap, ""); again != first {
+			t.Fatalf("generateModelsPy output is not deterministic:\nfirst:\n%s\nagain:\n%s", first, again)
+		}
+	}
+
+	alpha := strings.Index(first, "# alpha")
+	zeta := strings.Index(first, "# zeta")
+	if alpha == -1 || zeta == -1 {
+		t.Fatalf("expected both namespaces in output, got:\n%s", first)
+	}
+	if alpha > zeta {
+		t.Fatalf("namespace model blocks must be sorted, got:\n%s", first)
+	}
+}
+
+// --- R22/D3: non-POST requests return HTTP 405 with a JSON-RPC body ----------
+
+func TestGenerateTestServerPyNonPostReturns405(t *testing.T) {
+	baseNs := &NamespaceTypes{Interfaces: []*parser.Interface{{Name: "A"}}}
+	code := generateTestServerPyForNamespace(baseNs, nil, nil, "", "")
+
+	for _, method := range []string{"do_GET", "do_PUT", "do_DELETE", "do_PATCH"} {
+		if !strings.Contains(code, "def "+method+"(self):") {
+			t.Errorf("generated test_server.py should define %s, got:\n%s", method, code)
+		}
+	}
+	if !strings.Contains(code, "def do_HEAD(self):") {
+		t.Errorf("generated test_server.py should define do_HEAD, got:\n%s", code)
+	}
+	for _, want := range []string{
+		"_send_json_response(405, payload",
+		"Invalid Request - only POST allowed",
+		"'id': None",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated test_server.py should contain %q, got:\n%s", want, code)
+		}
+	}
+}
+
+// --- M26: malformed JSON returns -32700 --------------------------------------
+
+func TestGenerateTestServerPyMalformedJSONReturnsParseError(t *testing.T) {
+	baseNs := &NamespaceTypes{Interfaces: []*parser.Interface{{Name: "A"}}}
+	code := generateTestServerPyForNamespace(baseNs, nil, nil, "", "")
+
+	for _, want := range []string{
+		"-32700",
+		"\"Parse error\"",
+		"Invalid JSON",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated test_server.py should contain %q, got:\n%s", want, code)
+		}
+	}
+}
+
+func TestGenerateTestServerPyRequestBodyCapIsOneMiB(t *testing.T) {
+	baseNs := &NamespaceTypes{Interfaces: []*parser.Interface{{Name: "A"}}}
+	code := generateTestServerPyForNamespace(baseNs, nil, nil, "", "")
+
+	for _, want := range []string{
+		"MAX_BODY_SIZE = 1024 * 1024",
+		"if content_length > self.MAX_BODY_SIZE:",
+		"Request body too large",
+		"json.loads(body.decode('utf-8'))",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated test_server.py should contain %q", want)
+		}
+	}
+}
+
+// --- C4/C5: idl.json/rootNamespace/checksum and object results ---------------
+
+func TestPythonGeneratorIDLJSONCarriesRootNamespaceAndChecksum(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-idljson-")
+
+	idl := &parser.IDL{
+		RootNamespace: "mapdemo",
+		Interfaces: []*parser.Interface{
+			{Name: "mapdemo.A", Namespace: "mapdemo"},
+		},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmpDir, "mapdemo", "idl.json"))
+	if err != nil {
+		t.Fatalf("failed to read idl.json: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("idl.json is not valid JSON: %v", err)
+	}
+	if parsed["rootNamespace"] != "mapdemo" {
+		t.Errorf("idl.json rootNamespace = %v, want mapdemo", parsed["rootNamespace"])
+	}
+	checksum, _ := parsed["checksum"].(string)
+	if len(checksum) != 43 {
+		t.Errorf("idl.json checksum = %q, want 43-character base64url SHA-256", checksum)
+	}
+	if _, ok := parsed["interfaces"].([]interface{}); !ok {
+		t.Errorf("idl.json must carry interfaces, got %T", parsed["interfaces"])
+	}
+}
+
+// --- C11/R26/R27: enum wire strings and float is double ----------------------
+
+func TestPythonGeneratorEnumsAreStringsAndFloatIsDouble(t *testing.T) {
+	tmpDir := newPythonTestTempDir(t, "pulserpc-enumfloat-")
+
+	idl := &parser.IDL{
+		Structs: []*parser.Struct{{
+			Name: "Reading",
+			Fields: []*parser.Field{
+				{Name: "rate", Type: &parser.Type{BuiltIn: "float"}},
+				{Name: "status", Type: &parser.Type{UserDefined: "Status"}},
+			},
+		}},
+		Enums: []*parser.Enum{{
+			Name:   "Status",
+			Values: []*parser.EnumValue{{Name: "ok"}, {Name: "bad"}},
+		}},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "rpctypes.py"))
+	if err != nil {
+		t.Fatalf("failed to read rpctypes.py: %v", err)
+	}
+	types := string(content)
+	for _, want := range []string{
+		"rate: float",
+		"class Status:",
+		`ok = "ok"`,
+		`bad = "bad"`,
+	} {
+		if !strings.Contains(types, want) {
+			t.Errorf("rpctypes.py should contain %q, got:\n%s", want, types)
+		}
+	}
+}
+
+// --- R16/R18: Python 2 carve-outs --------------------------------------------
+
+func TestPython2GeneratorHasNoGeneratedServerForHttpLimits(t *testing.T) {
+	// Python 2 generates metadata + runtime only.  There is therefore no
+	// generated HTTP adapter to which the 1 MiB body cap / 405 handling can be
+	// added; the cap is exposed as pulserpc.server.DEFAULT_MAX_BODY_SIZE and
+	// documented in docs/languages/python/python2.md instead.
+	tmpDir := newPythonTestTempDir(t, "pulserpc-python2-limits-")
+
+	idl := &parser.IDL{
+		RootNamespace: "demo",
+		Interfaces:    []*parser.Interface{{Name: "demo.A", Namespace: "demo"}},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("python-version", "2"); err != nil {
+		t.Fatalf("failed to set python-version flag: %v", err)
+	}
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	for _, name := range []string{"server.py", "client.py", "test_server.py", "test_client.py"} {
+		if _, err := os.Stat(filepath.Join(tmpDir, "demo", name)); err == nil {
+			t.Errorf("Python 2 must not generate %s", name)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "pulserpc", "server.py")); err != nil {
+		t.Errorf("Python 2 must copy the runtime server.py: %v", err)
 	}
 }

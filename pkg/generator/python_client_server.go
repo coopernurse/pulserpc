@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/coopernurse/pulserpc/pkg/parser"
@@ -159,6 +160,9 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 // generateNamespaceFiles emits types.py, server.py, and client.py per namespace
 func (p *PythonClientServer) generateNamespaceFiles(namespaceMap map[string]*NamespaceTypes, paths PythonNamespacePaths, fs *flag.FlagSet) error {
 	namespaces := CollectNamespaces(namespaceMap)
+	// Map iteration is randomized; sort so emitted files are byte-identical
+	// between runs (C1/D12).
+	sort.Strings(namespaces)
 
 	for _, ns := range namespaces {
 		nsTypes := namespaceMap[ns]
@@ -202,6 +206,7 @@ func (p *PythonClientServer) generateNamespaceFiles(namespaceMap map[string]*Nam
 // generateTestFiles emits test_server.py and test_client.py per namespace
 func (p *PythonClientServer) generateTestFiles(namespaceMap map[string]*NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, paths PythonNamespacePaths, fs *flag.FlagSet) error {
 	namespaces := CollectNamespaces(namespaceMap)
+	sort.Strings(namespaces)
 
 	for _, ns := range namespaces {
 		nsTypes := namespaceMap[ns]
@@ -422,18 +427,27 @@ func buildCrossNamespaceImports(refs []crossNamespaceRef, packageBase string) st
 		return ""
 	}
 
-	// Group by target namespace
+	// Group by target namespace.  Every map-derived iteration is sorted so the
+	// emitted imports are byte-deterministic (C1/D12).
 	nsTypes := make(map[string][]string)
 	for _, ref := range refs {
 		nsTypes[ref.TargetNS] = append(nsTypes[ref.TargetNS], ref.BaseName)
 	}
 
+	namespaces := make([]string, 0, len(nsTypes))
+	for ns := range nsTypes {
+		namespaces = append(namespaces, ns)
+	}
+	sort.Strings(namespaces)
+
 	var sb strings.Builder
-	for ns, types := range nsTypes {
+	for _, ns := range namespaces {
 		importPath := ns
 		if packageBase != "" {
 			importPath = packageBase + "." + ns
 		}
+		types := nsTypes[ns]
+		sort.Strings(types)
 		fmt.Fprintf(&sb, "from %s import %s\n", importPath, strings.Join(types, ", "))
 	}
 
@@ -628,6 +642,17 @@ func writeTypesPyTypeAnnotation(sb *strings.Builder, t *parser.Type, optional bo
 	}
 }
 
+// sortedNamespaceKeys returns the namespace map keys in sorted order so that
+// map-derived output is deterministic (C1/D12).
+func sortedNamespaceKeys(namespaceMap map[string]*NamespaceTypes) []string {
+	keys := make([]string, 0, len(namespaceMap))
+	for ns := range namespaceMap {
+		keys = append(keys, ns)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // generateModelsPy generates Pydantic models for structs and enums
 func generateModelsPy(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, packageBase string) string {
 	var sb strings.Builder
@@ -636,11 +661,13 @@ func generateModelsPy(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, pa
 	sb.WriteString("from pydantic import BaseModel, Field\n")
 	sb.WriteString("from typing import Optional, List, Dict\n")
 
-	// Collect all cross-namespace refs across all namespaces
+	// Collect all cross-namespace refs across all namespaces.  Namespace
+	// iteration is sorted so generation is deterministic (C1/D12).
 	allCrossRefs := make([]crossNamespaceRef, 0)
 	seen := make(map[string]bool)
-	for namespace, types := range namespaceMap {
-		if namespace == "" {
+	for _, namespace := range sortedNamespaceKeys(namespaceMap) {
+		types := namespaceMap[namespace]
+		if namespace == "" || types == nil {
 			continue
 		}
 		for _, structDef := range types.Structs {
@@ -661,8 +688,9 @@ func generateModelsPy(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, pa
 	sb.WriteString("\n")
 
 	// Generate models for each namespace
-	for namespace, types := range namespaceMap {
-		if namespace == "" {
+	for _, namespace := range sortedNamespaceKeys(namespaceMap) {
+		types := namespaceMap[namespace]
+		if namespace == "" || types == nil {
 			continue
 		}
 
@@ -987,7 +1015,7 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 	sb.WriteString("\n")
 	sb.WriteString("class TestRPCHandler(BaseHTTPRequestHandler):\n")
 	sb.WriteString("    # Hard cap on the request body so an oversized payload cannot be read\n")
-	sb.WriteString("    # into memory (review finding 1: batch/body request amplification).\n")
+	sb.WriteString("    # into memory (R16/D5).\n")
 	sb.WriteString("    MAX_BODY_SIZE = 1024 * 1024  # 1 MiB\n")
 	sb.WriteString("    def do_POST(self):\n")
 	sb.WriteString("        # Read request body with a size cap\n")
@@ -1005,8 +1033,8 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 	sb.WriteString("        # Parse JSON request\n")
 	sb.WriteString("        try:\n")
 	sb.WriteString("            req = json.loads(body.decode('utf-8'))\n")
-	sb.WriteString("        except json.JSONDecodeError as e:\n")
-	sb.WriteString("            self._send_error_response(None, -32700, \"Parse error\", f\"Invalid JSON: {e}\")\n")
+	sb.WriteString("        except json.JSONDecodeError:\n")
+	sb.WriteString("            self._send_error_response(None, -32700, \"Parse error\", \"Invalid JSON\")\n")
 	sb.WriteString("            return\n\n")
 	sb.WriteString("        # Handle request\n")
 	sb.WriteString("        response = rpc_server.call(req)\n")
@@ -1014,14 +1042,34 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 	sb.WriteString("            self._send_response(204, b'')\n")
 	sb.WriteString("        else:\n")
 	sb.WriteString("            self._send_json_response(200, response)\n\n")
-	sb.WriteString("    def _send_json_response(self, status: int, data: Any) -> None:\n")
+	sb.WriteString("    # Only POST is a valid JSON-RPC transport.  Every other method gets\n")
+	sb.WriteString("    # HTTP 405 with a JSON-RPC -32600 body (R22/D3).\n")
+	for _, method := range []string{"GET", "PUT", "DELETE", "PATCH", "OPTIONS"} {
+		fmt.Fprintf(&sb, "    def do_%s(self):\n", method)
+		sb.WriteString("        self._send_method_not_allowed()\n\n")
+	}
+	sb.WriteString("    def do_HEAD(self):\n")
+	sb.WriteString("        self._send_method_not_allowed(include_body=False)\n\n")
+	sb.WriteString("    def _send_method_not_allowed(self, include_body: bool = True) -> None:\n")
+	sb.WriteString("        \"\"\"Respond 405 with a JSON-RPC -32600 error\"\"\"\n")
+	sb.WriteString("        payload = {\n")
+	sb.WriteString("            'jsonrpc': '2.0',\n")
+	sb.WriteString("            'error': {\n")
+	sb.WriteString("                'code': -32600,\n")
+	sb.WriteString("                'message': 'Invalid Request - only POST allowed',\n")
+	sb.WriteString("            },\n")
+	sb.WriteString("            'id': None,\n")
+	sb.WriteString("        }\n")
+	sb.WriteString("        self._send_json_response(405, payload, include_body=include_body)\n\n")
+	sb.WriteString("    def _send_json_response(self, status: int, data: Any, include_body: bool = True) -> None:\n")
 	sb.WriteString("        \"\"\"Send a JSON response\"\"\"\n")
 	sb.WriteString("        response_body = json.dumps(data).encode('utf-8')\n")
 	sb.WriteString("        self.send_response(status)\n")
 	sb.WriteString("        self.send_header('Content-Type', 'application/json')\n")
 	sb.WriteString("        self.send_header('Content-Length', str(len(response_body)))\n")
 	sb.WriteString("        self.end_headers()\n")
-	sb.WriteString("        self.wfile.write(response_body)\n\n")
+	sb.WriteString("        if include_body:\n")
+	sb.WriteString("            self.wfile.write(response_body)\n\n")
 	sb.WriteString("    def _send_response(self, status: int, body: bytes) -> None:\n")
 	sb.WriteString("        \"\"\"Send a response with raw body\"\"\"\n")
 	sb.WriteString("        self.send_response(status)\n")
