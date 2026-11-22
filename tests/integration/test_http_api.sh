@@ -852,20 +852,9 @@ for http_method in GET PUT DELETE PATCH HEAD OPTIONS; do
     record_result "$http_method is rejected with 405 and -32600" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 done
 
-# D4/R15/S6: if a runtime can be induced to return -32603, it must not leak
-# details. A negative array allocation triggers an internal error in several
-# runtimes; runtimes that validate it away are skipped.
-do_request POST '{"jsonrpc":"2.0","method":"A.repeat","params":[{"to_repeat":"x","count":-1,"force_uppercase":false}],"id":13}'
-if [ "$(json_get error.code)" = "-32603" ]; then
-    probe_ok=1
-    probe_detail=""
-    [ "$(json_get id)" = "13" ] || { probe_ok=0; probe_detail="${probe_detail}id was not echoed; "; }
-    [ "$(json_get error.message)" = "Internal error" ] || { probe_ok=0; probe_detail="${probe_detail}error.message is not the fixed 'Internal error' text; "; }
-    [ "$(json_type error.data)" = "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}error.data must be absent for -32603; "; }
-    record_result "-32603 is redacted (message, no data)" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
-else
-    echo -e "${YELLOW}SKIP${NC}: -32603 redaction (runtime did not produce an internal error for the probe)"
-fi
+# D4/R15/S6: internal-error redaction is asserted as a hard gate by
+# `test_internal_errors.sh`, which drives the same negative-count A.repeat
+# handler against a deterministic throwing implementation in every runtime.
 
 echo ""
 

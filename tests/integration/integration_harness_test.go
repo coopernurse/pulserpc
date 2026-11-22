@@ -398,3 +398,37 @@ func TestCrossGeneratorVariantFlagsAreRegistered(t *testing.T) {
 		})
 	}
 }
+
+// The new hard-gate probes must be reachable from the seven-runtime matrix and
+// from the Makefile, and must not reintroduce soft SKIP behavior.
+func TestHardGateProbesAreWired(t *testing.T) {
+	matrix, err := os.ReadFile("test_all_runtimes.sh")
+	if err != nil {
+		t.Fatalf("read test_all_runtimes.sh: %v", err)
+	}
+	for _, script := range []string{"test_internal_errors.sh", "test_concurrency.sh"} {
+		if !strings.Contains(string(matrix), script) {
+			t.Errorf("test_all_runtimes.sh does not run %s", script)
+		}
+	}
+
+	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	for _, target := range []string{"test-internal-errors:", "test-concurrency:"} {
+		if !strings.Contains(string(mk), target) {
+			t.Errorf("Makefile does not define %s", target)
+		}
+	}
+
+	for _, script := range []string{"test_internal_errors.sh", "test_limits.sh"} {
+		data, err := os.ReadFile(script)
+		if err != nil {
+			t.Fatalf("read %s: %v", script, err)
+		}
+		if strings.Contains(string(data), "TESTS_SKIPPED") {
+			t.Errorf("%s still treats a missing cap/redaction as a skip", script)
+		}
+	}
+}
