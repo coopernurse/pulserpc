@@ -157,11 +157,11 @@ class CatalogServiceImpl : ICatalogService {
         new Product { ProductId = "p2", Name = "Item 2", Price = 20.0, Stock = 3 }
     };
 
-    public List<Product> ListProducts() {
+    public List<Product> listProducts() {
         return products;
     }
 
-    public Product GetProduct(string productId) {
+    public Product getProduct(string productId) {
         return products.FirstOrDefault(p => p.ProductId == productId);
     }
 }
@@ -186,13 +186,13 @@ var transport = new HttpTransport("http://localhost:8080");
 var catalog = new CatalogServiceClient(transport);
 
 // Method calls return C# objects
-var products = catalog.ListProducts();
+var products = catalog.listProducts();
 foreach (var p in products) {
     Console.WriteLine($"{p.Name} - ${p.Price}");
 }
 
 // Optional methods return null if not found
-var product = catalog.GetProduct("prod001");
+var product = catalog.getProduct("prod001");
 if (product != null) {
     Console.WriteLine(product.Name);
 }
@@ -206,13 +206,13 @@ PulseRPC C# supports async/await:
 using System.Threading.Tasks;
 
 class OrderServiceImpl : IOrderService {
-    public async Task<CheckoutResponse> CreateOrder(CreateOrderRequest request) {
+    public async Task<CheckoutResponse> createOrder(CreateOrderRequest request) {
         // Async operations
         var orderId = await GenerateOrderIdAsync();
         var validated = await ValidateCartAsync(request.CartId);
 
         if (!validated) {
-            throw new RPCException(1002, "CartEmpty: Cannot create order from empty cart");
+            throw new RPCError(1002, "CartEmpty: Cannot create order from empty cart");
         }
 
         return new CheckoutResponse { OrderId = orderId };
@@ -228,8 +228,8 @@ PulseRPC automatically validates:
 - Enum values are valid
 
 ```csharp
-// This will throw RPCException (-32602) if validation fails
-var cart = cart.AddToCart(new AddToCartRequest {
+// This will throw RPCError (-32602) if validation fails
+var cart = cart.addToCart(new AddToCartRequest {
     CartId = null,
     ProductId = "prod001",
     Quantity = 2
@@ -319,8 +319,8 @@ public class CheckoutController : ControllerBase {
     }
 
     [HttpPost("cart")]
-    public Cart AddToCart([FromBody] AddToCartRequest request) {
-        return _cartService.AddToCart(request);
+    public Cart addToCart([FromBody] AddToCartRequest request) {
+        return _cartService.addToCart(request);
     }
 }
 ```
@@ -374,10 +374,10 @@ var serverUrl = config["PulseRPC:ServerUrl"];
 
 ```csharp
 try {
-    var response = orders.CreateOrder(request);
+    var response = orders.createOrder(request);
     Console.WriteLine($"Order created: {response.OrderId}");
 }
-catch (RPCException ex) {
+catch (RPCError ex) {
     // Handle application errors
     Console.WriteLine($"Error {ex.Code}: {ex.Message}");
 }
@@ -389,7 +389,7 @@ catch (Exception ex) {
 
 ## Serialization
 
-PulseRPC C# uses System.Text.Json or Newtonsoft.Json:
+PulseRPC C# uses System.Text.Json:
 
 ```csharp
 using System.Text.Json;
