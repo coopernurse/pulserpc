@@ -39,7 +39,12 @@ namespace PulseRPC
                 InternalErrorLogger(context, ex);
                 return;
             }
-            Console.Error.WriteLine($"[PulseRPC] {context}: {ex}");
+
+            // Default diagnostics deliberately omit the exception message and
+            // stack trace: handler text can contain secrets and must never be
+            // written anywhere implicitly. Supply InternalErrorLogger to get
+            // the full detail (R15/D4).
+            Console.Error.WriteLine($"[PulseRPC] {context}: {ex.GetType().FullName}");
         }
 
         /// <summary>
@@ -290,9 +295,10 @@ namespace PulseRPC
         }
 
         /// <summary>
-        /// Creates a JSON-RPC error response
+        /// Creates a JSON-RPC error response. Internal (not private) so the
+        /// envelope shape can be asserted by tests.
         /// </summary>
-        private Dictionary<string, object> ErrorResponse(object? reqId, int code, string message, object? data)
+        internal Dictionary<string, object> ErrorResponse(object? reqId, int code, string message, object? data)
         {
             var errObj = new Dictionary<string, object>
             {
@@ -316,19 +322,18 @@ namespace PulseRPC
         }
 
         /// <summary>
-        /// Creates a JSON-RPC success response
+        /// Creates a JSON-RPC success response. The id member is always present
+        /// (null only when the request id is unknown), matching ErrorResponse and
+        /// the D3 envelope shape. Internal (not private) for envelope tests.
         /// </summary>
-        private Dictionary<string, object> SuccessResponse(object? reqId, object? result)
+        internal Dictionary<string, object> SuccessResponse(object? reqId, object? result)
         {
             var response = new Dictionary<string, object>
             {
                 ["jsonrpc"] = "2.0",
-                ["result"] = result!
+                ["result"] = result!,
+                ["id"] = reqId!
             };
-            if (reqId != null)
-            {
-                response["id"] = reqId;
-            }
             return response;
         }
 

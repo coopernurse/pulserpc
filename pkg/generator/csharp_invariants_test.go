@@ -2,6 +2,7 @@ package generator
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -95,6 +96,224 @@ interface Svc {
 	}
 }
 
+// buildCSharpNamedResolutionIDL is a multi-namespace fixture with
+// cross-namespace references, two structs sharing a base name, and several
+// interfaces/enums. A single-namespace fixture cannot expose map-ordered
+// emission (C1/D12) or D16 resolution.
+func buildCSharpNamedResolutionIDL() *parser.IDL {
+	return &parser.IDL{
+		RootNamespace: "app",
+		Structs: []*parser.Struct{
+			{
+				Name:      "common.Address",
+				Namespace: "common",
+				Fields: []*parser.Field{
+					{Name: "city", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "zip", Type: &parser.Type{BuiltIn: "string"}, Optional: true},
+				},
+			},
+			{
+				Name:      "zzz.Address",
+				Namespace: "zzz",
+				Fields: []*parser.Field{
+					{Name: "line1", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "line2", Type: &parser.Type{BuiltIn: "string"}, Optional: true},
+				},
+			},
+			{
+				Name:      "app.Order",
+				Namespace: "app",
+				Fields: []*parser.Field{
+					{Name: "id", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "address", Type: &parser.Type{UserDefined: "Address"}},
+					{Name: "status", Type: &parser.Type{UserDefined: "common.Status"}},
+				},
+			},
+			{
+				Name:      "user.Profile",
+				Namespace: "user",
+				Fields: []*parser.Field{
+					{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
+					{Name: "role", Type: &parser.Type{UserDefined: "Role"}},
+				},
+			},
+		},
+		Enums: []*parser.Enum{
+			{
+				Name:      "common.Status",
+				Namespace: "common",
+				Values:    []*parser.EnumValue{{Name: "new"}, {Name: "done"}},
+			},
+			{
+				Name:      "user.Role",
+				Namespace: "user",
+				Values:    []*parser.EnumValue{{Name: "admin"}, {Name: "member"}},
+			},
+		},
+		Interfaces: []*parser.Interface{
+			{
+				Name:      "OrderService",
+				Namespace: "app",
+				Methods: []*parser.Method{
+					{
+						Name:       "create",
+						Parameters: []*parser.Parameter{{Name: "order", Type: &parser.Type{UserDefined: "Order"}}},
+						ReturnType: &parser.Type{UserDefined: "Order"},
+					},
+					{Name: "ping", ReturnType: &parser.Type{BuiltIn: "string"}},
+				},
+			},
+			{
+				Name:      "UserService",
+				Namespace: "user",
+				Methods: []*parser.Method{
+					{
+						Name:       "find",
+						Parameters: []*parser.Parameter{{Name: "name", Type: &parser.Type{BuiltIn: "string"}}},
+						ReturnType: &parser.Type{UserDefined: "Profile"},
+					},
+				},
+			},
+			{
+				Name:      "StatusService",
+				Namespace: "common",
+				Methods: []*parser.Method{
+					{Name: "status", ReturnType: &parser.Type{UserDefined: "Status"}},
+				},
+			},
+		},
+	}
+}
+
+// C1/D12: every map-derived emission site (namespaces, cross-namespace
+// imports, IdlData registration) must be byte-deterministic for a
+// multi-namespace contract.
+func TestCSharpMultiNamespaceGenerationIsByteDeterministic(t *testing.T) {
+	idl := buildCSharpNamedResolutionIDL()
+	base := t.TempDir()
+
+	var trees []map[string][]byte
+	for i := 0; i < 4; i++ {
+		dir := filepath.Join(base, fmt.Sprintf("run%d", i))
+		runCSharpGenerate(t, idl, dir)
+		trees = append(trees, readTree(t, dir))
+	}
+
+	first := trees[0]
+	if len(first) == 0 {
+		t.Fatal("generator produced no files")
+	}
+	var paths []string
+	for p := range first {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	for i, tree := range trees[1:] {
+		if len(tree) != len(first) {
+			t.Fatalf("run %d file count differs: %d vs %d", i+1, len(tree), len(first))
+		}
+		for _, p := range paths {
+			if string(tree[p]) != string(first[p]) {
+				t.Errorf("generated file differs between runs (run %d): %s", i+1, p)
+			}
+		}
+	}
+
+	// Imports are emitted in sorted namespace order, not map order.
+	appFile := string(first["App/App.cs"])
+	commonIdx := strings.Index(appFile, "using common;")
+	userIdx := strings.Index(appFile, "using user;")
+	zzzIdx := strings.Index(appFile, "using zzz;")
+	if commonIdx < 0 || userIdx < 0 || zzzIdx < 0 {
+		t.Fatalf("App/App.cs missing cross-namespace imports:\n%s", appFile)
+	}
+	if !(commonIdx < userIdx && userIdx < zzzIdx) {
+		t.Errorf("cross-namespace imports are not sorted: common=%d user=%d zzz=%d", commonIdx, userIdx, zzzIdx)
+	}
+
+	// The IdlData registration loop follows the same sorted namespace order.
+	contract := string(first["Contract.cs"])
+	appReg := strings.Index(contract, ".appIdl.ALL_STRUCTS")
+	commonReg := strings.Index(contract, ".commonIdl.ALL_STRUCTS")
+	userReg := strings.Index(contract, ".userIdl.ALL_STRUCTS")
+	if appReg < 0 || commonReg < 0 || userReg < 0 {
+		t.Fatalf("Contract.cs missing IdlData registrations:\n%s", contract)
+	}
+	if !(appReg < commonReg && commonReg < userReg) {
+		t.Errorf("IdlData registration is not sorted: app=%d common=%d user=%d", appReg, commonReg, userReg)
+	}
+}
+
+// D16: type-name resolution is exact key -> exact base-name key -> first key
+// in sorted order sharing the base name, in both helpers.
+func TestCSharpTypeNameResolutionFollowsD16(t *testing.T) {
+	structMap := map[string]*parser.Struct{
+		"beta.Address":  {Name: "beta.Address", Namespace: "beta"},
+		"alpha.Address": {Name: "alpha.Address", Namespace: "alpha"},
+	}
+	enumMap := map[string]*parser.Enum{}
+
+	// 1. An exact key match wins even though a sorted fallback exists.
+	if got := getStructOrEnumTypeName("beta.Address", structMap, enumMap, "app", nil); got != "Beta.Address" {
+		t.Errorf("exact qualified key resolved to %q, want Beta.Address", got)
+	}
+
+	// 2. An exact base-name key wins over the sorted fallback.
+	structMap["Address"] = &parser.Struct{Name: "Address", Namespace: "app"}
+	if got := getStructOrEnumTypeName("Address", structMap, enumMap, "app", nil); got != "Address" {
+		t.Errorf("exact base-name key resolved to %q, want Address", got)
+	}
+
+	// 3. Ambiguous base names resolve to the first key in sorted order, every
+	// run (never a bare base name with no candidate).
+	delete(structMap, "Address")
+	for i := 0; i < 200; i++ {
+		if got := getStructOrEnumTypeName("Address", structMap, enumMap, "app", nil); got != "Alpha.Address" {
+			t.Fatalf("sorted fallback resolved to %q on run %d, want Alpha.Address", got, i)
+		}
+	}
+
+	// Enums use the same ordering.
+	enumKeys := map[string]*parser.Enum{
+		"zeta.Status":  {Name: "zeta.Status", Namespace: "zeta"},
+		"delta.Status": {Name: "delta.Status", Namespace: "delta"},
+	}
+	for i := 0; i < 200; i++ {
+		if got := getStructOrEnumTypeName("Status", structMap, enumKeys, "app", nil); got != "Delta.Status" {
+			t.Fatalf("enum sorted fallback resolved to %q on run %d, want Delta.Status", got, i)
+		}
+	}
+
+	// The namespace-free helper still returns a bare (deterministic) base name.
+	if got := getStructOrEnumTypeNameSimple("Status", structMap, enumKeys); got != "Status" {
+		t.Errorf("getStructOrEnumTypeNameSimple(Status) = %q, want Status", got)
+	}
+}
+
+// D16: an unqualified field reference to a qualified type resolves to the
+// qualified C# type in generated code.
+func TestCSharpGeneratedCodeResolvesUnqualifiedQualifiedType(t *testing.T) {
+	idl := buildCSharpNamedResolutionIDL()
+	outDir := t.TempDir()
+	runCSharpGenerate(t, idl, outDir)
+
+	data, err := os.ReadFile(filepath.Join(outDir, "App", "Types.cs"))
+	if err != nil {
+		t.Fatalf("read App/Types.cs: %v", err)
+	}
+	code := string(data)
+
+	// `address Address` is unqualified; candidates common.Address and
+	// zzz.Address share the base name, so the sorted-first one wins.
+	if !strings.Contains(code, "public Common.Address Address { get; set; }") {
+		t.Errorf("unqualified Address did not resolve to Common.Address:\n%s", code)
+	}
+	if strings.Contains(code, "public zzz.Address") || strings.Contains(code, "public Zzz.Address") {
+		t.Error("unqualified Address resolved to the non-first candidate")
+	}
+}
+
 // C1/D12: the unqualified-type fallback used by writeTypeDictCs must resolve
 // deterministically (first key in sorted order) rather than by map iteration.
 func TestCSharpTypeDictFallbackIsDeterministic(t *testing.T) {
@@ -126,8 +345,8 @@ func TestCSharpTypeDictFallbackIsDeterministic(t *testing.T) {
 	}
 }
 
-// C10/D7: optional built-ins must be nullable, and generated files must enable
-// nullable reference types so `string?` is meaningful.
+// C10/D7: optional built-ins and collections must be nullable, and generated
+// files must enable nullable reference types so `string?` is meaningful.
 func TestCSharpOptionalBuiltInsAreNullable(t *testing.T) {
 	idl := parseTestIDL(t, `
 namespace demo
@@ -137,6 +356,8 @@ struct OptionalFields {
   opt_bool bool [optional]
   opt_float float [optional]
   opt_string string [optional]
+  opt_list []string [optional]
+  opt_map map[string]int [optional]
 }
 
 interface Svc {
@@ -158,10 +379,40 @@ interface Svc {
 		"public bool? OptBool { get; set; }",
 		"public double? OptFloat { get; set; }",
 		"public string? OptString { get; set; }",
+		"public List<string>? OptList { get; set; }",
+		"public Dictionary<string, int>? OptMap { get; set; }",
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("generated Types.cs missing %q\n%s", want, code)
 		}
+	}
+}
+
+// C10/D7: both type-mapping helpers (with and without namespace awareness)
+// agree that optional collections are nullable.
+func TestCSharpOptionalCollectionsAreNullableInBothMappers(t *testing.T) {
+	listType := &parser.Type{Array: &parser.Type{BuiltIn: "string"}}
+	mapType := &parser.Type{MapValue: &parser.Type{BuiltIn: "int"}}
+
+	if got := mapTypeToCsType(listType, nil, nil, true); got != "List<string>?" {
+		t.Errorf("mapTypeToCsType(optional []string) = %q, want List<string>?", got)
+	}
+	if got := mapTypeToCsType(mapType, nil, nil, true); got != "Dictionary<string, int>?" {
+		t.Errorf("mapTypeToCsType(optional map[string]int) = %q, want Dictionary<string, int>?", got)
+	}
+	if got := mapTypeToCsTypeWithNamespace(listType, nil, nil, true, "", nil); got != "List<string>?" {
+		t.Errorf("mapTypeToCsTypeWithNamespace(optional []string) = %q, want List<string>?", got)
+	}
+	if got := mapTypeToCsTypeWithNamespace(mapType, nil, nil, true, "", nil); got != "Dictionary<string, int>?" {
+		t.Errorf("mapTypeToCsTypeWithNamespace(optional map[string]int) = %q, want Dictionary<string, int>?", got)
+	}
+
+	// Non-optional collections stay non-nullable.
+	if got := mapTypeToCsType(listType, nil, nil, false); got != "List<string>" {
+		t.Errorf("mapTypeToCsType([]string) = %q, want List<string>", got)
+	}
+	if got := mapTypeToCsType(mapType, nil, nil, false); got != "Dictionary<string, int>" {
+		t.Errorf("mapTypeToCsType(map[string]int) = %q, want Dictionary<string, int>", got)
 	}
 }
 
@@ -214,11 +465,22 @@ func TestCSharpGeneratedServerEnforcesLimits(t *testing.T) {
 		`"Request body too large"`,
 		`"Batch exceeds maximum size"`,
 		"batchLength > MaxBatchSize",
-		"ReadBodyWithLimitAsync",
+		// The bounded read is shared with the runtime instead of duplicated in
+		// the generated adapter (quality follow-up).
+		"HttpTransport.ReadLimitedAsync(context.Request.Body, MaxRequestBodyBytes)",
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("generated server missing limit handling %q", want)
 		}
+	}
+
+	// The generated copy of the bounded reader must be gone.
+	if strings.Contains(code, "ReadBodyWithLimitAsync") {
+		t.Error("generated server still defines its own ReadBodyWithLimitAsync")
+	}
+	// Dead helper removed.
+	if strings.Contains(code, "WriteErrorResponse") {
+		t.Error("generated server still declares the unused WriteErrorResponse helper")
 	}
 }
 

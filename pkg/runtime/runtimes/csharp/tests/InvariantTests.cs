@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Xunit;
@@ -217,6 +218,82 @@ namespace PulseRPC.Tests
             var response = CreateServer().Call(Request("Calc.add", @params: named, includeParams: true));
             Assert.Equal(10, Convert.ToInt32(response!["result"]));
         }
+
+        // Envelope parity: success responses always carry an id member, just
+        // like error responses and the D3 non-POST body.
+        [Fact]
+        public void SuccessResponse_AlwaysIncludesIdMember()
+        {
+            var server = new Server(new Contract(TestIDL.Build()));
+
+            var success = server.SuccessResponse(null, "ok");
+            Assert.True(success.ContainsKey("id"), "success response must have an id member");
+            Assert.Null(success["id"]);
+            Assert.Equal("ok", success["result"]);
+
+            var error = server.ErrorResponse(null, -32603, "Internal error", null);
+            Assert.True(error.ContainsKey("id"), "error response must have an id member");
+            Assert.Null(error["id"]);
+
+            Assert.Equal(7, server.SuccessResponse(7, "ok")["id"]);
+        }
+
+        // Security: without an explicit InternalErrorLogger the default sink
+        // writes only the context and exception type - never the message or a
+        // stack trace.
+        [Fact]
+        public void Call_DefaultInternalErrorSink_OmitsMessageAndStackTrace()
+        {
+            var server = new Server(new Contract(TestIDL.Build()));
+            server.AddHandler("Calc", new ThrowingHandler());
+
+            var original = Console.Error;
+            var buffer = new StringWriter();
+            Console.SetError(buffer);
+            try
+            {
+                var response = server.Call(Request("Calc.ping"));
+                Assert.NotNull(response);
+                Assert.Equal(-32603, Convert.ToInt32(
+                    Assert.IsType<Dictionary<string, object>>(response!["error"])["code"]));
+            }
+            finally
+            {
+                Console.SetError(original);
+            }
+
+            var log = buffer.ToString();
+            Assert.Contains("Exception invoking Calc.ping", log);
+            Assert.Contains(nameof(InvalidOperationException), log);
+            Assert.DoesNotContain("secret-detail-do-not-leak", log);
+            Assert.DoesNotContain("   at ", log);
+        }
+
+        // Security: supplying InternalErrorLogger opts in to the full detail.
+        [Fact]
+        public void Call_ExplicitInternalErrorLogger_ReceivesFullDetail()
+        {
+            var server = new Server(new Contract(TestIDL.Build()));
+            server.AddHandler("Calc", new ThrowingHandler());
+            var logged = new List<Exception>();
+            server.InternalErrorLogger = (_, error) => logged.Add(error);
+
+            var original = Console.Error;
+            var buffer = new StringWriter();
+            Console.SetError(buffer);
+            try
+            {
+                server.Call(Request("Calc.ping"));
+            }
+            finally
+            {
+                Console.SetError(original);
+            }
+
+            Assert.Single(logged);
+            Assert.Contains("secret-detail-do-not-leak", logged[0].Message);
+            Assert.Equal(string.Empty, buffer.ToString());
+        }
     }
 
     public class InvariantClientTests
@@ -347,6 +424,78 @@ namespace PulseRPC.Tests
 
             using var overLimit = new MemoryStream(new byte[1025]);
             Assert.Null(await HttpTransport.ReadLimitedAsync(overLimit, 1024));
+
+            // Pre-sizing from Content-Length must not change the outcome.
+            using var overLimitPresized = new MemoryStream(new byte[1025]);
+            Assert.Null(await HttpTransport.ReadLimitedAsync(overLimitPresized, 1024, 1025));
+        }
+
+        /// <summary>Counts how many body bytes were actually pulled from the wire.</summary>
+        private sealed class CountingStream : Stream
+        {
+            private readonly long _total;
+            public CountingStream(long total) => _total = total;
+            public long BytesRead { get; private set; }
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => _total;
+            public override long Position { get => BytesRead; set => throw new NotSupportedException(); }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                var remaining = _total - BytesRead;
+                if (remaining <= 0)
+                {
+                    return 0;
+                }
+                var n = (int)Math.Min(count, remaining);
+                BytesRead += n;
+                return n;
+            }
+            public override Task<int> ReadAsync(byte[] buffer, int offset, int count, System.Threading.CancellationToken cancellationToken)
+                => Task.FromResult(Read(buffer, offset, count));
+        }
+
+        private sealed class StreamingHandler : HttpMessageHandler
+        {
+            private readonly Stream _body;
+            public StreamingHandler(Stream body) => _body = body;
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+                => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(_body)
+                });
+        }
+
+        // R17/security: the client must stream the response body, not buffer it
+        // in full before applying the 10 MiB cap.
+        [Fact]
+        public async Task HttpTransport_StreamsOversizedResponse_WithoutFullBuffering()
+        {
+            var total = HttpTransport.MaxResponseBytes * 3;
+            using var stream = new CountingStream(total);
+            var transport = new HttpTransport("http://example.test", new StreamingHandler(stream));
+            try
+            {
+                var error = await Assert.ThrowsAsync<RPCError>(
+                    () => transport.CallAsync("Svc.Ping", Array.Empty<object>()));
+
+                Assert.Contains("exceeds maximum size", error.Data?.ToString() ?? string.Empty);
+                // Only the buffer plus one 8 KiB chunk may be consumed; the
+                // remainder of the body is never buffered.
+                Assert.True(stream.BytesRead <= HttpTransport.MaxResponseBytes + 8192,
+                    $"read {stream.BytesRead} bytes; expected at most cap + one chunk");
+                Assert.True(stream.BytesRead < total,
+                    $"read the entire {total}-byte body instead of stopping at the cap");
+            }
+            finally
+            {
+                transport.HttpClient.Dispose();
+            }
         }
     }
 }

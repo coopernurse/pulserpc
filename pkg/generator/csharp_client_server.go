@@ -327,24 +327,13 @@ func writeTypeDictCs(sb *strings.Builder, t *parser.Type, structMap map[string]*
 			typeName = structDef.Name
 		} else {
 			// Try to find by unqualified name (handle case where field type is "Status" but enum is "inc.Status").
-			// Iterate keys in sorted order so ambiguous base names resolve
-			// identically on every run (C1/D12).
-			for _, key := range sortedEnumMapKeys(enumMap) {
-				enumDef := enumMap[key]
-				if GetBaseName(enumDef.Name) == typeName || enumDef.Name == typeName {
-					typeName = enumDef.Name
-					break
-				}
-			}
-			if typeName == t.UserDefined {
-				// If still not found in enums, try structs
-				for _, key := range sortedStructMapKeys(structMap) {
-					structDef := structMap[key]
-					if GetBaseName(structDef.Name) == typeName || structDef.Name == typeName {
-						typeName = structDef.Name
-						break
-					}
-				}
+			// Resolve in D16 order (exact key, exact base-name key, then the
+			// first sorted key sharing the base name) so ambiguous base names
+			// resolve identically on every run (C1/D12/R6).
+			if key, ok := resolveTypeKey(typeName, sortedMapKeys(enumMap)); ok {
+				typeName = enumMap[key].Name
+			} else if key, ok := resolveTypeKey(typeName, sortedMapKeys(structMap)); ok {
+				typeName = structMap[key].Name
 			}
 		}
 		fmt.Fprintf(sb, "{ \"userDefined\", \"%s\" }", typeName)
@@ -352,9 +341,9 @@ func writeTypeDictCs(sb *strings.Builder, t *parser.Type, structMap map[string]*
 	sb.WriteString(" }")
 }
 
-// sortedEnumMapKeys returns enum map keys in ordinal order so map-derived
-// output is byte-deterministic (C1/D12).
-func sortedEnumMapKeys(m map[string]*parser.Enum) []string {
+// sortedMapKeys returns map keys in ordinal order so map-derived output is
+// byte-deterministic (C1/D12).
+func sortedMapKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -363,15 +352,46 @@ func sortedEnumMapKeys(m map[string]*parser.Enum) []string {
 	return keys
 }
 
-// sortedStructMapKeys returns struct map keys in ordinal order so map-derived
-// output is byte-deterministic (C1/D12).
-func sortedStructMapKeys(m map[string]*parser.Struct) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+// resolveTypeKey resolves a (possibly qualified) type reference against a set
+// of registry keys using the canonical D16 ordering:
+//
+//  1. an exact key match,
+//  2. an exact base-name key match ("Address" against key "Address"), then
+//  3. the first key in sorted order whose base name matches.
+//
+// keys must already be sorted (see sortedMapKeys). A bare base name is never
+// emitted for an unresolvable reference unless it genuinely has no candidate.
+func resolveTypeKey(name string, keys []string) (string, bool) {
+	if name == "" {
+		return "", false
 	}
-	sort.Strings(keys)
-	return keys
+	for _, k := range keys {
+		if k == name {
+			return k, true
+		}
+	}
+	baseName := GetBaseName(name)
+	for _, k := range keys {
+		if k == baseName {
+			return k, true
+		}
+	}
+	for _, k := range keys {
+		if GetBaseName(k) == baseName {
+			return k, true
+		}
+	}
+	return "", false
+}
+
+// qualifiedCsTypeName renders a resolved registry key as a C# type name,
+// prefixing the PascalCase namespace when the type lives in another namespace.
+func qualifiedCsTypeName(key, typeNamespace, currentNs string) string {
+	baseName := GetBaseName(key)
+	if currentNs != "" && typeNamespace != "" && typeNamespace != currentNs {
+		return NamespaceToPascalCase(typeNamespace) + "." + baseName
+	}
+	return baseName
 }
 
 // mapTypeToCsType maps an IDL type to a C# type string
@@ -400,9 +420,17 @@ func mapTypeToCsType(t *parser.Type, structMap map[string]*parser.Struct, enumMa
 		return csType
 	} else if t.IsArray() {
 		elementType := mapTypeToCsType(t.Array, structMap, enumMap, false)
+		if optional {
+			// Optional collections are nullable too: absence is `null`, not an
+			// empty list (C10/D7).
+			return "List<" + elementType + ">?"
+		}
 		return "List<" + elementType + ">"
 	} else if t.IsMap() {
 		valueType := mapTypeToCsType(t.MapValue, structMap, enumMap, false)
+		if optional {
+			return "Dictionary<string, " + valueType + ">?"
+		}
 		return "Dictionary<string, " + valueType + ">"
 	} else if t.IsUserDefined() {
 		typeName := getStructOrEnumTypeNameSimple(t.UserDefined, structMap, enumMap)
@@ -437,9 +465,16 @@ func mapTypeToCsTypeWithNamespace(t *parser.Type, structMap map[string]*parser.S
 		return csType
 	} else if t.IsArray() {
 		elementType := mapTypeToCsTypeWithNamespace(t.Array, structMap, enumMap, false, currentNs, allNamespaceMap)
+		if optional {
+			// See mapTypeToCsType: optional collections are nullable (C10/D7).
+			return "List<" + elementType + ">?"
+		}
 		return "List<" + elementType + ">"
 	} else if t.IsMap() {
 		valueType := mapTypeToCsTypeWithNamespace(t.MapValue, structMap, enumMap, false, currentNs, allNamespaceMap)
+		if optional {
+			return "Dictionary<string, " + valueType + ">?"
+		}
 		return "Dictionary<string, " + valueType + ">"
 	} else if t.IsUserDefined() {
 		typeName := getStructOrEnumTypeName(t.UserDefined, structMap, enumMap, currentNs, allNamespaceMap)
@@ -487,43 +522,18 @@ func getEnumTypeName(enumName string, enumMap map[string]*parser.Enum) string {
 // First checks if it's a struct, then checks if it's an enum
 // When in multi-namespace mode (namespaceMap provided), it adds namespace prefix for cross-namespace types
 func getStructOrEnumTypeName(typeName string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, currentNs string, _ map[string]*NamespaceTypes) string {
-	baseName := GetBaseName(typeName)
-
-	// Check if it's a struct in the current namespace or another namespace
-	if s, ok := structMap[baseName]; ok {
-		if currentNs != "" && s.Namespace != "" && s.Namespace != currentNs {
-			// Cross-namespace reference - use namespace prefix (PascalCase)
-			nsPascal := NamespaceToPascalCase(s.Namespace)
-			return nsPascal + "." + baseName
-		}
-		return baseName
+	// D16: exact key -> exact base-name key -> first sorted key sharing the
+	// base name. Resolving through the sorted key set keeps generation
+	// deterministic when two namespaces declare the same base name (R6/C1).
+	if key, ok := resolveTypeKey(typeName, sortedMapKeys(structMap)); ok {
+		return qualifiedCsTypeName(key, structMap[key].Namespace, currentNs)
 	}
-	if s, ok := structMap[typeName]; ok {
-		if currentNs != "" && s.Namespace != "" && s.Namespace != currentNs {
-			nsPascal := NamespaceToPascalCase(s.Namespace)
-			return nsPascal + "." + baseName
-		}
-		return baseName
+	if key, ok := resolveTypeKey(typeName, sortedMapKeys(enumMap)); ok {
+		return qualifiedCsTypeName(key, enumMap[key].Namespace, currentNs)
 	}
 
-	// Check if it's an enum in the current namespace or another namespace
-	if e, ok := enumMap[baseName]; ok {
-		if currentNs != "" && e.Namespace != "" && e.Namespace != currentNs {
-			nsPascal := NamespaceToPascalCase(e.Namespace)
-			return nsPascal + "." + baseName
-		}
-		return baseName
-	}
-	if e, ok := enumMap[typeName]; ok {
-		if currentNs != "" && e.Namespace != "" && e.Namespace != currentNs {
-			nsPascal := NamespaceToPascalCase(e.Namespace)
-			return nsPascal + "." + baseName
-		}
-		return baseName
-	}
-
-	// Fallback: return base name
-	return baseName
+	// Unresolvable: emit the base name so the generated code still compiles.
+	return GetBaseName(typeName)
 }
 
 // getStructOrEnumTypeNameSimple returns the C# type name without namespace awareness
@@ -834,19 +844,6 @@ func writePulseRPCServerCs(sb *strings.Builder, idl *parser.IDL, structMap map[s
 	sb.WriteString("        await _app.RunAsync();\n")
 	sb.WriteString("    }\n\n")
 
-	sb.WriteString("    private static async Task<byte[]?> ReadBodyWithLimitAsync(Stream body, int limit)\n")
-	sb.WriteString("    {\n")
-	sb.WriteString("        using var buffer = new MemoryStream();\n")
-	sb.WriteString("        var chunk = new byte[8192];\n")
-	sb.WriteString("        int read;\n")
-	sb.WriteString("        while ((read = await body.ReadAsync(chunk, 0, chunk.Length)) > 0)\n")
-	sb.WriteString("        {\n")
-	sb.WriteString("            if (buffer.Length + read > limit) return null;\n")
-	sb.WriteString("            buffer.Write(chunk, 0, read);\n")
-	sb.WriteString("        }\n")
-	sb.WriteString("        return buffer.ToArray();\n")
-	sb.WriteString("    }\n\n")
-
 	sb.WriteString("    private async Task HandleRequest(HttpContext context)\n")
 	sb.WriteString("    {\n")
 	sb.WriteString("        if (context.Request.Method != \"POST\")\n")
@@ -865,7 +862,9 @@ func writePulseRPCServerCs(sb *strings.Builder, idl *parser.IDL, structMap map[s
 	sb.WriteString("        byte[]? bodyBytes;\n")
 	sb.WriteString("        try\n")
 	sb.WriteString("        {\n")
-	sb.WriteString("            bodyBytes = await ReadBodyWithLimitAsync(context.Request.Body, MaxRequestBodyBytes);\n")
+	sb.WriteString("            // The runtime owns the bounded read so generator and runtime\n")
+	sb.WriteString("            // share one streaming cap implementation (R16/R17).\n")
+	sb.WriteString("            bodyBytes = await HttpTransport.ReadLimitedAsync(context.Request.Body, MaxRequestBodyBytes);\n")
 	sb.WriteString("        }\n")
 	sb.WriteString("        catch (Exception e)\n")
 	sb.WriteString("        {\n")
@@ -1195,11 +1194,6 @@ func writeHandleSingleRequestCs(sb *strings.Builder, idl *parser.IDL, structMap 
 	sb.WriteString("            { \"error\", error },\n")
 	sb.WriteString("            { \"id\", requestId }\n")
 	sb.WriteString("        };\n")
-	sb.WriteString("    }\n\n")
-
-	sb.WriteString("    private async Task WriteErrorResponse(HttpContext context, object? requestId, int code, string message, object? data = null)\n")
-	sb.WriteString("    {\n")
-	sb.WriteString("        await context.Response.WriteAsJsonAsync(ErrorResponse(requestId, code, message, data));\n")
 	sb.WriteString("    }\n")
 }
 

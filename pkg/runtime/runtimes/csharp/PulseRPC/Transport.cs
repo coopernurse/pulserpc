@@ -102,12 +102,30 @@ namespace PulseRPC
         }
 
         /// <summary>
-        /// Reads a stream into a byte array, returning null as soon as the limit
-        /// is exceeded. The response body is never buffered past the cap (R17).
+        /// Test/diagnostic constructor: uses a caller-supplied handler so response
+        /// streaming and the size cap can be exercised without a network.
         /// </summary>
-        internal static async Task<byte[]?> ReadLimitedAsync(Stream stream, long limit)
+        internal HttpTransport(string baseUrl, HttpMessageHandler handler)
         {
-            using var buffer = new MemoryStream();
+            _baseUrl = baseUrl.TrimEnd('/');
+            _httpClient = new HttpClient(handler, disposeHandler: false) { Timeout = RequestTimeout };
+        }
+
+        /// <summary>
+        /// Reads a stream into a byte array, returning null as soon as the limit
+        /// is exceeded. The live stream is never buffered past the cap (R17), and
+        /// <paramref name="initialCapacity"/> (usually the Content-Length) lets the
+        /// buffer be allocated once instead of growing.
+        /// </summary>
+        public static async Task<byte[]?> ReadLimitedAsync(Stream stream, long limit, long? initialCapacity = null)
+        {
+            var capacity = 0L;
+            if (initialCapacity.HasValue && initialCapacity.Value > 0)
+            {
+                capacity = Math.Min(initialCapacity.Value, limit);
+            }
+
+            using var buffer = capacity > 0 ? new MemoryStream((int)capacity) : new MemoryStream();
             var chunk = new byte[8192];
             int read;
             while ((read = await stream.ReadAsync(chunk, 0, chunk.Length)) > 0)
@@ -140,13 +158,17 @@ namespace PulseRPC
             var json = System.Text.Json.JsonSerializer.Serialize(request, JsonOptions);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var response = await _httpClient.PostAsync(_baseUrl, content);
+            // ResponseHeadersRead keeps the body as a live stream so
+            // ReadLimitedAsync bounds it; without it HttpClient would buffer the
+            // whole body (unbounded) before the 10 MiB cap could apply (R17).
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, _baseUrl) { Content = content };
+            using var response = await _httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
 
             byte[]? bodyBytes;
             using (var responseStream = await response.Content.ReadAsStreamAsync())
             {
-                bodyBytes = await ReadLimitedAsync(responseStream, MaxResponseBytes);
+                bodyBytes = await ReadLimitedAsync(responseStream, MaxResponseBytes, response.Content.Headers.ContentLength);
             }
             if (bodyBytes == null)
             {
