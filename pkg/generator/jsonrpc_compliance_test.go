@@ -43,14 +43,17 @@ func TestGeneratedAdaptersSurfaceRPCErrors(t *testing.T) {
 	t.Run("ts_client_checks_error", func(t *testing.T) {
 		idl := parseTestIDL(t, "namespace test\ninterface Svc { Ping() string }\n")
 		code := generateClientTs(idl, nil, nil, "test", map[string]*NamespaceTypes{}, "esm-node")
-		if !strings.Contains(code, "if (_resp.error)") {
+		if !strings.Contains(code, "_hasError") {
 			t.Errorf("generated TS client does not surface a server error object")
+		}
+		if !strings.Contains(code, "Mismatched response id") {
+			t.Errorf("generated TS client does not validate the response id")
 		}
 	})
 }
 
-// core-10: batch requests are documented as optional. Go, C#, and Java
-// generated servers implement them; TypeScript and Python do not.
+// core-10: batch requests are documented as optional, but all generated
+// servers (Go, C#, Java, TypeScript, Python) implement them.
 func TestRuntimeGuideMarksBatchOptional(t *testing.T) {
 	guidePath := "docs/RUNTIME_IMPLEMENTATION_GUIDE.md"
 	if _, err := os.Stat(guidePath); err != nil {

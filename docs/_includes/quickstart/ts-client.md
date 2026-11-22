@@ -1,7 +1,7 @@
 {% highlight typescript %}
-import { HTTPTransport, CatalogServiceClient, CartServiceClient, OrderServiceClient } from './client';
+import { HttpTransport, CatalogServiceClient, CartServiceClient, OrderServiceClient } from './client';
 
-const transport = new HTTPTransport('http://localhost:8080');
+const transport = new HttpTransport('http://localhost:8080');
 const catalog = new CatalogServiceClient(transport);
 const cart = new CartServiceClient(transport);
 const orders = new OrderServiceClient(transport);
@@ -14,7 +14,7 @@ async function main() {
   }
 
   const result = await cart.addToCart({
-    cartId: null,
+    cartId: undefined,
     productId: products[0].productId,
     quantity: 2
   });

@@ -16,7 +16,7 @@ layout: default
 | `[]Type` | `Type[]` | `[1, 2, 3]` |
 | `map[string]Type` | `{[key: string]: Type}` | `{"key": "value"}` |
 | `Enum` | Generated `enum` with string values | `"pending" \| "paid"` |
-| `Struct` | Class | `new Product({...})` |
+| `Struct` | Interface | `{ ... }` (plain object) |
 | `T [optional]` | `T \| undefined` | `string \| undefined` |
 
 ## Module Styles
@@ -78,28 +78,28 @@ pulserpc -plugin ts-client-server -dir ./src -ts-module=cjs api/service.pulse
 pulserpc -plugin ts-client-server -dir ./src -ts-module=cjs -ts-gen-package-json -ts-gen-tsconfig -ts-no-detect api/service.pulse
 ```
 
-## Generated Classes
+## Generated Interfaces
 
-Each struct in your IDL becomes a TypeScript class:
+Each struct in your IDL becomes a TypeScript `interface`; construct plain objects:
 
 ```typescript
 import * as checkout from './checkout';
 
-// Create instances
-const product = new checkout.Product({
+// Create plain objects typed as the generated interface
+const product: checkout.Product = {
   productId: 'prod001',
   name: 'Wireless Mouse',
   description: 'Ergonomic mouse',
   price: 29.99,
   stock: 50,
   imageUrl: 'https://example.com/mouse.jpg'  // optional field
-});
+};
 
-const cart = new checkout.Cart({
+const cart: checkout.Cart = {
   cartId: 'cart_1234',
   items: [],
   subtotal: 0
-});
+};
 ```
 
 ## Optional Fields
@@ -108,14 +108,14 @@ Optional fields can be `undefined`:
 
 ```typescript
 // Create with optional field
-const product = new checkout.Product({
+const product: checkout.Product = {
   productId: 'prod001',
   name: 'Wireless Mouse',
   description: 'Ergonomic mouse',
   price: 29.99,
   stock: 50,
   imageUrl: undefined  // optional field can be undefined
-});
+};
 
 // Check optional field
 if (product.imageUrl !== undefined) {
@@ -131,12 +131,12 @@ Enums are string types at runtime but have type safety:
 import * as checkout from './checkout';
 
 // Use enum values
-const order = new checkout.Order({
+const order: checkout.Order = {
   orderId: 'order_123',
   cart: cart,
   shippingAddress: address,
-  paymentMethod: checkout.PaymentMethod.creditCard,
-  status: checkout.OrderStatus.pending,
+  paymentMethod: 'credit_card',
+  status: 'pending',
   total: 59.98,
   createdAt: Date.now()
 });
@@ -172,56 +172,61 @@ Common error codes:
 
 ## Server Implementation
 
-Extend generated service classes:
+The generator emits `types.ts` (interfaces/enums) and `server.ts` (one abstract
+class per interface). Implement the abstract methods, passing `ctx` as the first
+argument; every method returns a `Promise`.
 
 ```typescript
-import { PulseRPCServer, CatalogService } from './server';
-import * as checkout from './checkout';
+import { readFileSync } from 'fs';
+import { Server, Contract } from './pulserpc/index.js';
+import { CatalogService } from './checkout/server.js';
+import type { Product } from './checkout/types.js';
 
 class CatalogServiceImpl extends CatalogService {
-  private products: checkout.Product[] = [
-    new checkout.Product({ productId: 'p1', name: 'Item 1', price: 10.0, stock: 5 }),
-    new checkout.Product({ productId: 'p2', name: 'Item 2', price: 20.0, stock: 3 })
+  private products: Product[] = [
+    { productId: 'p1', name: 'Item 1', price: 10.0, stock: 5 },
+    { productId: 'p2', name: 'Item 2', price: 20.0, stock: 3 },
   ];
 
-  listProducts(): checkout.Product[] {
+  async listProducts(ctx: Record<string, any>): Promise<Product[]> {
     return this.products;
   }
 
-  getProduct(productId: string): checkout.Product | null {
-    for (const p of this.products) {
-      if (p.productId === productId) {
-        return p;
-      }
-    }
-    return null;  // Return null for optional type
+  async getProduct(ctx: Record<string, any>, productId: string): Promise<Product | null> {
+    return this.products.find((p) => p.productId === productId) ?? null;
   }
 }
 
-// Start server
-const server = new PulseRPCServer(8080);
-server.registerCatalogService(new CatalogServiceImpl());
-server.start();
+// Wire the implementations into the runtime Server
+const contract = new Contract(JSON.parse(readFileSync('./checkout/idl.json', 'utf-8')));
+const rpcServer = new Server({ contract, validateRequests: true, validateResponses: true });
+rpcServer.addHandler('CatalogService', new CatalogServiceImpl());
+
+// rpcServer.call(request) returns the JSON-RPC response (or null for a notification).
+// Serve it from your HTTP framework of choice (see the quickstart for a Node adapter).
 ```
+
+Generated `server.ts` does **not** start an HTTP listener; you supply the HTTP
+adapter and call `rpcServer.call(...)`.
 
 ## Client Usage
 
-```typescript
-import { HTTPTransport } from './client';
-import * as checkout from './checkout';
-import { CatalogServiceClient } from './checkout';
+The generated `client.ts` exports one `*Client` class per interface plus the
+`Transport`/`HttpTransport` types. Methods are async and do not take `ctx`.
 
-const transport = new HTTPTransport('http://localhost:8080');
+```typescript
+import { HttpTransport, CatalogServiceClient } from './checkout/client.js';
+import type { Product } from './checkout/types.js';
+
+const transport = new HttpTransport('http://localhost:8080');
 const catalog = new CatalogServiceClient(transport);
 
-// Method calls return TypeScript objects
-const products: checkout.Product[] = catalog.listProducts();
+const products: Product[] = await catalog.listProducts();
 for (const p of products) {
   console.log(`${p.name}: $${p.price}`);
 }
 
-// Optional methods return null if not found
-const product: checkout.Product | null = catalog.getProduct('prod001');
+const product: Product | null = await catalog.getProduct('prod001');
 if (product !== null) {
   console.log(product.name);
 }
@@ -229,20 +234,20 @@ if (product !== null) {
 
 ## Async/Await Pattern
 
-PulseRPC TypeScript can use async/await:
+All generated service methods are `async` and return `Promise`s, so use
+`async`/`await` throughout:
 
 ```typescript
 class OrderServiceImpl extends OrderService {
-  async createOrder(request: checkout.CreateOrderRequest): Promise<checkout.CheckoutResponse> {
-    // Async operations
+  async createOrder(ctx: Record<string, any>, request: checkout.CreateOrderRequest): Promise<checkout.CheckoutResponse> {
     const orderId = await this.generateOrderId();
     const validated = await this.validateCart(request.cartId);
 
     if (!validated) {
-      throw new RPCException(1002, 'CartEmpty: Cannot create order from empty cart');
+      throw new RPCError(1002, 'CartEmpty: Cannot create order from empty cart');
     }
 
-    return new checkout.CheckoutResponse({ orderId });
+    return { orderId };
   }
 }
 ```
@@ -254,7 +259,7 @@ class OrderServiceImpl extends OrderService {
 PulseRPC automatically validates requests and responses against your IDL:
 
 ```typescript
-// This will throw RPCException (-32602) if validation fails
+// This will throw RPCError (-32602) if validation fails
 const cart = cart.addToCart({
   cartId: null,
   productId: 'prod001',
@@ -386,28 +391,28 @@ cart.clearCart(cartId: string): boolean
 2. **Type assertions**: Avoid `as`, use proper type guards
 3. **Null checks**: Always check for `null` on optional returns
 4. **Async patterns**: Use async/await for I/O operations
-5. **Error boundaries**: Catch RPCException at appropriate levels
+5. **Error boundaries**: Catch RPCError at appropriate levels
 
 ## Working with Nested Structs
 
 ```typescript
-// Nested structs work naturally
-const order = new checkout.Order({
+// Nested structs are plain objects
+const order: checkout.Order = {
   orderId: 'order_123',
-  cart: new checkout.Cart({
+  cart: {
     cartId: 'cart_123',
-    items: [new checkout.CartItem({...})],
+    items: [{ ... }],
     subtotal: 59.98
-  }),
-  shippingAddress: new checkout.Address({
+  },
+  shippingAddress: {
     street: '123 Main St',
     city: 'San Francisco',
     state: 'CA',
     zipCode: '94105',
     country: 'USA'
-  }),
-  paymentMethod: checkout.PaymentMethod.creditCard,
-  status: checkout.OrderStatus.pending,
+  },
+  paymentMethod: 'credit_card',
+  status: 'pending',
   total: 59.98,
   createdAt: Math.floor(Date.now() / 1000)
 });
@@ -435,16 +440,25 @@ Add to `package.json`:
 
 ```typescript
 import express from 'express';
-import { PulseRPCServer } from './server';
+import { readFileSync } from 'fs';
+import { Server, Contract } from './pulserpc/index.js';
+import { CatalogService } from './checkout/server.js';
+import { CatalogServiceImpl } from './catalog-service-impl.js';
+
+const contract = new Contract(JSON.parse(readFileSync('./checkout/idl.json', 'utf-8')));
+const rpcServer = new Server({ contract, validateRequests: true, validateResponses: true });
+rpcServer.addHandler('CatalogService', new CatalogServiceImpl());
 
 const app = express();
 app.use(express.json());
 
-const pulserpc = new PulseRPCServer(8080);
-
-// Mount PulseRPC server on Express
-app.use('/rpc', (req, res) => {
-  // Forward Express requests to PulseRPC
+app.post('/rpc', async (req, res) => {
+  const response = await rpcServer.call(req.body);
+  if (response === null) {
+    res.status(204).end();
+    return;
+  }
+  res.json(response);
 });
 
 app.listen(3000);

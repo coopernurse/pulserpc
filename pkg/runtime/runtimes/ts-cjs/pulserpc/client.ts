@@ -265,22 +265,22 @@ export class Client {
     }
 
     if (!response || typeof response !== "object") {
-      throw new Error("Response validation failed: response must be an object");
+      throw new RPCError(-32600, "Response validation failed: response must be an object");
     }
     if (response.jsonrpc !== "2.0") {
-      throw new Error(`Response validation failed: invalid jsonrpc version: ${response.jsonrpc}`);
+      throw new RPCError(-32600, `Response validation failed: invalid jsonrpc version: ${response.jsonrpc}`);
     }
     if (response.id !== reqId) {
-      throw new Error(`Response validation failed: mismatched id (expected ${reqId}, got ${response.id})`);
+      throw new RPCError(-32600, `Response validation failed: mismatched id (expected ${reqId}, got ${response.id})`);
     }
 
     const hasResult = Object.prototype.hasOwnProperty.call(response, "result");
     const hasError = Object.prototype.hasOwnProperty.call(response, "error");
     if (hasResult && hasError) {
-      throw new Error("Response validation failed: response has both result and error");
+      throw new RPCError(-32600, "Response validation failed: response has both result and error");
     }
     if (!hasResult && !hasError) {
-      throw new Error("Response validation failed: response has neither result nor error");
+      throw new RPCError(-32600, "Response validation failed: response has neither result nor error");
     }
 
     // Branch on key presence, not truthiness: `error: null` (or any falsy
