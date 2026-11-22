@@ -1177,7 +1177,7 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("        // Validate jsonrpc field\n")
 	sb.WriteString("        Object jsonrpc = request.get(\"jsonrpc\");\n")
 	sb.WriteString("        if (jsonrpc == null || !\"2.0\".equals(jsonrpc)) {\n")
-	sb.WriteString("            return errorEnvelope(-32600, \"Invalid Request - jsonrpc must be '2.0'\", null, id);\n")
+	sb.WriteString("            return errorEnvelope(-32600, \"Invalid Request - jsonrpc must be '2.0'\", null, null);\n")
 	sb.WriteString("        }\n\n")
 	sb.WriteString("        Object methodObj = request.get(\"method\");\n")
 	sb.WriteString("        if (!(methodObj instanceof String) || ((String) methodObj).isEmpty()) {\n")

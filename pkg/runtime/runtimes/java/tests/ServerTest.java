@@ -251,4 +251,32 @@ public class ServerTest {
             Assert.assertNull(parsed.get("id"));
         }
     }
+
+    @Test
+    public void testMissingJsonrpcVersionUsesNullId() {
+        // Conformance: a request carrying id 1 but no valid "jsonrpc":"2.0"
+        // is an invalid request whose error envelope must report id: null,
+        // not echo the supplied id. Notifications still get no response.
+        Server server = new Server(contract(), true, false);
+        server.addHandler("Svc", new Handler());
+
+        Map<String, Object> missing = request("Svc.oneArg", Arrays.asList("hi"));
+        missing.remove("jsonrpc");
+        Map<String, Object> response = server.call(missing);
+        Assert.assertEquals(-32600, errorCode(response));
+        Assert.assertTrue("error envelope must carry an id member", response.containsKey("id"));
+        Assert.assertNull("missing-jsonrpc error must not echo the request id", response.get("id"));
+
+        Map<String, Object> wrongVersion = request("Svc.oneArg", Arrays.asList("hi"));
+        wrongVersion.put("jsonrpc", "1.0");
+        Map<String, Object> wrongResponse = server.call(wrongVersion);
+        Assert.assertEquals(-32600, errorCode(wrongResponse));
+        Assert.assertNull(wrongResponse.get("id"));
+
+        Map<String, Object> notification = request("Svc.oneArg", Arrays.asList("hi"));
+        notification.remove("jsonrpc");
+        notification.remove("id");
+        Assert.assertNull("invalid-request notifications must still get no response",
+            server.call(notification));
+    }
 }
