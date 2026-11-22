@@ -12,10 +12,15 @@ on:
       - 'docs/**'
       - '.github/workflows/docs-ci.yml'
 
+concurrency:
+  group: docs-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-jekyll-site:
     name: Build Jekyll Documentation Site
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -43,8 +48,7 @@ jobs:
           bundle exec htmlproofer ./_site \
             --disable-external \
             --ignore-urls "/^http:\/\/localhost:.*/" \
-            --ignore-urls "/^#" \
-            || echo "Warning: Link checking completed with errors"
+            --ignore-urls "/^#"
 
       - name: Upload built site
         uses: actions/upload-artifact@v4

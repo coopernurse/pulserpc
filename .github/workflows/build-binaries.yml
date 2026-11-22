@@ -15,8 +15,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  # GitHub Actions has no cross-workflow `needs`, so this in-workflow gate
+  # runs the same checks as CI before any release artifacts are produced.
+  verify:
+    name: Pre-release verification
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install tsx
+        run: npm install -g tsx
+
+      # cmd/pulse embeds pkg/webui/dist/*, which is not committed; make test
+      # compiles ./cmd/... so the assets must exist first.
+      - name: Build web UI assets
+        run: make build-webui
+
+      - name: make test
+        run: make test
+
+      - name: Cross-generator checks
+        run: make test-cross-generator
+
+      - name: integration harness
+        run: go test ./tests/integration/... -count=1
+
+  build:
+    needs: [verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +96,6 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          working-directory: pkg/webui
 
       - name: Build web UI
         working-directory: pkg/webui
@@ -82,7 +125,9 @@ jobs:
           if-no-files-found: error
 
   docker:
+    needs: [verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     permissions:
       packages: write
@@ -155,6 +200,7 @@ jobs:
   assemble:
     needs: [build, docker]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Download build artifacts

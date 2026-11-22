@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-unit:
+    name: Go unit + harness tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install tsx
+        run: npm install -g tsx
+
+      # cmd/pulse embeds pkg/webui/dist/*, which is not committed. Build it
+      # before go vet / make test compile ./cmd/...
+      - name: Build web UI assets
+        run: make build-webui
+
+      - name: Check gofmt on changed Go files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            base="${{ github.event.before }}"
+          else
+            echo "No diff base for event ${{ github.event_name }}; skipping gofmt check."
+            exit 0
+          fi
+          files=$(git diff --name-only --diff-filter=ACM "$base" HEAD -- '*.go' || true)
+          if [ -z "$files" ]; then
+            echo "No changed Go files (or no valid diff base); skipping gofmt check."
+            exit 0
+          fi
+          unformatted=$(gofmt -l $files)
+          if [ -n "$unformatted" ]; then
+            echo "::error::The following changed Go files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "All changed Go files are gofmt-formatted."
+
+      - name: go vet
+        run: go vet ./cmd/... ./pkg/generator/... ./pkg/openapi/... ./pkg/parser/... ./pkg/runtime/ ./tests/integration/...
+
+      - name: make test
+        run: make test
+
+      - name: integration harness
+        run: go test ./tests/integration/... -count=1
+
+  variants:
+    name: Generator variant checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cross-generator checks
+        run: make test-cross-generator
+
+  runtime-units:
+    name: Runtime unit tests (${{ matrix.runtime }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: python
+            target: test-runtime-python
+          - runtime: python2
+            target: test-runtime-python2
+          - runtime: ts-node
+            target: test-runtime-ts
+          - runtime: ts-cjs
+            target: test-runtime-ts-cjs
+          - runtime: csharp
+            target: test-runtime-csharp
+          - runtime: java
+            target: test-runtime-java
+          - runtime: go
+            target: test-runtime-go
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: matrix.runtime == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        if: matrix.runtime == 'python'
+        run: python -m pip install pytest
+
+      - name: Set up Node.js
+        if: matrix.runtime == 'ts-node' || matrix.runtime == 'ts-cjs'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install TypeScript tooling
+        if: matrix.runtime == 'ts-node' || matrix.runtime == 'ts-cjs'
+        run: npm install -g tsx typescript @types/node
+
+      - name: Set up .NET
+        if: matrix.runtime == 'csharp'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Set up Java
+        if: matrix.runtime == 'java'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Set up Go
+        if: matrix.runtime == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run runtime unit tests
+        run: make ${{ matrix.target }}

@@ -1,4 +1,4 @@
-.PHONY: build build-linux test cover lint quality quality-full clean install-tools test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-ts-cjs test-runtime-csharp test-runtime-java test-runtime-go test-runtimes test-all-runtimes test-integration test-integration-java test-integration-scripts test-numeric-types test-enum-case test-raises-propagation test-static-client-ts test-java-compile test-errors test-limits test-cross-generator test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generator-go test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-python2 test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
+.PHONY: build build-linux test cover lint quality quality-full clean install-tools test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-ts-cjs test-runtime-csharp test-runtime-java test-runtime-go test-runtimes test-all-runtimes test-integration test-integration-java test-integration-scripts test-numeric-types test-enum-case test-raises-propagation test-static-client-ts test-java-compile test-errors test-limits test-cross-generator test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generator-go test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-python2 test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi ci
 
 # Variables
 BINARY_NAME=pulserpc
@@ -40,7 +40,7 @@ build-linux:
 # Run tests
 test:
 	@echo "Running tests..."
-	go test -v ./cmd/... ./pkg/generator/... ./pkg/openapi/... ./pkg/parser/... ./pkg/runtime/
+	go test -v ./cmd/... ./pkg/generator/... ./pkg/openapi/... ./pkg/parser/... ./pkg/playground/... ./pkg/runtime/ ./tests/integration/...
 
 # Run tests with coverage
 cover:
@@ -136,6 +136,9 @@ test-runtime-go:
 # Test all runtimes
 test-runtimes: test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-ts-cjs test-runtime-csharp test-runtime-java test-runtime-go
 	@echo "All runtime tests passed"
+
+ci: test test-cross-generator test-runtimes
+	@echo "CI checks completed"
 
 # Run the multi-runtime HTTP API integration harness (all advertised servers)
 test-all-runtimes:

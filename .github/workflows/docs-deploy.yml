@@ -1,15 +1,20 @@
 name: Documentation Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Documentation CI"]
+    types: [completed]
     branches: [main]
-    paths:
-      - 'docs/**'
-      - '.github/workflows/docs-deploy.yml'
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Documentation CI run id whose jekyll-site artifact should be deployed"
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read  # required to download the jekyll-site artifact from the triggering run
   pages: write
   id-token: write
 
@@ -20,31 +25,22 @@ concurrency:
 
 jobs:
   build-and-deploy:
-    name: Build and Deploy to GitHub Pages
+    name: Deploy to GitHub Pages
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
+      - name: Download built site
+        uses: actions/download-artifact@v4
         with:
-          ruby-version: '3.2'
-          bundler-cache: true
-
-      - name: Install Jekyll dependencies
-        working-directory: docs
-        run: |
-          bundle install
-
-      - name: Build Jekyll site
-        working-directory: docs
-        run: |
-          bundle exec jekyll build --verbose
+          name: jekyll-site
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: docs/_site
 
       - name: Fix page permissions
         run: |
