@@ -2223,6 +2223,10 @@ func writeMethodImplementationCs(sb *strings.Builder, iface *parser.Interface, m
 			// simply returns p.personId
 			sb.WriteString("        return p.PersonId;\n")
 			return
+		case "echoOptional":
+			// echo the whole Person back so optional built-ins round-trip
+			sb.WriteString("        return p;\n")
+			return
 		}
 	case "B":
 		switch methodName {

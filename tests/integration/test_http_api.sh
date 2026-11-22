@@ -486,6 +486,34 @@ test_method "A.repeat_num" "[42,5]" "A.repeat_num(42, 5)" "result" "[42,42,42,42
 test_method "A.putPerson" "[{\"personId\":\"123\",\"firstName\":\"John\",\"lastName\":\"Doe\",\"email\":null}]" "A.putPerson with null email" "result" "\"123\""
 test_method "A.putPerson" "[{\"personId\":\"456\",\"firstName\":\"Jane\",\"lastName\":\"Smith\"}]" "A.putPerson without email field" "result" "\"456\""
 
+# A.echoOptional - optional built-ins (score/active/ratio) must be nullable in
+# statically typed structs and round-trip over the wire (D7/C10).
+test_method "A.echoOptional" "[{\"personId\":\"1\",\"firstName\":\"A\",\"lastName\":\"B\",\"score\":null,\"active\":null,\"ratio\":null}]" "A.echoOptional with null built-ins" "result" "{\"personId\":\"1\",\"firstName\":\"A\",\"lastName\":\"B\",\"score\":null,\"active\":null,\"ratio\":null}"
+test_method "A.echoOptional" "[{\"personId\":\"2\",\"firstName\":\"C\",\"lastName\":\"D\",\"score\":7,\"active\":true,\"ratio\":2.5}]" "A.echoOptional with populated built-ins" "result" "{\"personId\":\"2\",\"firstName\":\"C\",\"lastName\":\"D\",\"score\":7,\"active\":true,\"ratio\":2.5}"
+
+# All three optional built-ins omitted: each echoed field must be absent OR
+# explicitly null (runtimes differ on whether they emit null optional fields).
+do_request POST '{"jsonrpc":"2.0","method":"A.echoOptional","params":[{"personId":"3","firstName":"E","lastName":"F"}],"id":1}'
+probe_ok=1
+probe_detail=""
+if [ "$REQUEST_STATUS" != "200" ]; then
+    probe_ok=0; probe_detail="${probe_detail}expected HTTP 200, got $REQUEST_STATUS; "
+fi
+if [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0; probe_detail="${probe_detail}response is not a JSON object; "
+else
+    if [ "$(json_type error)" != "__MISSING__" ]; then
+        probe_ok=0; probe_detail="${probe_detail}unexpected error object; "
+    fi
+    for optional_field in score active ratio; do
+        optional_field_type=$(json_type "result.$optional_field")
+        if [ "$optional_field_type" != "NoneType" ] && [ "$optional_field_type" != "__MISSING__" ]; then
+            probe_ok=0; probe_detail="${probe_detail}$optional_field was $optional_field_type, expected absent-or-null; "
+        fi
+    done
+fi
+record_result "A.echoOptional with omitted built-ins" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
 echo ""
 
 # ============================================================================

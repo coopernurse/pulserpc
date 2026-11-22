@@ -1798,6 +1798,10 @@ func writeTestMethodBody(sb *strings.Builder, iface *parser.Interface, method *p
 		case "putPerson":
 			sb.WriteString("        return p.getPersonId();\n")
 			return
+		case "echoOptional":
+			// echo the whole Person back so optional built-ins round-trip
+			sb.WriteString("        return p;\n")
+			return
 		}
 	case "B":
 		switch methodName {

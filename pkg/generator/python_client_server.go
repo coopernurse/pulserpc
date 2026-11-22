@@ -1221,6 +1221,10 @@ func writeTestMethodImpl(sb *strings.Builder, iface *parser.Interface, method *p
 		sb.WriteString("        if isinstance(p, dict):\n")
 		sb.WriteString("            return p.get('personId', '')\n")
 		sb.WriteString("        return getattr(p, 'personId', '')\n\n")
+	case "echooptional":
+		// echo the whole Person back so optional built-ins round-trip
+		sb.WriteString("        # echo the whole Person back so optional built-ins round-trip\n")
+		sb.WriteString("        return p\n\n")
 	default:
 		// Default implementation: return appropriate type based on return type
 		// If return type is optional, return None

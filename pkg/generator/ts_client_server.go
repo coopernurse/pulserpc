@@ -2391,6 +2391,10 @@ func writeTestMethodImplTs(sb *strings.Builder, iface *parser.Interface, method 
 		sb.WriteString("    // simply returns p.personId\n")
 		sb.WriteString("    // we use this to test the '[optional]' enforcement, as we invoke it with a null email\n")
 		sb.WriteString("    return p.personId;\n")
+	case "echooptional":
+		// echo the whole Person back so optional built-ins round-trip
+		sb.WriteString("    // echo the whole Person back so optional built-ins round-trip\n")
+		sb.WriteString("    return p;\n")
 	default:
 		// Default implementation: return appropriate type based on return type
 		writeDefaultTestReturnTs(sb, method.ReturnType, structMap, enumMap)

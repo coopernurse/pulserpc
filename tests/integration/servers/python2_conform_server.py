@@ -73,6 +73,10 @@ class AImpl(object):
     def putPerson(self, ctx, person):
         return person.get("personId", "")
 
+    def echoOptional(self, ctx, person):
+        # Echo the whole Person back so optional built-ins round-trip.
+        return person
+
     def findItem(self, ctx, item_id):
         return None
 
