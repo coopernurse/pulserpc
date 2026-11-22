@@ -87,10 +87,11 @@ namespace PulseRPC
                 return Fail(-32600, "Invalid Request", "jsonrpc version must be '2.0'");
             }
 
-            // Check for method
+            // Check for method. An invalid method makes the request envelope
+            // invalid, so the id cannot be echoed back: reply with a null id.
             if (!request.TryGetValue("method", out var methodObj) || methodObj is not string method || string.IsNullOrEmpty(method))
             {
-                return Fail(-32600, "Invalid Request", "Method must be a string");
+                return isNotification ? null : ErrorResponse(null, -32600, "Invalid Request", "Method must be a string");
             }
 
             // Handle pulserpc-idl request

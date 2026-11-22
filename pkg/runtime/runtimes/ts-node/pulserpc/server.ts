@@ -112,11 +112,13 @@ export class Server {
       );
     }
 
-    // Check for method
+    // Check for method. An invalid method makes the request envelope invalid,
+    // so the id cannot be trusted and must be null (notifications are silent
+    // via `call` above).
     const method = req.method;
     if (!method || typeof method !== "string") {
       return this.errorResponse(
-        reqId ?? null,
+        null,
         -32600,
         "Invalid Request",
         "Method must be a string"

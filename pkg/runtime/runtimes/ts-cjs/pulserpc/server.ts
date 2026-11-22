@@ -100,8 +100,10 @@ export class Server {
 
     const method = req.method;
     if (!method || typeof method !== "string") {
+      // Invalid method => invalid envelope: reply with a null id. Notifications
+      // are suppressed by `call` above.
       return this.errorResponse(
-        reqId ?? null,
+        null,
         -32600,
         "Invalid Request",
         "Method must be a string"

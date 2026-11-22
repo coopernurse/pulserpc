@@ -1190,7 +1190,7 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("        }\n\n")
 	sb.WriteString("        Object methodObj = request.get(\"method\");\n")
 	sb.WriteString("        if (!(methodObj instanceof String) || ((String) methodObj).isEmpty()) {\n")
-	sb.WriteString("            return errorEnvelope(-32600, \"Invalid Request - method must be a non-empty string\", null, id);\n")
+	sb.WriteString("            return errorEnvelope(-32600, \"Invalid Request - method must be a non-empty string\", null, null);\n")
 	sb.WriteString("        }\n")
 	sb.WriteString("        String method = (String) methodObj;\n")
 	sb.WriteString("        boolean isNotification = id == null;\n")

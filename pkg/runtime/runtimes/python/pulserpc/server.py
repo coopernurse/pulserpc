@@ -200,11 +200,15 @@ class Server:
                 "jsonrpc version must be '2.0'"
             )
 
-        # Check for method
+        # Check for method. A missing/empty/non-string method makes the request
+        # envelope invalid, so its id cannot be trusted: reply with a null id
+        # rather than echoing the caller-supplied one. Notifications stay silent.
         method = req.get('method')
         if not method or not isinstance(method, str):
-            return error_response(
-                INVALID_REQUEST, "Invalid Request", "Method must be a string"
+            if is_notification:
+                return None
+            return self._error_response(
+                None, INVALID_REQUEST, "Invalid Request", "Method must be a string"
             )
 
         # Handle pulserpc-idl request

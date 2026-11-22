@@ -146,7 +146,13 @@ class Server(object):
 
         method = req.get("method")
         if not method or not isinstance(method, _string_types):
-            return error_response(-32600, "Invalid Request", "Method must be a string")
+            # An invalid method makes the envelope invalid; never echo the
+            # caller-supplied id. Notifications still receive no response.
+            if is_notification:
+                return None
+            return self._error_response(
+                None, -32600, "Invalid Request", "Method must be a string"
+            )
 
         if method == "pulserpc-idl":
             if is_notification:
