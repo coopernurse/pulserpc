@@ -3,13 +3,15 @@ package com.bitmechanic.pulserpc;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 public class Client {
     private final Transport transport;
     private final boolean validateRequest;
     private final boolean validateResponse;
-    private int requestID = 0;
+    // Invariant R20: concurrent calls must never share a request id.
+    private final AtomicInteger requestID = new AtomicInteger(0);
     private final Map<String, InterfaceClientProxy> ifaces = new HashMap<>();
     private ContractAuditor auditor;
     private boolean verifyOnBootstrap;
@@ -76,8 +78,8 @@ public class Client {
             }
         }
 
-        requestID++;
-        Object reqId = requestID;
+        int nextId = requestID.incrementAndGet();
+        Object reqId = nextId;
 
         Request request = new Request();
         request.setJsonrpc("2.0");

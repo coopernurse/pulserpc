@@ -21,23 +21,26 @@ public class Validation {
     }
 
     /**
-     * Validate that value is an int
+     * Validate that value is an int. IDL ints are signed 32-bit values
+     * (invariant R25/D1); fractional, non-finite, boolean, and out-of-range
+     * numbers are rejected.
      */
     public static void validateInt(Object value) {
         if (value instanceof Integer) {
             return;
         }
-        // Accept whole-number doubles
+        // Accept whole-number doubles within the signed 32-bit range.
         if (value instanceof Double) {
             double d = (Double) value;
-            if (d == Math.floor(d)) {
+            if (d == Math.floor(d) && !Double.isInfinite(d) && !Double.isNaN(d)
+                    && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
                 return;
             }
         }
-        // Accept whole-number longs
+        // Accept whole-number longs within the signed 32-bit range.
         if (value instanceof Long) {
             long l = (Long) value;
-            if (l == Math.floor(l)) {
+            if (l >= Integer.MIN_VALUE && l <= Integer.MAX_VALUE) {
                 return;
             }
         }

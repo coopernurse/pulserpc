@@ -1,10 +1,10 @@
 # Java Runtime Tests
 # Requires: openjdk-17-jdk (or similar), maven
 
-.PHONY: test clean test-validation test-types test-rpc test-json test-severity test-diff test-audit test-server test-envelope
+.PHONY: test clean test-validation test-types test-rpc test-json test-severity test-diff test-audit test-server test-envelope test-httplimits test-httptransport test-concurrency test-contract-verify test-enum-json
 
 # Test target - run all tests (java-12: include diff/auditor/severity suites)
-test: test-validation test-types test-rpc test-json test-severity test-diff test-audit test-server test-envelope
+test: test-validation test-types test-rpc test-json test-severity test-diff test-audit test-server test-envelope test-httplimits test-httptransport test-concurrency test-contract-verify test-enum-json
 
 # Test individual components
 test-validation:
@@ -42,6 +42,26 @@ test-server:
 test-envelope:
 	@echo "Testing Java response envelope validation..."
 	@mvn clean test -Dtest=EnvelopeTest
+
+test-httplimits:
+	@echo "Testing Java HTTP resource limits..."
+	@mvn clean test -Dtest=HttpLimitsTest
+
+test-httptransport:
+	@echo "Testing Java HTTP transport headers and URL normalization..."
+	@mvn clean test -Dtest=HTTPTransportTest
+
+test-concurrency:
+	@echo "Testing Java client request-id concurrency..."
+	@mvn clean test -Dtest=ClientConcurrencyTest
+
+test-contract-verify:
+	@echo "Testing Java contract verification against a fetched IDL..."
+	@mvn clean test -Dtest=ContractVerifyTest
+
+test-enum-json:
+	@echo "Testing Java enum wire representation..."
+	@mvn clean test -Dtest=EnumJsonTest
 
 # Integration test - requires generated test server
 test-integration:

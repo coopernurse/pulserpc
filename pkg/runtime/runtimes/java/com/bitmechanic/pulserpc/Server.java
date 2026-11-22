@@ -40,26 +40,31 @@ public class Server {
             return errorResponse(null, -32600, "Invalid Request", "Request must be an object");
         }
 
+        // Invariant R24/D2: id must be a string, number, or null.
+        Object reqId = request.get("id");
+        if (reqId != null && !(reqId instanceof String) && !(reqId instanceof Number)) {
+            return errorResponse(null, -32600, "Invalid Request", "id must be a string, number, or null");
+        }
+
         // Check JSON-RPC version
         Object jsonrpc = request.get("jsonrpc");
         if (!"2.0".equals(jsonrpc)) {
-            return errorResponse(request.get("id"), -32600, "Invalid Request", "jsonrpc version must be '2.0'");
+            return errorResponse(reqId, -32600, "Invalid Request", "jsonrpc version must be '2.0'");
         }
 
         // Check for method
         Object methodObj = request.get("method");
         if (!(methodObj instanceof String) || ((String) methodObj).isEmpty()) {
-            return errorResponse(request.get("id"), -32600, "Invalid Request", "Method must be a string");
+            return errorResponse(reqId, -32600, "Invalid Request", "Method must be a string");
         }
         String method = (String) methodObj;
 
         // Handle pulserpc-idl request
         if ("pulserpc-idl".equals(method)) {
-            return successResponse(request.get("id"), contract.idlParsed);
+            return successResponse(reqId, contract.idlParsed);
         }
 
         // Check for notification (no 'id' means no response expected)
-        Object reqId = request.get("id");
         boolean isNotification = reqId == null;
 
         // Parse method name (e.g., "UserService.getUser")
@@ -120,7 +125,10 @@ public class Server {
                 RPCError rpcErr = (RPCError) ex.getCause();
                 return errorResponse(reqId, rpcErr.getCode(), rpcErr.getMessage(), rpcErr.getData());
             }
-            return errorResponse(reqId, -32603, "Internal error", ex.getMessage());
+            // Invariant R15/D4: details stay server-side; the wire gets a fixed
+            // message and no data.
+            InternalErrors.log("method " + method, ex);
+            return errorResponse(reqId, -32603, "Internal error", null);
         }
 
         // java-10: let validateResponse decide whether null is acceptable for the
@@ -129,8 +137,8 @@ public class Server {
             try {
                 contract.validateResponse(ifaceName, funcName, result);
             } catch (IllegalArgumentException ex) {
-                return errorResponse(reqId, -32603, "Internal error",
-                    "Response validation failed: " + ex.getMessage());
+                InternalErrors.log("response validation for " + ifaceName + "." + funcName, ex);
+                return errorResponse(reqId, -32603, "Internal error", null);
             }
         }
 
@@ -143,7 +151,9 @@ public class Server {
     }
 
     /**
-     * Creates a JSON-RPC error response
+     * Creates a JSON-RPC error response. Per JSON-RPC 2.0 (and invariant D3)
+     * error responses always carry {@code id}; it is {@code null} when the
+     * request id could not be determined.
      */
     private Map<String, Object> errorResponse(Object reqId, int code, String message, Object data) {
         Map<String, Object> errObj = new HashMap<>();
@@ -156,9 +166,7 @@ public class Server {
         Map<String, Object> response = new HashMap<>();
         response.put("jsonrpc", "2.0");
         response.put("error", errObj);
-        if (reqId != null) {
-            response.put("id", reqId);
-        }
+        response.put("id", reqId);
         return response;
     }
 
