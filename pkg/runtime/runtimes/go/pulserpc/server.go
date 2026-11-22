@@ -529,8 +529,11 @@ func (s *Server) convertValueToType(value reflect.Value, targetType reflect.Type
 	// Handle pointer targets (optional structs etc.): allocate and convert.
 	if targetType.Kind() == reflect.Pointer {
 		elemType := targetType.Elem()
-		if value.Kind() == reflect.Pointer && value.IsNil() {
-			return reflect.Zero(targetType)
+		if value.Kind() == reflect.Pointer {
+			if value.IsNil() {
+				return reflect.Zero(targetType)
+			}
+			value = value.Elem()
 		}
 		if value.Kind() == reflect.Map && value.IsNil() {
 			return reflect.Zero(targetType)
@@ -556,6 +559,9 @@ func (s *Server) convertValueToType(value reflect.Value, targetType reflect.Type
 
 	// Handle slice targets
 	if value.Kind() == reflect.Slice && targetType.Kind() == reflect.Slice {
+		if value.IsNil() {
+			return reflect.Zero(targetType)
+		}
 		elemType := targetType.Elem()
 		newSlice := reflect.MakeSlice(targetType, value.Len(), value.Len())
 		for i := 0; i < value.Len(); i++ {
@@ -580,6 +586,9 @@ func (s *Server) convertValueToType(value reflect.Value, targetType reflect.Type
 
 	// Handle map targets (map[string]T etc.)
 	if value.Kind() == reflect.Map && targetType.Kind() == reflect.Map {
+		if value.IsNil() {
+			return reflect.Zero(targetType)
+		}
 		keyType := targetType.Key()
 		elemType := targetType.Elem()
 		newMap := reflect.MakeMap(targetType)
@@ -653,10 +662,19 @@ func (s *Server) convertMapToStruct(mapValue reflect.Value, structType reflect.T
 		fieldType := field.Type
 
 		// Build candidate keys for this field.
+		// Honor json:"-" (and json:"-,..."): such fields must never be
+		// populated from request maps.
+		if tag := field.Tag.Get("json"); tag != "" {
+			name := strings.SplitN(tag, ",", 2)[0]
+			if name == "-" {
+				continue
+			}
+		}
+
 		candidates := []string{}
 		if tag := field.Tag.Get("json"); tag != "" {
 			name := strings.SplitN(tag, ",", 2)[0]
-			if name != "" && name != "-" {
+			if name != "" {
 				candidates = append(candidates, name)
 			}
 		}
