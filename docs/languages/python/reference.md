@@ -10,14 +10,19 @@ layout: default
 | IDL Type | Python Type | Example |
 |----------|-------------|---------|
 | `string` | `str` | `"hello"` |
-| `int` | `int` | `42` |
-| `float` | `float` | `3.14` |
+| `int` | `int` (signed 32-bit) | `42` |
+| `float` | `float` (IEEE-754 double) | `3.14` |
 | `bool` | `bool` | `True`, `False` |
 | `[]Type` | `list` | `[1, 2, 3]` |
 | `map[string]Type` | `dict` | `{"key": "value"}` |
-| `Enum` | `str` | `"pending"` |
+| `Enum` | `str` (declared name) | `"pending"` |
 | `Struct` | `dict` | `{"field": "value"}` |
 | `T [optional]` | `None` or type | `None` or value |
+
+> **`int` range (D1/R25):** validation accepts integral JSON numbers in
+> `[-2147483648, 2147483647]`. Python's native `int` is arbitrary precision, so
+> out-of-range values are rejected explicitly. Enums are always wire strings
+> (declared value names), never ordinals, and `float` is an IEEE-754 double.
 
 ## Structs as Dictionaries
 
@@ -153,7 +158,37 @@ def handle_error(e: Exception) -> None:
 server = Server(contract, on_error=handle_error)
 ```
 
-When `on_error` is set, it is invoked with the exception rather than printing a traceback. If `on_error` is not set (default `None`), unhandled exceptions print a traceback to stderr.
+When `on_error` is set, it is invoked with the exception rather than logging it. If `on_error` is not set (default `None`), unhandled exceptions are logged to the `pulserpc.server` logger (with traceback) and the client receives only `-32603 "Internal error"` with no `data` (D4/R15).
+
+## Transports and Resource Limits
+
+The Python 3 runtime exposes these defaults from `pulserpc`:
+
+| Constant | Value | Invariant |
+|----------|-------|-----------|
+| `DEFAULT_TIMEOUT` | `30` seconds | D6/R19 |
+| `MAX_RESPONSE_BODY_SIZE` | `10485760` (10 MiB) | D5/R17 |
+
+`HttpTransport` accepts custom headers and normalizes a single trailing `/` on
+the base URL (D13/R29/R30):
+
+```python
+from pulserpc import HttpTransport
+
+transport = HttpTransport(
+    "http://localhost:8080/api/",   # normalized to ".../api"
+    timeout=30,
+    headers={"Authorization": "Bearer token"},
+)
+```
+
+A response body larger than `MAX_RESPONSE_BODY_SIZE` raises `ValueError`
+("Response body exceeds maximum size ...") instead of being buffered.
+
+Generated test servers (`-generate-test-files`) cap request bodies at 1 MiB
+(`MAX_BODY_SIZE`) and batch entries at 100, and return HTTP **405** with a
+JSON-RPC `-32600` body (`id: null`, message
+`"Invalid Request - only POST allowed"`) for non-POST methods (D3/D5/R16/R18/R22).
 
 ## Client Usage
 

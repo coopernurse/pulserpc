@@ -24,18 +24,50 @@ below.
   are intentionally absent from `pulserpc.__all__`: `extract_checksum`,
   `diff_idl`, `EntityType`, `ChangeType`, `Direction`, `Severity`,
   `ContractDelta`, `VerificationResult`, `ContractAuditor`, `NoOpAuditor`,
-  `LoggingAuditor`, and `FailFastAuditor`.
+  `LoggingAuditor`, and `FailFastAuditor`. A client therefore cannot perform the
+  fetch-`pulserpc-idl`-and-diff compatibility check described in R31/D15; this
+  remains a documented carve-out.
 - **Structured validation classes** — `ValidationResult` and `ValidationError`
   are Python 3 only. Contract-level validation failures instead raise
   `RPCError` with code `-32602` (request) or `-32603` (response) and a
   plain-dict `data` payload (`{"error": ..., "invalid_fields": [...]}`).
-- **Batch requests** — not supported (the Python 3 runtime does not support
-  them either).
-- **Generated stubs** — no stub classes are generated for structs or enums;
-  handlers use plain dicts and strings.
+- **Batch requests** — the Python 2 `Server.call` accepts one request object.
+  Batch arrays are rejected with `-32600` ("Request must be an object"); there
+  is no batch cap because there is no batch dispatch to bound (R18 carve-out).
+- **Generated stubs and HTTP adapter** — Python 2 generates only `idl.json` and
+  the runtime package. No `server.py`, `client.py`, `test_server.py` or
+  `test_client.py` is generated. The 1 MiB body cap and 405 handling therefore
+  live in your adapter, not in generated code (see below).
+- **Type resolution** — the Python 2 helpers use exact dict keys; the cached,
+  namespace-aware resolution index introduced for Python 3 (R21) is not
+  present.
 
 `tests/test_api_surface.py` pins the 19 exported symbols and fails on drift.
 An API difference that is not listed here is a bug, not an intentional waiver.
+
+### Shared wire-contract rules (implemented here too)
+
+These rules are identical to Python 3 and the other runtimes:
+
+- **D1/R25 — `int` is signed 32-bit.** `validate_int` accepts integral values
+  in `[-2147483648, 2147483647]`; fractional, NaN/Inf, bool and out-of-range
+  values are rejected. Python 2 `long` values are range-checked explicitly.
+- **D2/R24 — `id` is a string, number or null.** Booleans, objects and arrays
+  are rejected with `-32600` and a response `id` of `null`.
+- **D4/R15 — internal errors never leak details.** An unhandled handler
+  exception returns `{"code": -32603, "message": "Internal error"}` with no
+  `data`. The exception and traceback are logged server-side via
+  `logging.getLogger("pulserpc.server")` (or passed to `on_error`). Declared
+  `RPCError` messages/data and `-32602` validation messages are preserved.
+- **D5 — resource limits.** The request body cap is
+  `pulserpc.server.DEFAULT_MAX_BODY_SIZE` (1 MiB) for your adapter to enforce;
+  `HttpTransport` caps response bodies at `MAX_RESPONSE_BODY_SIZE` (10 MiB) and
+  raises `ValueError` beyond it.
+- **D6/R19 — 30 s HTTP timeout** (`pulserpc.transport.DEFAULT_TIMEOUT`).
+- **D13/R29/R30 — custom headers and trailing-slash normalization.**
+  `HttpTransport(url, headers={...})` merges headers over `Content-Type`, and
+  `HttpTransport("http://host/api/")` is normalized to
+  `http://host/api`.
 
 ## Prerequisites
 
@@ -76,7 +108,7 @@ def handle_error(e):
 server = Server(contract, on_error=handle_error)
 ```
 
-When `on_error` is set, it is invoked with unhandled handler exceptions instead of printing a traceback. If `on_error` is not set (default `None`), unhandled exceptions print a traceback to stderr.
+When `on_error` is set, it is invoked with unhandled handler exceptions instead of logging them. If `on_error` is not set (default `None`), unhandled exceptions are logged (with traceback) to the `pulserpc.server` logger, and the client receives only `-32603 "Internal error"` with no `data`.
 
 ## Transport Context (ctx)
 
@@ -107,15 +139,33 @@ Create `my_server.py`:
 The server integrates with Python 2's `BaseHTTPServer`. Build a `ctx` dict from request headers and pass it to `server.call()`:
 
 ```python
+import json
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 from pulserpc import RPCError
+from pulserpc.server import DEFAULT_MAX_BODY_SIZE
 
 class PulseRPCHandler(BaseHTTPRequestHandler):
+    MAX_BODY_SIZE = DEFAULT_MAX_BODY_SIZE  # 1 MiB (R16)
+
     def do_POST(self):
-        # Read request body
-        content_length = int(self.headers.getheader('Content-Length', 0))
+        # Reject an oversized body before reading it into memory.
+        try:
+            content_length = int(self.headers.getheader('Content-Length', 0))
+        except (TypeError, ValueError):
+            content_length = -1
+        if content_length <= 0:
+            self._send_error(None, -32700, "Parse error")
+            return
+        if content_length > self.MAX_BODY_SIZE:
+            self._send_error(None, -32600, "Request body too large")
+            return
+
         request_body = self.rfile.read(content_length)
-        request_data = json.loads(request_body)
+        try:
+            request_data = json.loads(request_body)
+        except ValueError:
+            self._send_error(None, -32700, "Parse error")
+            return
 
         # Build context dict from request headers
         ctx = {
@@ -136,6 +186,44 @@ class PulseRPCHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if response:
             self.wfile.write(json.dumps(response))
+
+    def _send_error(self, request_id, code, message):
+        body = json.dumps({
+            'jsonrpc': '2.0',
+            'error': {'code': code, 'message': message},
+            'id': request_id,
+        })
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # Only POST is a valid JSON-RPC transport (D3/R22).  Every other method
+    # must return HTTP 405 with a JSON-RPC -32600 body.
+    def do_GET(self):
+        self._method_not_allowed()
+
+    def do_PUT(self):
+        self._method_not_allowed()
+
+    def do_DELETE(self):
+        self._method_not_allowed()
+
+    def _method_not_allowed(self):
+        body = json.dumps({
+            'jsonrpc': '2.0',
+            'error': {
+                'code': -32600,
+                'message': 'Invalid Request - only POST allowed',
+            },
+            'id': None,
+        })
+        self.send_response(405)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 ```
 
 Handler methods receive `ctx` as the first positional argument:
