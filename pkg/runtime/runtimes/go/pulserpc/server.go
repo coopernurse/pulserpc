@@ -508,37 +508,129 @@ func (s *Server) convertValueToType(value reflect.Value, targetType reflect.Type
 		return reflect.Zero(targetType)
 	}
 
+	// Unwrap interface values
+	if value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return reflect.Zero(targetType)
+		}
+		value = value.Elem()
+	}
+
 	// If already assignable, return as-is
 	if value.Type().AssignableTo(targetType) {
 		return value
 	}
 
-	// Handle []interface{} to typed slice conversion
-	if value.Kind() == reflect.Slice && targetType.Kind() == reflect.Slice {
-		elemType := targetType.Elem()
-		// Check if this is []interface{} to concrete type like []float64
-		if value.Type().Elem().Kind() == reflect.Interface {
-			// Create new slice of the target element type
-			newSlice := reflect.MakeSlice(targetType, value.Len(), value.Len())
-			for i := 0; i < value.Len(); i++ {
-				elem := value.Index(i)
-				if elem.Kind() == reflect.Interface && !elem.IsNil() {
-					elem = elem.Elem()
-				}
-				// Try to convert the element to the target element type
-				if elem.Type().AssignableTo(elemType) {
-					newSlice.Index(i).Set(elem)
-				} else if elem.Type().ConvertibleTo(elemType) {
-					newSlice.Index(i).Set(elem.Convert(elemType))
-				}
-			}
-			return newSlice
-		}
+	// Handle nil pointer inputs
+	if value.Kind() == reflect.Pointer && value.IsNil() {
+		return reflect.Zero(targetType)
 	}
 
-	// Handle map[string]interface{} to struct conversion
+	// Handle pointer targets (optional structs etc.): allocate and convert.
+	if targetType.Kind() == reflect.Pointer {
+		elemType := targetType.Elem()
+		if value.Kind() == reflect.Pointer {
+			if value.IsNil() {
+				return reflect.Zero(targetType)
+			}
+			value = value.Elem()
+		}
+		if value.Kind() == reflect.Map && value.IsNil() {
+			return reflect.Zero(targetType)
+		}
+		if value.Kind() == reflect.Slice && value.IsNil() {
+			return reflect.Zero(targetType)
+		}
+		converted := s.convertValueToType(value, elemType)
+		if !converted.IsValid() {
+			return reflect.Zero(targetType)
+		}
+		if !converted.Type().AssignableTo(elemType) && !converted.Type().ConvertibleTo(elemType) {
+			return reflect.Zero(targetType)
+		}
+		ptr := reflect.New(elemType)
+		if converted.Type().AssignableTo(elemType) {
+			ptr.Elem().Set(converted)
+		} else {
+			ptr.Elem().Set(converted.Convert(elemType))
+		}
+		return ptr
+	}
+
+	// Handle slice targets
+	if value.Kind() == reflect.Slice && targetType.Kind() == reflect.Slice {
+		if value.IsNil() {
+			return reflect.Zero(targetType)
+		}
+		elemType := targetType.Elem()
+		newSlice := reflect.MakeSlice(targetType, value.Len(), value.Len())
+		for i := 0; i < value.Len(); i++ {
+			elem := value.Index(i)
+			converted := s.convertValueToType(elem, elemType)
+			if !converted.IsValid() {
+				continue
+			}
+			if converted.Type().AssignableTo(elemType) {
+				newSlice.Index(i).Set(converted)
+			} else if converted.Type().ConvertibleTo(elemType) {
+				newSlice.Index(i).Set(converted.Convert(elemType))
+			}
+		}
+		return newSlice
+	}
+
+	// Handle map[string]interface{} (or typed map) to struct conversion
 	if value.Kind() == reflect.Map && targetType.Kind() == reflect.Struct {
 		return s.convertMapToStruct(value, targetType)
+	}
+
+	// Handle map targets (map[string]T etc.)
+	if value.Kind() == reflect.Map && targetType.Kind() == reflect.Map {
+		if value.IsNil() {
+			return reflect.Zero(targetType)
+		}
+		keyType := targetType.Key()
+		elemType := targetType.Elem()
+		newMap := reflect.MakeMap(targetType)
+		iter := value.MapRange()
+		for iter.Next() {
+			k := iter.Key()
+			v := iter.Value()
+			if k.Kind() == reflect.Interface && !k.IsNil() {
+				k = k.Elem()
+			}
+			if v.Kind() == reflect.Interface && !v.IsNil() {
+				v = v.Elem()
+			}
+			convertedK := k
+			if !k.Type().AssignableTo(keyType) {
+				if k.Type().ConvertibleTo(keyType) {
+					convertedK = k.Convert(keyType)
+				} else {
+					convertedK = s.convertValueToType(k, keyType)
+				}
+			}
+			convertedV := s.convertValueToType(v, elemType)
+			if !convertedV.IsValid() {
+				continue
+			}
+			if !convertedV.Type().AssignableTo(elemType) {
+				if convertedV.Type().ConvertibleTo(elemType) {
+					convertedV = convertedV.Convert(elemType)
+				} else {
+					continue
+				}
+			}
+			if !convertedK.IsValid() || !convertedK.Type().AssignableTo(keyType) {
+				if convertedK.Type().ConvertibleTo(keyType) {
+					convertedK = convertedK.Convert(keyType)
+				} else {
+					continue
+				}
+			}
+			newMap.SetMapIndex(convertedK, convertedV)
+		}
+		return newMap
 	}
 
 	// Try standard conversion
@@ -550,7 +642,7 @@ func (s *Server) convertValueToType(value reflect.Value, targetType reflect.Type
 }
 
 // convertMapToStruct converts a map[string]interface{} to a struct type
-// Handles nested structs and embedded types
+// Handles nested structs, slices, maps, embedded types, and json tags.
 func (s *Server) convertMapToStruct(mapValue reflect.Value, structType reflect.Type) reflect.Value {
 	if mapValue.Kind() != reflect.Map {
 		return mapValue
@@ -564,35 +656,98 @@ func (s *Server) convertMapToStruct(mapValue reflect.Value, structType reflect.T
 
 	for i := 0; i < structType.NumField(); i++ {
 		field := structType.Field(i)
-		fieldName := field.Name
+		if !elem.Field(i).CanSet() {
+			continue
+		}
+		fieldType := field.Type
 
-		// Try to find the value in the map using the field name
-		mapKey := reflect.ValueOf(fieldName)
-		mapVal := mapValue.MapIndex(mapKey)
-
-		if !mapVal.IsValid() {
-			// Try with lowercase first letter (Go field naming)
-			if len(fieldName) > 0 {
-				lowerName := string(rune(fieldName[0]-'A'+'a')) + fieldName[1:]
-				mapKey = reflect.ValueOf(lowerName)
-				mapVal = mapValue.MapIndex(mapKey)
+		// Build candidate keys for this field.
+		// Honor json:"-" (and json:"-,..."): such fields must never be
+		// populated from request maps.
+		if tag := field.Tag.Get("json"); tag != "" {
+			name := strings.SplitN(tag, ",", 2)[0]
+			if name == "-" {
+				continue
 			}
 		}
 
-		if mapVal.IsValid() {
-			// Get the actual value if it's an interface
-			if mapVal.Kind() == reflect.Interface && !mapVal.IsNil() {
-				mapVal = mapVal.Elem()
+		candidates := []string{}
+		if tag := field.Tag.Get("json"); tag != "" {
+			name := strings.SplitN(tag, ",", 2)[0]
+			if name != "" {
+				candidates = append(candidates, name)
 			}
+		}
+		candidates = append(candidates, field.Name)
+		if len(field.Name) > 0 {
+			candidates = append(candidates, string(rune(field.Name[0]-'A'+'a'))+field.Name[1:])
+		}
+		candidates = append(candidates, strings.ToLower(field.Name))
 
-			fieldType := field.Type
-			convertedVal := s.convertValueToType(mapVal, fieldType)
-
-			if convertedVal.Type().AssignableTo(fieldType) {
-				elem.Field(i).Set(convertedVal)
-			} else if convertedVal.Type().ConvertibleTo(fieldType) {
-				elem.Field(i).Set(convertedVal.Convert(fieldType))
+		var mapVal reflect.Value
+		found := false
+		for _, c := range candidates {
+			if c == "" {
+				continue
 			}
+			mv := mapValue.MapIndex(reflect.ValueOf(c))
+			if mv.IsValid() {
+				mapVal = mv
+				found = true
+				break
+			}
+		}
+
+		// Embedded (anonymous) struct/pointer fields: if no direct key matched,
+		// convert from the same map so promoted fields get populated.
+		if !found && field.Anonymous {
+			switch fieldType.Kind() {
+			case reflect.Struct:
+				converted := s.convertMapToStruct(mapValue, fieldType)
+				elem.Field(i).Set(converted)
+				continue
+			case reflect.Pointer:
+				if fieldType.Elem().Kind() == reflect.Struct {
+					// Only flatten if the map has at least one matching promoted field.
+					converted := s.convertMapToStruct(mapValue, fieldType.Elem())
+					// If all fields zero, still allocate? Keep nil for optional with no data.
+					allZero := true
+					for j := 0; j < fieldType.Elem().NumField(); j++ {
+						if !converted.Field(j).IsZero() {
+							allZero = false
+							break
+						}
+					}
+					if !allZero {
+						ptr := reflect.New(fieldType.Elem())
+						ptr.Elem().Set(converted)
+						elem.Field(i).Set(ptr)
+					}
+					continue
+				}
+			}
+		}
+
+		if !found {
+			continue
+		}
+
+		// Unwrap interface
+		if mapVal.Kind() == reflect.Interface {
+			if mapVal.IsNil() {
+				// null value
+				elem.Field(i).Set(reflect.Zero(fieldType))
+				continue
+			}
+			mapVal = mapVal.Elem()
+		}
+
+		convertedVal := s.convertValueToType(mapVal, fieldType)
+
+		if convertedVal.Type().AssignableTo(fieldType) {
+			elem.Field(i).Set(convertedVal)
+		} else if convertedVal.Type().ConvertibleTo(fieldType) {
+			elem.Field(i).Set(convertedVal.Convert(fieldType))
 		}
 	}
 
