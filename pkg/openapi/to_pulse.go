@@ -3,6 +3,7 @@ package openapi
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -643,9 +644,11 @@ func formatCommentAsPulse(comment string) string {
 
 // writePulseFile writes the Pulse IDL content to a file.
 func writePulseFile(filename string, content string) error {
-	// Create parent directories if needed
-	dir := filename[:strings.LastIndex(filename, "/")]
-	if dir != "" {
+	// Create parent directories if needed. filepath.Dir handles both "/"
+	// and Windows "\" separators; strings.LastIndex(filename, "/") returned
+	// -1 on Windows paths and panicked with filename[:-1].
+	dir := filepath.Dir(filename)
+	if dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}

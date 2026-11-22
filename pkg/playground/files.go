@@ -67,8 +67,10 @@ func (m *Manager) CreateZip(sessionID string) ([]byte, error) {
 			return nil, fmt.Errorf("failed to open file %s: %w", file, err)
 		}
 
-		// Create zip file entry
-		writer, err := zipWriterWriter.Create(file)
+		// ZIP entry names must use forward slashes. filepath.Rel produces
+		// backslashes on Windows, which would create malformed entries.
+		entryName := filepath.ToSlash(file)
+		writer, err := zipWriterWriter.Create(entryName)
 		if err != nil {
 			fileReader.Close()
 			return nil, fmt.Errorf("failed to create zip entry for %s: %w", file, err)
