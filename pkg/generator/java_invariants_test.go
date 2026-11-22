@@ -262,24 +262,100 @@ func TestJavaOptionalBuiltInsFixtureCompiles(t *testing.T) {
 		t.Skip("javac not on PATH; tests/integration/test_generator_java.sh (mvn test-compile) is the compile gate")
 	}
 
+	// The generator copies both JSON parser implementations into every fixture,
+	// regardless of -json-lib, so the compile check needs stubs for both APIs.
+	javaJSONStubs := map[string]string{
+		"com/fasterxml/jackson/annotation/JsonProperty.java": `package com.fasterxml.jackson.annotation;
+
+public @interface JsonProperty {
+    String value();
+}
+`,
+		"com/fasterxml/jackson/core/type/TypeReference.java": `package com.fasterxml.jackson.core.type;
+
+public abstract class TypeReference<T> {
+    public java.lang.reflect.Type getType() {
+        return null;
+    }
+}
+`,
+		"com/fasterxml/jackson/databind/JsonNode.java": `package com.fasterxml.jackson.databind;
+
+public class JsonNode {
+}
+`,
+		"com/fasterxml/jackson/databind/JavaType.java": `package com.fasterxml.jackson.databind;
+
+public class JavaType {
+}
+`,
+		"com/fasterxml/jackson/databind/TypeFactory.java": `package com.fasterxml.jackson.databind;
+
+import java.lang.reflect.Type;
+
+public class TypeFactory {
+    public JavaType constructType(Type type) {
+        return new JavaType();
+    }
+}
+`,
+		"com/fasterxml/jackson/databind/ObjectMapper.java": `package com.fasterxml.jackson.databind;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+public class ObjectMapper {
+    public String writeValueAsString(Object value) { return ""; }
+    public <T> T readValue(String json, Class<T> clazz) { return null; }
+    public <T> T readValue(String json, JavaType type) { return null; }
+    public <T> T treeToValue(JsonNode node, Class<T> clazz) { return null; }
+    public TypeFactory getTypeFactory() { return new TypeFactory(); }
+}
+`,
+		"com/google/gson/annotations/SerializedName.java": `package com.google.gson.annotations;
+
+public @interface SerializedName {
+    String value();
+}
+`,
+		"com/google/gson/reflect/TypeToken.java": `package com.google.gson.reflect;
+
+public class TypeToken<T> {
+    public java.lang.reflect.Type getType() {
+        return null;
+    }
+}
+`,
+		"com/google/gson/JsonElement.java": `package com.google.gson;
+
+public class JsonElement {
+}
+`,
+		"com/google/gson/Gson.java": `package com.google.gson;
+
+import java.lang.reflect.Type;
+
+public class Gson {
+    public String toJson(Object value) { return ""; }
+    public <T> T fromJson(String json, Class<T> clazz) { return null; }
+    public <T> T fromJson(JsonElement json, Class<T> clazz) { return null; }
+    public <T> T fromJson(String json, Type type) { return null; }
+}
+`,
+		"com/google/gson/GsonBuilder.java": `package com.google.gson;
+
+public class GsonBuilder {
+    public GsonBuilder serializeNulls() { return this; }
+    public Gson create() { return new Gson(); }
+}
+`,
+	}
+
 	fixtures := []struct {
 		jsonLib string
 		stubs   map[string]string
 	}{
-		{
-			jsonLib: "jackson",
-			stubs: map[string]string{
-				"com/fasterxml/jackson/annotation/JsonProperty.java": "package com.fasterxml.jackson.annotation;\n\npublic @interface JsonProperty {\n    String value();\n}\n",
-				"com/fasterxml/jackson/core/type/TypeReference.java": "package com.fasterxml.jackson.core.type;\n\npublic abstract class TypeReference<T> {\n    public java.lang.reflect.Type getType() {\n        return null;\n    }\n}\n",
-			},
-		},
-		{
-			jsonLib: "gson",
-			stubs: map[string]string{
-				"com/google/gson/annotations/SerializedName.java": "package com.google.gson.annotations;\n\npublic @interface SerializedName {\n    String value();\n}\n",
-				"com/google/gson/reflect/TypeToken.java":          "package com.google.gson.reflect;\n\npublic class TypeToken<T> {\n    public java.lang.reflect.Type getType() {\n        return null;\n    }\n}\n",
-			},
-		},
+		{jsonLib: "jackson", stubs: javaJSONStubs},
+		{jsonLib: "gson", stubs: javaJSONStubs},
 	}
 
 	for _, fixture := range fixtures {
