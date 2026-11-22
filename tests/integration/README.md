@@ -108,6 +108,27 @@ make test-integration
 make test-generators
 ```
 
+### Run the shared HTTP protocol harness
+
+`scripts/test-servers.sh` starts all seven runtimes (python, python2, ts-node,
+ts-cjs, csharp, java, go). `test_all_runtimes.sh` runs both
+`test_http_api.sh` (JSON-RPC envelope and message-validation probes) and
+`test_limits.sh` (1 MiB request body and 100-entry batch) against each:
+
+```bash
+make test-all-runtimes
+```
+
+The limit probes can also target a single server:
+
+```bash
+make test-limits SERVER_URL=http://localhost:9000
+```
+
+The remaining cross-cutting scripts are reachable through
+`make test-integration-scripts` (numeric types, enum case, raises propagation,
+static TS client, Java compile, and error declarations).
+
 ### Manual Execution
 
 You can also run the test harness script directly:

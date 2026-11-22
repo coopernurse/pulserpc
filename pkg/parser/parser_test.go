@@ -3,6 +3,7 @@ package parser
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -988,6 +989,208 @@ struct MyResponse extends inc.Response {
 	}
 	if !foundMyResponse {
 		t.Error("Expected to find MyResponse struct")
+	}
+}
+
+// G29/D10: an import may be followed by whitespace and a trailing // comment.
+func TestImportWithTrailingComment(t *testing.T) {
+	cases := map[string]string{
+		"trailing comment":   `import "imported.pulse" // note`,
+		"trailing spaces":    `import "imported.pulse"   `,
+		"comment and space":  `import "imported.pulse"  // note   `,
+		"leading whitespace": `   import "imported.pulse" // note`,
+	}
+	for name, importLine := range cases {
+		t.Run(name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			createTestFile(t, tmpDir, "imported.pulse", `namespace inc
+
+struct Response {
+    value string
+}`)
+			mainFile := createTestFile(t, tmpDir, "main.pulse", importLine+`
+
+struct MainStruct {
+    response inc.Response
+}`)
+
+			idl, err := parseIDLFromFile(t, mainFile)
+			if err != nil {
+				t.Fatalf("import with %s should parse, got: %v", name, err)
+			}
+			found := false
+			for _, s := range idl.Structs {
+				if s.Name == "inc.Response" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected imported inc.Response to be present")
+			}
+		})
+	}
+}
+
+// G30/D10: imports are de-duplicated by resolved path, not literal spelling.
+func TestImportDedupByResolvedPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	createTestFile(t, tmpDir, "inc.pulse", `namespace inc
+
+struct Response {
+    value string
+}`)
+	mainFile := createTestFile(t, tmpDir, "main.pulse", `import "inc.pulse"
+import "./inc.pulse"
+
+struct MainStruct {
+    response inc.Response
+}`)
+
+	idl, err := parseIDLFromFile(t, mainFile)
+	if err != nil {
+		t.Fatalf("equivalent import paths must not raise a duplicate-namespace error, got: %v", err)
+	}
+
+	count := 0
+	for _, s := range idl.Structs {
+		if s.Name == "inc.Response" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected inc.Response exactly once, got %d", count)
+	}
+}
+
+// G32/D10: a root file may not reuse a namespace declared by an import.
+func TestRootImportNamespaceCollision(t *testing.T) {
+	tmpDir := t.TempDir()
+	createTestFile(t, tmpDir, "imported.pulse", `namespace same
+
+struct Imported {
+    value string
+}`)
+	mainFile := createTestFile(t, tmpDir, "main.pulse", `namespace same
+
+import "imported.pulse"
+
+struct Local {
+    value string
+}`)
+
+	_, err := parseIDLFromFile(t, mainFile)
+	if err == nil {
+		t.Fatal("expected an error for a root/import namespace collision")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "same") || !strings.Contains(msg, "collides") {
+		t.Errorf("expected collision error naming the namespace, got: %v", err)
+	}
+	if !strings.Contains(msg, "imported.pulse") || !strings.Contains(msg, "main.pulse") {
+		t.Errorf("expected collision error naming both files, got: %v", err)
+	}
+}
+
+// G32: the collision check must be transitive. In A -> B -> C, B merges C's
+// declarations verbatim, so a namespace shared by A and C must still be
+// rejected even though no direct import of A declares it.
+func TestRootImportNamespaceCollisionTransitive(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	createTestFile(t, tmpDir, "c.pulse", `namespace same
+
+struct Shared {
+    value string
+}`)
+	createTestFile(t, tmpDir, "b.pulse", `namespace mid
+
+import "c.pulse"
+
+struct Middle {
+    shared same.Shared
+}`)
+	mainFile := createTestFile(t, tmpDir, "a.pulse", `namespace same
+
+import "b.pulse"
+
+struct Local {
+    value string
+}`)
+
+	_, err := parseIDLFromFile(t, mainFile)
+	if err == nil {
+		t.Fatal("expected a transitive root/import namespace collision to be rejected")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "same") || !strings.Contains(msg, "collides") {
+		t.Errorf("expected collision error naming the namespace, got: %v", err)
+	}
+	if !strings.Contains(msg, "a.pulse") {
+		t.Errorf("expected collision error naming the root file, got: %v", err)
+	}
+}
+
+// G30: on case-insensitive filesystems `inc.pulse` and `Inc.pulse` are the same
+// file and must be de-duplicated instead of raising a duplicate-namespace error.
+func TestImportDedupByCaseInsensitivePath(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("case-insensitive import dedup only applies to windows/darwin")
+	}
+	tmpDir := t.TempDir()
+	createTestFile(t, tmpDir, "inc.pulse", `namespace inc
+
+struct Response {
+    value string
+}`)
+	mainFile := createTestFile(t, tmpDir, "main.pulse", `import "inc.pulse"
+import "Inc.pulse"
+
+struct MainStruct {
+    response inc.Response
+}`)
+
+	idl, err := parseIDLFromFile(t, mainFile)
+	if err != nil {
+		t.Fatalf("case-variant import paths must not raise a duplicate-namespace error, got: %v", err)
+	}
+
+	count := 0
+	for _, s := range idl.Structs {
+		if s.Name == "inc.Response" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected inc.Response exactly once, got %d", count)
+	}
+}
+
+// G29: a `/* */` block comment after an import is not part of the accepted
+// import line shape. It must produce a targeted error, and extraction/removal
+// must agree so the line never reaches the grammar parser.
+func TestImportRejectsBlockCommentAfterPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	createTestFile(t, tmpDir, "inc.pulse", `namespace inc
+
+struct Response {
+    value string
+}`)
+	mainFile := createTestFile(t, tmpDir, "main.pulse", `import "inc.pulse" /* note */
+
+struct MainStruct {
+    response inc.Response
+}`)
+
+	_, err := parseIDLFromFile(t, mainFile)
+	if err == nil {
+		t.Fatal("expected an error for a block comment after an import")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "invalid import") {
+		t.Errorf("expected a targeted invalid-import error, got: %v", err)
+	}
+	if !strings.Contains(msg, "inc.pulse") {
+		t.Errorf("expected the error to name the import line, got: %v", err)
 	}
 }
 

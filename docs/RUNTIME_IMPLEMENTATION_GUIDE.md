@@ -5,12 +5,13 @@ This document describes how to implement a new language runtime for PulseRPC. It
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
-2. [Separation of Concerns](#separation-of-concerns)
-3. [Plugin Requirements](#plugin-requirements)
-4. [Runtime Library Requirements](#runtime-library-requirements)
-5. [Generated Code Requirements](#generated-code-requirements)
-6. [Build System Integration](#build-system-integration)
-7. [Additional Considerations](#additional-considerations)
+2. [Canonical Invariants (D1–D16)](#canonical-invariants-d1d16)
+3. [Separation of Concerns](#separation-of-concerns)
+4. [Plugin Requirements](#plugin-requirements)
+5. [Runtime Library Requirements](#runtime-library-requirements)
+6. [Generated Code Requirements](#generated-code-requirements)
+7. [Build System Integration](#build-system-integration)
+8. [Additional Considerations](#additional-considerations)
 
 ## Architecture Overview
 
@@ -42,6 +43,83 @@ The PulseRPC code generation system consists of two main components:
                         │  (Target Lang)    │
                         └───────────────────┘
 ```
+
+## Canonical Invariants (D1–D16)
+
+Every runtime and generator must implement the following canon. The audit
+catalog (`docs/audit/invariants.md`,
+`docs/audit/invariants-additional.md`) and the plans under `docs/plans/` use
+these identifiers.
+
+**D1 — `int` is signed 32-bit.** Valid values are integral JSON numbers in
+`[-2147483648, 2147483647]`. Fractional numbers, NaN/Infinity, booleans, and
+out-of-range values are invalid in every runtime. Generated native types may be
+wider, but request/response validation enforces the range. This is a documented
+breaking change from the earlier unbounded-`int` behavior.
+
+**D2 — `id` is a string, number, or null.** Servers reject boolean, object, and
+array ids with `-32600`. Numeric ids are compared by value. An absent or
+explicitly `null` id is a notification and produces no response body.
+
+**D3 — Non-POST requests are rejected with HTTP 405.** The body is a JSON-RPC
+error object:
+`{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request - only POST allowed"},"id":null}`.
+GET, PUT, DELETE, and other verbs must not be treated as notifications.
+
+**D4 — Internal errors are opaque.** Unhandled exceptions/panics return
+`-32603` with the fixed message `"Internal error"` and **no `data`**. Exception
+text, stack traces, and handler messages are logged server-side only.
+
+**D5 — Resource limits are enforced.** Request body **1 MiB**, response body
+**10 MiB**, batch entries **100**. Oversize requests return `-32600` with
+`"Request body too large"`; over-limit batches return `-32600` with
+`"Batch exceeds maximum size"`. Constants are documented in each runtime.
+
+**D6 — HTTP client timeout is 30 seconds.** Where the language separates
+connect and request timeouts, connect is 10 seconds.
+
+**D7 — Optional built-ins are nullable.** Java uses boxed `Integer`, `Boolean`,
+`Double`, and `String`; C# uses `int?`, `bool?`, `double?`, and `string?`. Go
+represents absence by omission (`omitempty` on optional fields only). Python
+and TypeScript are dynamic.
+
+**D8 — IDL JSON schema is uniform.** The top-level keys are `rootNamespace`,
+`checksum`, `interfaces`, `structs`, `enums`, and `errors`. Declaration comments
+are included; source positions are excluded.
+
+**D9 — Checksum definition.** The SHA-256 digest covers the structural IDL,
+including the parameter **position** (reordering parameters changes the hash),
+and excludes comments and error-message text. It is encoded as 43-character
+unpadded base64url.
+
+**D10 — Imports.** A trailing `//` comment is allowed after an import path.
+Imports are de-duplicated by the resolved absolute path, so `inc.pulse` and
+`./inc.pulse` are one import. A root namespace that equals an imported
+namespace is rejected with an error naming both files.
+
+**D11 — String literals have no escapes.** Backslashes are literal and `\"`
+does not escape a quote. Import paths and error messages are therefore
+restricted; do not implement escape decoding without an IDL-version change.
+
+**D12 — Generation is byte-deterministic.** Sort every map-derived output
+(imports, namespace lists, registrations, factories) before writing. Generating
+the same IDL twice must produce byte-identical files.
+
+**D13 — Transports accept optional custom headers and normalize a trailing
+`/` on the base URL.** Both behaviors are client-side and must not change the
+request path semantics.
+
+**D14 — Playground file access is contained.** A requested path must be
+relative, cleaned, and inside the session directory. Absolute paths and any
+`..` segment are rejected.
+
+**D15 — Contract verification fetches `pulserpc-idl`.** The client diffs the
+served document against its embedded IDL. A failed fetch is explicitly
+incompatible with an `Error` message rather than a silent success.
+
+**D16 — Type-name resolution order.** Try the exact key, then the exact
+base-name key, then the first key in sorted order that shares the base name.
+This makes duplicate base names deterministic across namespaces.
 
 ## Separation of Concerns
 

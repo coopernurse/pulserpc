@@ -104,7 +104,9 @@ func TestChecksumOrderInvariance(t *testing.T) {
 	}
 }
 
-func TestChecksumParameterSortInvariance(t *testing.T) {
+// G35/D9: parameters are positional, so reordering them must change the
+// checksum even when the set of names and types is identical.
+func TestChecksumParameterPositionSensitive(t *testing.T) {
 	idl1 := &IDL{
 		RootNamespace: "test",
 		Interfaces: []*Interface{
@@ -115,9 +117,8 @@ func TestChecksumParameterSortInvariance(t *testing.T) {
 					{
 						Name: "method",
 						Parameters: []*Parameter{
-							{Name: "a", Type: &Type{BuiltIn: "string"}},
-							{Name: "b", Type: &Type{BuiltIn: "int"}},
-							{Name: "c", Type: &Type{BuiltIn: "bool"}},
+							{Name: "x", Type: &Type{BuiltIn: "int"}},
+							{Name: "y", Type: &Type{BuiltIn: "string"}},
 						},
 						ReturnType: &Type{BuiltIn: "void"},
 					},
@@ -136,9 +137,8 @@ func TestChecksumParameterSortInvariance(t *testing.T) {
 					{
 						Name: "method",
 						Parameters: []*Parameter{
-							{Name: "c", Type: &Type{BuiltIn: "bool"}},
-							{Name: "a", Type: &Type{BuiltIn: "string"}},
-							{Name: "b", Type: &Type{BuiltIn: "int"}},
+							{Name: "y", Type: &Type{BuiltIn: "string"}},
+							{Name: "x", Type: &Type{BuiltIn: "int"}},
 						},
 						ReturnType: &Type{BuiltIn: "void"},
 					},
@@ -150,8 +150,40 @@ func TestChecksumParameterSortInvariance(t *testing.T) {
 	cs1, _ := ComputeChecksum(idl1)
 	cs2, _ := ComputeChecksum(idl2)
 
+	if cs1 == cs2 {
+		t.Errorf("Different parameter order must produce different checksums")
+	}
+}
+
+// Same declaration order still hashes identically (determinism).
+func TestChecksumParameterOrderDeterministic(t *testing.T) {
+	makeIDL := func() *IDL {
+		return &IDL{
+			RootNamespace: "test",
+			Interfaces: []*Interface{
+				{
+					Name:      "Service",
+					Namespace: "test",
+					Methods: []*Method{
+						{
+							Name: "method",
+							Parameters: []*Parameter{
+								{Name: "b", Type: &Type{BuiltIn: "int"}},
+								{Name: "a", Type: &Type{BuiltIn: "string"}},
+							},
+							ReturnType: &Type{BuiltIn: "void"},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	cs1, _ := ComputeChecksum(makeIDL())
+	cs2, _ := ComputeChecksum(makeIDL())
+
 	if cs1 != cs2 {
-		t.Errorf("Different parameter order should produce same checksum")
+		t.Errorf("Same parameter order must produce the same checksum")
 	}
 }
 
@@ -331,7 +363,9 @@ func TestChecksumBookPulse(t *testing.T) {
 		t.Errorf("Expected checksum length 43, got %d", len(checksum))
 	}
 
-	const golden = "_H4LqMgNgi6YYDtOji2qUbEqclgqwSVxvJlCprSpkgc"
+	// G35/D9: parameter positions are part of the canonical form, so this
+	// digest differs from the pre-fix (name-sorted) value.
+	const golden = "1YY5mWbuwUE8z2r7SlOYWSahugTjhoou0rOncj_U1h0"
 	if checksum != golden {
 		t.Errorf("book.pulse checksum = %q, want golden %q", checksum, golden)
 	}

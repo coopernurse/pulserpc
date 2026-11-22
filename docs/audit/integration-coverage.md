@@ -38,6 +38,31 @@ For the 64 newly catalogued invariants:
 In other words, **~69% of the new invariants have no end-to-end assertion**,
 and 25% have no test of any kind.
 
+> **Update — core remediation (`fix-invariants-core`).** The three suite-level
+> problems below are fixed in the core branch:
+>
+> 1. `scripts/test-servers.sh` now configures `python2` and `ts-cjs` (ports 9005
+>    and 9006), so `test_all_runtimes.sh` exercises all seven runtimes.
+> 2. The orphaned scripts are reachable from the root `Makefile`
+>    (`test-integration-scripts`, individual targets, and `quality-full`). The
+>    historical Java runtime `test-integration` target is replaced by
+>    `test-integration-java` → `test_generator_java.sh`.
+> 3. `test_http_api.sh` now asserts the response envelope (`jsonrpc`, echoed
+>    `id`, HTTP 200, `Content-Type`) and adds probes for malformed JSON, empty
+>    and invalid batches, notifications, `id:null`, object-form params, extra
+>    fields, boolean/object ids, and non-POST `405`. `test_limits.sh` adds the
+>    1 MiB body and 100-entry batch probes. `test_all_runtimes.sh` runs both for
+>    every runtime.
+>
+> Grammar invariants G29, G30, G32, G35 and security invariant S1 are resolved
+> with unit tests in `pkg/parser` and `pkg/playground`. G30 de-duplication is
+> case-folded on Windows/macOS and follows symlinks; G32 also rejects a root
+> namespace reintroduced through a transitive import. C1/C2/C4/C5 have a gated
+> cross-generator check reachable via `make test-cross-generator`
+> (`PULSERPC_CROSS_GENERATOR=1`); it stays out of `make test` until the
+> Java/TS/Go plans land. Rows below are retained as the pre-remediation
+> snapshot; runtime-owned rows still depend on the per-runtime plans.
+
 Three suite-level problems amplify the gap:
 
 1. **The seven-runtime matrix is nominal.** `test_all_runtimes.sh` loops seven

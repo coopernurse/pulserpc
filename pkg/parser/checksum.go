@@ -116,14 +116,23 @@ func writeInterface(sb *strings.Builder, iface *Interface, typeRegistry map[stri
 func writeMethod(sb *strings.Builder, m *Method, typeRegistry map[string]string, sourceNamespace string) {
 	fmt.Fprintf(sb, "  method:%s\n", m.Name)
 
-	params := make([]*Parameter, len(m.Parameters))
-	copy(params, m.Parameters)
-	sort.Slice(params, func(i, j int) bool {
-		return params[i].Name < params[j].Name
+	// Parameters are positional: the checksum must change when two parameters
+	// are reordered, even if their names and types are unchanged. Sort by name
+	// only for deterministic output, but emit the original declaration index.
+	type indexedParam struct {
+		index int
+		param *Parameter
+	}
+	params := make([]indexedParam, len(m.Parameters))
+	for i, p := range m.Parameters {
+		params[i] = indexedParam{index: i, param: p}
+	}
+	sort.SliceStable(params, func(i, j int) bool {
+		return params[i].param.Name < params[j].param.Name
 	})
 
 	for _, p := range params {
-		fmt.Fprintf(sb, "    param:%s:%s\n", p.Name, writeType(p.Type, typeRegistry, sourceNamespace))
+		fmt.Fprintf(sb, "    param:%d:%s:%s\n", p.index, p.param.Name, writeType(p.param.Type, typeRegistry, sourceNamespace))
 	}
 
 	fmt.Fprintf(sb, "    returns:%s\n", writeType(m.ReturnType, typeRegistry, sourceNamespace))

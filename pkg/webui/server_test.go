@@ -20,16 +20,16 @@ func TestHandlePlaygroundGenerate(t *testing.T) {
 
 	// Test cases
 	tests := []struct {
-		name           string
-		method         string
-		requestBody    interface{}
-		expectStatus   int
-		expectError    bool
-		validateResp   bool
+		name         string
+		method       string
+		requestBody  interface{}
+		expectStatus int
+		expectError  bool
+		validateResp bool
 	}{
 		{
-			name:     "valid generation request",
-			method:   http.MethodPost,
+			name:   "valid generation request",
+			method: http.MethodPost,
 			requestBody: GenerateRequest{
 				IDL: `
 namespace test
@@ -46,8 +46,8 @@ struct User {
 			validateResp: true,
 		},
 		{
-			name:     "invalid method",
-			method:   http.MethodGet,
+			name:   "invalid method",
+			method: http.MethodGet,
 			requestBody: GenerateRequest{
 				IDL:     "test",
 				Runtime: "go-client-server",
@@ -56,8 +56,8 @@ struct User {
 			expectError:  true,
 		},
 		{
-			name:     "missing IDL",
-			method:   http.MethodPost,
+			name:   "missing IDL",
+			method: http.MethodPost,
 			requestBody: GenerateRequest{
 				Runtime: "go-client-server",
 			},
@@ -65,8 +65,8 @@ struct User {
 			expectError:  true,
 		},
 		{
-			name:     "missing runtime",
-			method:   http.MethodPost,
+			name:   "missing runtime",
+			method: http.MethodPost,
 			requestBody: GenerateRequest{
 				IDL: "test idl",
 			},
@@ -74,8 +74,8 @@ struct User {
 			expectError:  true,
 		},
 		{
-			name:     "invalid runtime",
-			method:   http.MethodPost,
+			name:   "invalid runtime",
+			method: http.MethodPost,
 			requestBody: GenerateRequest{
 				IDL:     "test idl",
 				Runtime: "invalid-runtime",
@@ -84,8 +84,8 @@ struct User {
 			expectError:  true,
 		},
 		{
-			name:     "invalid IDL",
-			method:   http.MethodPost,
+			name:   "invalid IDL",
+			method: http.MethodPost,
 			requestBody: GenerateRequest{
 				IDL: `
 namespace test
@@ -214,6 +214,27 @@ struct User {
 			name:         "non-existent file",
 			method:       http.MethodGet,
 			url:          "/api/playground/files/" + session.ID + "/nonexistent.txt",
+			expectStatus: 404,
+			expectError:  true,
+		},
+		{
+			name:         "parent traversal",
+			method:       http.MethodGet,
+			url:          "/api/playground/files/" + session.ID + "/../../secret.txt",
+			expectStatus: 404,
+			expectError:  true,
+		},
+		{
+			name:         "encoded parent traversal",
+			method:       http.MethodGet,
+			url:          "/api/playground/files/" + session.ID + "/%2e%2e%2f%2e%2e%2fsecret.txt",
+			expectStatus: 404,
+			expectError:  true,
+		},
+		{
+			name:         "absolute path",
+			method:       http.MethodGet,
+			url:          "/api/playground/files/" + session.ID + "//etc/passwd",
 			expectStatus: 404,
 			expectError:  true,
 		},
