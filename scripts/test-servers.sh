@@ -29,8 +29,8 @@ RUNTIMES=(
     "python:python-client-server:python:3.11-slim:9000:python3 test_server.py"
     "ts:ts-client-server:node:20-slim:9001:ts-node --project tsconfig.json test_server.ts"
     "csharp:csharp-client-server:mcr.microsoft.com/dotnet/sdk:8.0:9002:dotnet run --project TestServer.csproj"
-    "java:java-client-server:maven:3.9-eclipse-temurin-17:9003:mvn exec:java -Dexec.mainClass=TestServer"
-    "go:go-client-server:golang:1.25-alpine:9004:rm -f client.go test_client.go && go build -o test-server-bin ./... && ./test-server-bin"
+    "java:java-client-server:maven:3.9-eclipse-temurin-17:9003:mvn exec:java -Dexec.classpathScope=test -Dexec.mainClass=com.pulserpc.test.TestServer"
+    "go:go-client-server:golang:1.25-alpine:9004:go build -o test-server-bin ./cmd/test_server && ./test-server-bin"
     "python2:python-client-server:python:2.7-slim:9005:python test_server.py"
     "ts-cjs:ts-client-server:node:20-slim:9006:node test_server.js"
 )
@@ -68,6 +68,18 @@ parse_runtime() {
     fi
     
     echo "$name|$plugin|$image|$port|$start_cmd"
+}
+
+# Remove a generated output dir even when npm ran as root inside a container
+# over a bind mount (host-side `rm -rf` then fails with Permission denied).
+cleanup_output_dir() {
+    local dir="$1"
+    [ -z "$dir" ] && return 0
+    if command -v docker >/dev/null 2>&1; then
+        docker run --rm -v "$dir:/workspace" -w /workspace alpine:3 \
+            sh -c 'rm -rf ./* .[!.]* 2>/dev/null || true' >/dev/null 2>&1 || true
+    fi
+    rm -rf "$dir" >/dev/null 2>&1 || true
 }
 
 # Check if Docker is available
@@ -121,6 +133,11 @@ generate_code() {
                 -dir "$output_dir" "$TEST_IDL"; then
                 generate_ok=1
             fi
+        fi
+    elif [ "$plugin" = "go-client-server" ]; then
+        if "$BINARY_PATH" -plugin "$plugin" -package "example.com/conform" \
+            -generate-test-files -dir "$output_dir" "$TEST_IDL"; then
+            generate_ok=1
         fi
     elif [ "$plugin" = "ts-client-server" ]; then
         if [ "$name" = "ts-cjs" ]; then
@@ -182,11 +199,15 @@ generate_code() {
             expected="TestServer.java"
             ;;
         go)
-            expected="test_server.go"
+            expected="main.go"
             ;;
     esac
 
-    TEST_SERVER_FILE=$(find "$output_dir" -type f -name "$expected" | head -1)
+    if [ "$name" = "go" ]; then
+        TEST_SERVER_FILE=$(find "$output_dir/cmd/test_server" -type f -name "$expected" | head -1)
+    else
+        TEST_SERVER_FILE=$(find "$output_dir" -type f -name "$expected" | head -1)
+    fi
     if [ -z "$TEST_SERVER_FILE" ]; then
         echo -e "${RED}ERROR: Test server file not generated: $expected${NC}"
         return 1
@@ -265,7 +286,7 @@ start_runtime() {
     
     # Generate code
     if ! generate_code "$runtime_config" "$output_dir"; then
-        rm -rf "$output_dir"
+        cleanup_output_dir "$output_dir"
         return 1
     fi
     
@@ -278,6 +299,13 @@ start_runtime() {
         container_test_dir="/workspace/$rel_test_dir"
     fi
 
+    # Java and Go build from the output root (pom.xml / go.mod live there);
+    # other runtimes run from the directory containing their test server.
+    local container_work_dir="$container_test_dir"
+    case "$name" in
+        java|go) container_work_dir="/workspace" ;;
+    esac
+
     local container_cmd=""
     case "$name" in
         python|python2)
@@ -286,7 +314,7 @@ start_runtime() {
             ;;
         ts)
             # Install TypeScript tools and run the ESM server with ts-node.
-            container_cmd="cd $container_test_dir && npm install -g typescript ts-node @types/node >/dev/null 2>&1 && ts-node --project /workspace/tsconfig.json test_server.ts"
+            container_cmd="cd $container_test_dir && npm install -g typescript@5 ts-node@10 @types/node@20 >/dev/null 2>&1 && ts-node --project /workspace/tsconfig.json test_server.ts"
             ;;
         ts-cjs)
             # Compile the CommonJS output, then run it with node. @types/node
@@ -300,14 +328,14 @@ start_runtime() {
         java)
             # If the image already contains Maven (e.g., maven:...), just run mvn; otherwise install it
             if echo "$image" | grep -q "maven"; then
-                container_cmd="cd $container_test_dir && mvn -q package -DskipTests >/dev/null 2>&1 && $start_cmd"
+                container_cmd="cd $container_work_dir && mvn -q package -DskipTests >/dev/null 2>&1 && $start_cmd"
             else
-                container_cmd="cd $container_test_dir && apt-get update >/dev/null 2>&1 && apt-get install -y maven >/dev/null 2>&1 && mvn -q package -DskipTests >/dev/null 2>&1 && $start_cmd"
+                container_cmd="cd $container_work_dir && apt-get update >/dev/null 2>&1 && apt-get install -y maven >/dev/null 2>&1 && mvn -q package -DskipTests >/dev/null 2>&1 && $start_cmd"
             fi
             ;;
         go)
             # Initialize Go module and run server
-            container_cmd="cd $container_test_dir && go mod init test-server 2>/dev/null || true && $start_cmd"
+            container_cmd="cd $container_work_dir && go mod init example.com/conform 2>/dev/null || true && $start_cmd"
             ;;
     esac
     
@@ -327,7 +355,7 @@ start_runtime() {
         "$image" \
         $shell -c "$container_cmd" 2>&1) || {
         echo -e "${RED}ERROR: Failed to start $name container: ${container_run_output}${NC}"
-        rm -rf "$output_dir"
+        cleanup_output_dir "$output_dir"
         return 1
     }
 
@@ -340,7 +368,7 @@ start_runtime() {
         echo -e "${YELLOW}Checking container logs...${NC}"
         docker logs "$container_name"
         docker rm -f "$container_name" >/dev/null 2>&1 || true
-        rm -rf "$output_dir"
+        cleanup_output_dir "$output_dir"
         return 1
     fi
     
