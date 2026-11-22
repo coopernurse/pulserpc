@@ -3,23 +3,17 @@ package integration
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/coopernurse/pulserpc/pkg/generator"
 	"github.com/coopernurse/pulserpc/pkg/parser"
 )
-
-// Cross-generator checks (C1/C2/C4/C5) are intentionally opt-in until the
-// per-runtime remediation plans land. Set PULSERPC_CROSS_GENERATOR=1 to run
-// them during the final merge. They are not part of `make test`.
-func requireCrossGenerator(t *testing.T) {
-	t.Helper()
-	if os.Getenv("PULSERPC_CROSS_GENERATOR") == "" {
-		t.Skip("set PULSERPC_CROSS_GENERATOR=1 to run cross-generator checks")
-	}
-}
 
 type generatorVariant struct {
 	name string
@@ -129,7 +123,6 @@ func generateVariant(t *testing.T, variant generatorVariant, dir string) map[str
 
 // C1/D12: generating the same IDL twice must be byte-identical.
 func TestCrossGeneratorDeterminism(t *testing.T) {
-	requireCrossGenerator(t)
 	for _, variant := range crossGeneratorVariants() {
 		variant := variant
 		t.Run(variant.name, func(t *testing.T) {
@@ -164,7 +157,6 @@ func TestCrossGeneratorDeterminism(t *testing.T) {
 // C2/C4: every emitted idl.json is a JSON object with the canonical schema and
 // a checksum that matches the parser.
 func TestCrossGeneratorIDLArtifacts(t *testing.T) {
-	requireCrossGenerator(t)
 	idl := loadCrossCheckerIDL(t)
 	wantChecksum, err := parser.ComputeChecksum(idl)
 	if err != nil {
@@ -207,6 +199,105 @@ func TestCrossGeneratorIDLArtifacts(t *testing.T) {
 			// are covered by the served pulserpc-idl probe in test_http_api.sh.
 			if !found {
 				t.Logf("%s does not emit idl.json (embedded metadata is checked over the wire)", variant.name)
+			}
+		})
+	}
+}
+
+// embeddedIDLAssn finds assignments to the generated IDL metadata constants.
+// Go emits `const IDL_JSON = "..."`, Java emits `String IDL_JSON = "..."`, and
+// C# emits `string IDL_JSON = @"..."` (also `_idlJson`). Group 1 is the first
+// character of the string literal.
+var embeddedIDLAssn = regexp.MustCompile(`\b(?:IDL_JSON|_idlJson|idlJson)\s*=\s*(@?")`)
+
+// decodeEmbeddedIDL decodes a language string literal starting at text[0].
+// Go and Java literals are quoted (with compatible escape sequences); C#
+// literals are verbatim strings (@"...") with doubled quotes.
+func decodeEmbeddedIDL(text string) (string, error) {
+	if strings.HasPrefix(text, `@"`) {
+		var sb strings.Builder
+		for i := 2; i < len(text); {
+			if text[i] == '"' {
+				if i+1 < len(text) && text[i+1] == '"' {
+					sb.WriteByte('"')
+					i += 2
+					continue
+				}
+				return sb.String(), nil
+			}
+			sb.WriteByte(text[i])
+			i++
+		}
+		return "", fmt.Errorf("unterminated verbatim string literal")
+	}
+	if text[0] != '"' {
+		return "", fmt.Errorf("literal does not start with a quote")
+	}
+	i := 1
+	for i < len(text) {
+		if text[i] == '\\' {
+			i += 2
+			continue
+		}
+		if text[i] == '"' {
+			break
+		}
+		i++
+	}
+	if i >= len(text) {
+		return "", fmt.Errorf("unterminated string literal")
+	}
+	literal := text[:i+1]
+	if decoded, err := strconv.Unquote(literal); err == nil {
+		return decoded, nil
+	}
+	var decoded string
+	if err := json.Unmarshal([]byte(literal), &decoded); err != nil {
+		return "", err
+	}
+	return decoded, nil
+}
+
+// C5: embedded IDL metadata must be a JSON object (not a double-encoded
+// string), and its checksum must agree with the parser. Variants that only
+// write idl.json are already checked by TestCrossGeneratorIDLArtifacts.
+func TestCrossGeneratorEmbeddedIDLIsObject(t *testing.T) {
+	idl := loadCrossCheckerIDL(t)
+	wantChecksum, err := parser.ComputeChecksum(idl)
+	if err != nil {
+		t.Fatalf("compute checksum: %v", err)
+	}
+
+	for _, variant := range crossGeneratorVariants() {
+		variant := variant
+		t.Run(variant.name, func(t *testing.T) {
+			files := generateVariant(t, variant, t.TempDir())
+
+			found := false
+			for name, data := range files {
+				text := string(data)
+				for _, loc := range embeddedIDLAssn.FindAllStringSubmatchIndex(text, -1) {
+					found = true
+					idlText, err := decodeEmbeddedIDL(text[loc[2]:])
+					if err != nil {
+						t.Errorf("%s: decode embedded IDL literal: %v", name, err)
+						continue
+					}
+					var doc map[string]any
+					if err := json.Unmarshal([]byte(idlText), &doc); err != nil {
+						t.Errorf("%s: embedded IDL is not a JSON object (possibly double-encoded): %v", name, err)
+						continue
+					}
+					if got, ok := doc["checksum"]; ok {
+						if got != wantChecksum {
+							t.Errorf("%s: embedded IDL checksum = %v, want %s", name, got, wantChecksum)
+						}
+					}
+				}
+			}
+
+			if !found {
+				t.Logf("%s does not embed IDL metadata (idl.json is checked by TestCrossGeneratorIDLArtifacts)", variant.name)
 			}
 		})
 	}
