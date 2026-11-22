@@ -120,6 +120,64 @@ async function testErrorCodeZeroPreserved() {
   console.log("✓ testErrorCodeZeroPreserved");
 }
 
+async function testEnvelopeNullErrorRejected() {
+  // A falsy `error` member is still an error response; it must not fall
+  // through to a silent `undefined` result.
+  const client = await Client.create(
+    injectingTransport((req) => ({ jsonrpc: "2.0", error: null, id: req.id })),
+    false,
+    false
+  );
+  await assert.rejects(
+    () => client.call("Svc.requiredNull", []),
+    (e) => e instanceof RPCError && e.code === -32603 && /Unknown error/.test(e.message),
+    "error:null must be rejected as a malformed error envelope"
+  );
+  console.log("✓ testEnvelopeNullErrorRejected");
+}
+
+async function testEnvelopeMalformedErrorFallsBack() {
+  // A malformed error object gets the standard internal-error code/message
+  // rather than being treated as a successful result.
+  const client = await Client.create(
+    injectingTransport((req) => ({
+      jsonrpc: "2.0",
+      error: { code: "not-a-number", message: 42 },
+      id: req.id,
+    })),
+    false,
+    false
+  );
+  await assert.rejects(
+    () => client.call("Svc.requiredNull", []),
+    (e) => e instanceof RPCError && e.code === -32603 && e.message === "Unknown error",
+    "a malformed error object must fall back to -32603/Unknown error"
+  );
+  console.log("✓ testEnvelopeMalformedErrorFallsBack");
+}
+
+async function testInProcFallbackIsValidatedAsError() {
+  // The InProcTransport fallback envelope must be well-formed so the client
+  // turns it into an RPCError instead of returning `undefined` silently.
+  const fallback = await new InProcTransport(() => undefined).request({
+    jsonrpc: "2.0",
+    method: "Svc.requiredNull",
+    id: 1,
+  });
+  assert.strictEqual(fallback.error.code, -32603);
+  const client = await Client.create(
+    injectingTransport((req) => ({ ...fallback, id: req.id })),
+    false,
+    false
+  );
+  await assert.rejects(
+    () => client.call("Svc.requiredNull", []),
+    (e) => e instanceof RPCError && /No response from server/.test(e.message),
+    "the InProcTransport fallback must surface as a well-formed RPCError"
+  );
+  console.log("✓ testInProcFallbackIsValidatedAsError");
+}
+
 async function main() {
   await testRequiredNullResultFailsValidation();
   await testOptionalNullResultSucceeds();
@@ -127,6 +185,9 @@ async function main() {
   await testEnvelopeWrongJsonrpc();
   await testEnvelopeResultAndErrorRejected();
   await testErrorCodeZeroPreserved();
+  await testEnvelopeNullErrorRejected();
+  await testEnvelopeMalformedErrorFallsBack();
+  await testInProcFallbackIsValidatedAsError();
   console.log("\nAll client validation tests passed!");
 }
 

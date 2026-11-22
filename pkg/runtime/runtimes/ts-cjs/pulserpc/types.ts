@@ -93,6 +93,39 @@ function baseTypeName(name: string): string {
   return name.substring(name.lastIndexOf(".") + 1);
 }
 
+interface BaseNameIndex<T> {
+  /** First definition for each base name, in the map's key order. */
+  byBase: Map<string, T>;
+}
+
+/**
+ * Cache of base-name indexes, keyed by the types map object itself. Type maps
+ * are built once by the Contract parser and then treated as immutable, so the
+ * map's identity doubles as the "did the map change" sentinel: a different map
+ * object gets a freshly built index. Weak keys avoid retaining discarded
+ * contracts.
+ */
+const baseNameIndexCache = new WeakMap<object, BaseNameIndex<any>>();
+
+function getBaseNameIndex<T>(types: { [key: string]: T }): BaseNameIndex<T> {
+  let index = baseNameIndexCache.get(types) as BaseNameIndex<T> | undefined;
+  if (index === undefined) {
+    // Built lazily, once per map. Object.keys preserves the same order as
+    // Object.entries, so resolution stays deterministic: the first definition
+    // with a matching base name wins.
+    const byBase = new Map<string, T>();
+    for (const key of Object.keys(types)) {
+      const base = baseTypeName(key);
+      if (!byBase.has(base)) {
+        byBase.set(base, types[key]);
+      }
+    }
+    index = { byBase };
+    baseNameIndexCache.set(types, index);
+  }
+  return index;
+}
+
 function findByTypeName<T>(name: string, types: { [key: string]: T }): T | undefined {
   // Prefer an exact match. Generated idl.json files store imported types under
   // their qualified names ("inc.Status") while type references inside the
@@ -101,13 +134,8 @@ function findByTypeName<T>(name: string, types: { [key: string]: T }): T | undef
   if (types[name]) {
     return types[name];
   }
-  const base = baseTypeName(name);
-  for (const [key, value] of Object.entries(types)) {
-    if (baseTypeName(key) === base) {
-      return value;
-    }
-  }
-  return undefined;
+  // O(1) after the first lookup: no per-call Object.entries scan/allocation.
+  return getBaseNameIndex(types).byBase.get(baseTypeName(name));
 }
 
 export function findStruct(structName: string, allStructs: StructMap): StructDef | undefined {

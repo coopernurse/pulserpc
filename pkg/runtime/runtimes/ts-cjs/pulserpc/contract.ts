@@ -11,6 +11,14 @@ import type { StructMap, EnumMap, FieldDef, ValidationError, ValidationResult } 
 import { validateType } from "./validation";
 import { RPCError } from "./rpc";
 
+/**
+ * Keys that must never be copied out of untrusted IDL metadata. `key` comes
+ * from a server's `pulserpc-idl` response, so assigning it with `obj[key] = v`
+ * would invoke Object.prototype's inherited `__proto__` setter and poison the
+ * prototype of the metadata object.
+ */
+const UNSAFE_META_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 export interface ContractAuditor {
   audit(result: { compatible: boolean; deltas: any[] }): void;
   name(): string;
@@ -162,7 +170,7 @@ export class Contract {
     } else if (typeof meta === "object") {
       for (const [key, value] of Object.entries(meta)) {
         if (key !== "type") {
-          this.meta[key] = value;
+          this.setMetaItem(key, value);
         }
       }
     }
@@ -175,14 +183,26 @@ export class Contract {
     // Both `{ key: "k", value: "v" }` and the flat Barrister/Go form
     // `{ type: "meta", k: "v" }` occur in generated idl.json files.
     if (typeof item.key === "string" && "value" in item) {
-      this.meta[item.key] = item.value;
+      this.setMetaItem(item.key, item.value);
       return;
     }
     for (const [key, value] of Object.entries(item)) {
       if (key !== "type") {
-        this.meta[key] = value;
+        this.setMetaItem(key, value);
       }
     }
+  }
+
+  /**
+   * Store one metadata entry, rejecting prototype-polluting keys. Both the
+   * Barrister item form and the dict form funnel through here so neither can
+   * assign `__proto__`, `constructor` or `prototype` onto `this.meta`.
+   */
+  private setMetaItem(key: string, value: any): void {
+    if (UNSAFE_META_KEYS.has(key)) {
+      return;
+    }
+    this.meta[key] = value;
   }
 
   /**

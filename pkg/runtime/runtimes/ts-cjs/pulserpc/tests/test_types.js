@@ -44,6 +44,38 @@ function testFindQualifiedTypesByBaseName() {
   console.log("✓ testFindQualifiedTypesByBaseName");
 }
 
+function testFindByTypeNameCachesIndex() {
+  // The base-name index is built lazily once per types map. A Proxy that
+  // counts key enumerations proves repeated lookups never re-scan the map.
+  const defs = {
+    "inc.Response": { id: "response" },
+    "inc.Status": { id: "status" },
+  };
+  let ownKeysCalls = 0;
+  const watched = new Proxy(defs, {
+    ownKeys(target) {
+      ownKeysCalls++;
+      return Reflect.ownKeys(target);
+    },
+  });
+
+  assert.strictEqual(findStruct("Response", watched).id, "response");
+  const afterFirst = ownKeysCalls;
+  assert.ok(afterFirst >= 1, "the first base-name lookup must build the index");
+
+  for (let i = 0; i < 50; i++) {
+    assert.strictEqual(findStruct("Response", watched).id, "response");
+    assert.strictEqual(findStruct("inc.Response", watched).id, "response");
+    assert.strictEqual(findStruct("Nope", watched), undefined);
+  }
+  assert.strictEqual(
+    ownKeysCalls,
+    afterFirst,
+    "lookups after the first must use the cached index, not re-enumerate the map"
+  );
+  console.log("✓ testFindByTypeNameCachesIndex");
+}
+
 function testGetStructFieldsSimple() {
   const allStructs = {
     User: {
@@ -100,6 +132,7 @@ function testGetStructFieldsOverrideParent() {
 testFindStruct();
 testFindEnum();
 testFindQualifiedTypesByBaseName();
+testFindByTypeNameCachesIndex();
 testGetStructFieldsSimple();
 testGetStructFieldsWithExtends();
 testGetStructFieldsOverrideParent();

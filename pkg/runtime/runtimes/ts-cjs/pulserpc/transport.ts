@@ -82,9 +82,13 @@ export class InProcTransport extends Transport {
   async request(req: JsonRpcRequest): Promise<JsonRpcResponse> {
     const response = this.serverCallFn(req);
     if (!response) {
+      // Emit a well-formed error envelope: a bare `{jsonrpc, id}` response has
+      // neither `result` nor `error` and is rejected by client validation.
+      // (Notifications are unaffected — Client ignores their response.)
       return {
         jsonrpc: "2.0",
         id: req.id ?? null,
+        error: { code: -32603, message: "No response from server" },
       };
     }
     return response;

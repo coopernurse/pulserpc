@@ -6,7 +6,7 @@
  */
 
 const { strict: assert } = require("assert");
-const { HttpTransport } = require("../transport");
+const { HttpTransport, InProcTransport } = require("../transport");
 const { RPCError } = require("../rpc");
 
 // Builds a fake fetch that records the URL it was called with and returns a
@@ -82,8 +82,23 @@ async function testTransportErrorsUseStandardCodes() {
   console.log("✓ testTransportErrorsUseStandardCodes");
 }
 
+async function testInProcFallbackIsWellFormedError() {
+  // When the server function returns nothing, InProcTransport must emit a
+  // well-formed error response (result XOR error) rather than a bare envelope.
+  const transport = new InProcTransport(() => undefined);
+  const resp = await transport.request({ jsonrpc: "2.0", method: "Svc.f", id: 7 });
+  assert.strictEqual(resp.jsonrpc, "2.0");
+  assert.strictEqual(resp.id, 7);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(resp, "result"), false);
+  assert.ok(resp.error, "fallback must carry an error member");
+  assert.strictEqual(resp.error.code, -32603);
+  assert.match(resp.error.message, /No response from server/);
+  console.log("✓ testInProcFallbackIsWellFormedError");
+}
+
 testUrlUsedVerbatim()
   .then(testTransportErrorsUseStandardCodes)
+  .then(testInProcFallbackIsWellFormedError)
   .then(() => console.log("\nAll transport tests passed!"))
   .catch((e) => {
     console.error(e);

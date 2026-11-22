@@ -283,13 +283,15 @@ export class Client {
       throw new Error("Response validation failed: response has neither result nor error");
     }
 
-    if (response.error) {
+    // Branch on key presence, not truthiness: `error: null` (or any falsy
+    // error member) is still an error response and must never fall through to
+    // a silent `undefined` result. Malformed error objects get the standard
+    // internal-error code/message.
+    if (hasError) {
       const error = response.error;
-      throw new RPCError(
-        error.code ?? -32603,
-        error.message || "Unknown error",
-        error.data
-      );
+      const code = error && typeof error.code === "number" ? error.code : -32603;
+      const message = error && typeof error.message === "string" ? error.message : "Unknown error";
+      throw new RPCError(code, message, error && error.data);
     }
 
     const result = response.result;
@@ -333,6 +335,16 @@ export class Client {
     const positionalParams: any[] = [];
     for (const paramDef of paramDefs) {
       positionalParams.push(namedParams[paramDef.name]);
+    }
+
+    // Trailing optional parameters omitted from a named-param object become
+    // `undefined`; drop them so validateRequest sees a legitimately short
+    // array (mirrors the server's namedToPositionalParams helper).
+    while (
+      positionalParams.length > 0 &&
+      positionalParams[positionalParams.length - 1] === undefined
+    ) {
+      positionalParams.pop();
     }
 
     return positionalParams;

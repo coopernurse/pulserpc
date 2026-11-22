@@ -100,6 +100,42 @@ function testContractParsesMeta() {
   console.log("✓ testContractParsesMeta");
 }
 
+function testMetaPrototypePollution() {
+  // A server's pulserpc-idl response is remote-controlled: a `__proto__` key
+  // must not change the prototype of the metadata object (security finding).
+  const listItem = JSON.parse(
+    '{"type":"meta","name":"ok","__proto__":{"polluted":true},' +
+    '"constructor":{"polluted":true},"prototype":{"polluted":true}}'
+  );
+  const fromList = new Contract([listItem]);
+  assert.strictEqual(Object.getPrototypeOf(fromList.meta), Object.prototype);
+  assert.strictEqual(fromList.meta.polluted, undefined);
+  assert.strictEqual(fromList.meta.name, "ok", "benign keys must still be copied");
+  for (const key of ["__proto__", "constructor", "prototype"]) {
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(fromList.meta, key), false);
+  }
+
+  const dictMeta = JSON.parse('{"name":"ok","__proto__":{"polluted":true}}');
+  const fromDict = new Contract({ meta: dictMeta, interfaces: [] });
+  assert.strictEqual(Object.getPrototypeOf(fromDict.meta), Object.prototype);
+  assert.strictEqual(fromDict.meta.polluted, undefined);
+  assert.strictEqual(fromDict.meta.name, "ok");
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(fromDict.meta, "__proto__"), false);
+  assert.strictEqual({}.polluted, undefined, "Object.prototype must stay clean");
+
+  // The { key, value } item form must reject unsafe keys too.
+  const kvForm = new Contract({
+    meta: [
+      { key: "__proto__", value: { polluted: true } },
+      { key: "safe", value: 1 },
+    ],
+  });
+  assert.strictEqual(Object.getPrototypeOf(kvForm.meta), Object.prototype);
+  assert.strictEqual(kvForm.meta.safe, 1);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(kvForm.meta, "__proto__"), false);
+  console.log("✓ testMetaPrototypePollution");
+}
+
 function testContractValidateRequestPasses() {
   const idl = {
     interfaces: [
@@ -309,6 +345,7 @@ function main() {
   testContractParsesStructs();
   testContractParsesEnums();
   testContractParsesMeta();
+  testMetaPrototypePollution();
   testContractValidateRequestPasses();
   testContractValidateRequestFailsOnWrongParamCount();
   testContractValidateRequestTrailingOptionalParams();
