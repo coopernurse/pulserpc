@@ -27,12 +27,12 @@ TIMEOUT=30
 # start_command: command to run the test server in the container
 RUNTIMES=(
     "python:python-client-server:python:3.11-slim:9000:python3 test_server.py"
-    "ts:ts-client-server:node:18-slim:9001:ts-node --project tsconfig.json test_server.ts"
+    "ts:ts-client-server:node:20-slim:9001:ts-node --project tsconfig.json test_server.ts"
     "csharp:csharp-client-server:mcr.microsoft.com/dotnet/sdk:8.0:9002:dotnet run --project TestServer.csproj"
     "java:java-client-server:maven:3.9-eclipse-temurin-17:9003:mvn exec:java -Dexec.mainClass=TestServer"
-    "go:go-client-server:golang:1.21-alpine:9004:rm -f client.go test_client.go && go build -o test-server-bin ./... && ./test-server-bin"
+    "go:go-client-server:golang:1.25-alpine:9004:rm -f client.go test_client.go && go build -o test-server-bin ./... && ./test-server-bin"
     "python2:python-client-server:python:2.7-slim:9005:python test_server.py"
-    "ts-cjs:ts-client-server:node:18-slim:9006:node test_server.js"
+    "ts-cjs:ts-client-server:node:20-slim:9006:node test_server.js"
 )
 
 # Parse runtime config
