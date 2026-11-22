@@ -260,11 +260,11 @@ test_method() {
             ok=0
             detail="${detail}id was not echoed as 1; "
         fi
-        if [ "$(json_get error)" != "__MISSING__" ]; then
+        if [ "$(json_type error)" != "__MISSING__" ]; then
             ok=0
             detail="${detail}unexpected error object; "
         fi
-        if [ "$(json_get "$expected_field")" = "__MISSING__" ]; then
+        if [ "$(json_type "$expected_field")" = "__MISSING__" ]; then
             ok=0
             detail="${detail}missing expected field: $expected_field; "
         fi
@@ -314,7 +314,7 @@ test_validation_error() {
             ok=0
             detail="${detail}id was not echoed as 1; "
         fi
-        if [ "$(json_get error)" = "__MISSING__" ]; then
+        if [ "$(json_type error)" = "__MISSING__" ]; then
             ok=0
             detail="${detail}expected an error object but got success; "
         else
@@ -426,7 +426,7 @@ else
     if [ "$(json_type error.data)" != "dict" ]; then
         probe_ok=0; probe_detail="${probe_detail}error.data is not an object (got $(json_type error.data)); "
     else
-        [ "$(json_get error.data.invalid_fields)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}error.data.invalid_fields missing; "; }
+        [ "$(json_type error.data.invalid_fields)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}error.data.invalid_fields missing; "; }
     fi
 fi
 record_result "Validation error carries structured data (invalid_fields)" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
@@ -474,17 +474,17 @@ probe_ok=1
 probe_detail=""
 if [ "$(json_type "")" != "dict" ]; then
     probe_ok=0; probe_detail="${probe_detail}response is not an object; "
-elif [ "$(json_get result)" = "__MISSING__" ]; then
+elif [ "$(json_type result)" = "__MISSING__" ]; then
     probe_ok=0; probe_detail="${probe_detail}response has no result; "
 elif [ "$(json_type result)" != "dict" ]; then
     probe_ok=0; probe_detail="${probe_detail}pulserpc-idl result must be an object, got $(json_type result); "
 else
     [ "$(json_get result.rootNamespace)" = "conform" ] || { probe_ok=0; probe_detail="${probe_detail}result.rootNamespace != conform; "; }
     [ "$(json_type result.checksum)" = "str" ] || { probe_ok=0; probe_detail="${probe_detail}result.checksum is not a string; "; }
-    [ "$(json_get result.interfaces)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}result.interfaces is missing; "; }
-    [ "$(json_get result.structs)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}result.structs is missing; "; }
-    [ "$(json_get result.enums)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}result.enums is missing; "; }
-    [ "$(json_get result.errors)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}result.errors is missing; "; }
+    [ "$(json_type result.interfaces)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}result.interfaces is missing; "; }
+    [ "$(json_type result.structs)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}result.structs is missing; "; }
+    [ "$(json_type result.enums)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}result.enums is missing; "; }
+    [ "$(json_type result.errors)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}result.errors is missing; "; }
     checksum=$(json_get result.checksum)
     [ "${#checksum}" = "43" ] || { probe_ok=0; probe_detail="${probe_detail}result.checksum is not 43 characters; "; }
 fi
@@ -555,8 +555,8 @@ probe_ok=1
 probe_detail=""
 [ "$(json_type "")" = "list" ] || { probe_ok=0; probe_detail="${probe_detail}response is not an array; "; }
 [ "$(json_get 0.id)" = "7" ] || { probe_ok=0; probe_detail="${probe_detail}request response id != 7; "; }
-[ "$(json_get 0.result)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}request response has no result; "; }
-[ "$(json_get 1)" = "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}notification produced a second response; "; }
+[ "$(json_type 0.result)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}request response has no result; "; }
+[ "$(json_type 1)" = "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}notification produced a second response; "; }
 record_result "Mixed batch returns only the request response" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 
 # M21: id:null is a notification
@@ -572,7 +572,7 @@ do_request POST '{"jsonrpc":"2.0","method":"A.add","params":{"a":5,"b":3},"id":1
 probe_ok=1
 probe_detail=""
 [ "$(json_get id)" = "11" ] || { probe_ok=0; probe_detail="${probe_detail}id was not echoed as 11; "; }
-if [ "$(json_get result)" != "__MISSING__" ]; then
+if [ "$(json_type result)" != "__MISSING__" ]; then
     :
 elif [ "$(json_get error.code)" = "-32602" ]; then
     [ "$(json_type error.message)" = "str" ] || { probe_ok=0; probe_detail="${probe_detail}error.message is not a string; "; }
@@ -587,7 +587,7 @@ do_request POST '{"jsonrpc":"2.0","method":"A.repeat","params":[{"to_repeat":"hi
 probe_ok=1
 probe_detail=""
 [ "$(json_get id)" = "12" ] || { probe_ok=0; probe_detail="${probe_detail}id was not echoed as 12; "; }
-[ "$(json_get result)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}extra fields caused the call to fail: $REQUEST_BODY; "; }
+[ "$(json_type result)" != "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}extra fields caused the call to fail: $REQUEST_BODY; "; }
 record_result "Extra struct/request fields are accepted" "$probe_ok" "$probe_detail"
 
 # R24/D2: boolean id -> -32600
@@ -640,7 +640,7 @@ if [ "$(json_get error.code)" = "-32603" ]; then
     probe_detail=""
     [ "$(json_get id)" = "13" ] || { probe_ok=0; probe_detail="${probe_detail}id was not echoed; "; }
     [ "$(json_get error.message)" = "Internal error" ] || { probe_ok=0; probe_detail="${probe_detail}error.message is not the fixed 'Internal error' text; "; }
-    [ "$(json_get error.data)" = "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}error.data must be absent for -32603; "; }
+    [ "$(json_type error.data)" = "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}error.data must be absent for -32603; "; }
     record_result "-32603 is redacted (message, no data)" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 else
     echo -e "${YELLOW}SKIP${NC}: -32603 redaction (runtime did not produce an internal error for the probe)"
