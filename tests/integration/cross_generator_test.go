@@ -24,31 +24,44 @@ func requireCrossGenerator(t *testing.T) {
 type generatorVariant struct {
 	name string
 	new  func() generator.Plugin
-	// configure applies extra flags to a fresh FlagSet.
-	configure func(*flag.FlagSet)
+	// configure applies extra flags to a fresh FlagSet after RegisterFlags.
+	configure func(*testing.T, *flag.FlagSet)
+}
+
+// setVariantFlag sets a generator flag, failing the test when the flag is not
+// registered instead of panicking on a nil fs.Lookup result.
+func setVariantFlag(t *testing.T, fs *flag.FlagSet, name, value string) {
+	t.Helper()
+	f := fs.Lookup(name)
+	if f == nil {
+		t.Fatalf("%s: flag %q is not registered", fs.Name(), name)
+	}
+	if err := f.Value.Set(value); err != nil {
+		t.Fatalf("%s: set flag %q=%q: %v", fs.Name(), name, value, err)
+	}
 }
 
 func crossGeneratorVariants() []generatorVariant {
 	return []generatorVariant{
-		{name: "go", new: func() generator.Plugin { return generator.NewGoClientServer() }, configure: func(fs *flag.FlagSet) {
-			fs.Lookup("go-module").Value.Set("example.com/crosscheck")
-			fs.Lookup("inline-runtime").Value.Set("true")
+		{name: "go", new: func() generator.Plugin { return generator.NewGoClientServer() }, configure: func(t *testing.T, fs *flag.FlagSet) {
+			setVariantFlag(t, fs, "go-module", "example.com/crosscheck")
+			setVariantFlag(t, fs, "inline-runtime", "true")
 		}},
-		{name: "java", new: func() generator.Plugin { return generator.NewJavaClientServer() }, configure: func(fs *flag.FlagSet) {
-			fs.Lookup("package").Value.Set("com.example.generated")
-			fs.Lookup("json-lib").Value.Set("jackson")
+		{name: "java", new: func() generator.Plugin { return generator.NewJavaClientServer() }, configure: func(t *testing.T, fs *flag.FlagSet) {
+			setVariantFlag(t, fs, "package", "com.example.generated")
+			setVariantFlag(t, fs, "json-lib", "jackson")
 		}},
 		{name: "python", new: func() generator.Plugin { return generator.NewPythonClientServer() }},
-		{name: "python2", new: func() generator.Plugin { return generator.NewPythonClientServer() }, configure: func(fs *flag.FlagSet) {
-			fs.Lookup("python-version").Value.Set("2")
+		{name: "python2", new: func() generator.Plugin { return generator.NewPythonClientServer() }, configure: func(t *testing.T, fs *flag.FlagSet) {
+			setVariantFlag(t, fs, "python-version", "2")
 		}},
-		{name: "ts-node", new: func() generator.Plugin { return generator.NewTSClientServer() }, configure: func(fs *flag.FlagSet) {
-			fs.Lookup("ts-module").Value.Set("esm-node")
+		{name: "ts-node", new: func() generator.Plugin { return generator.NewTSClientServer() }, configure: func(t *testing.T, fs *flag.FlagSet) {
+			setVariantFlag(t, fs, "ts-module", "esm-node")
 		}},
-		{name: "ts-cjs", new: func() generator.Plugin { return generator.NewTSClientServer() }, configure: func(fs *flag.FlagSet) {
-			fs.Lookup("ts-module").Value.Set("cjs")
-			fs.Lookup("ts-gen-package-json").Value.Set("true")
-			fs.Lookup("ts-gen-tsconfig").Value.Set("true")
+		{name: "ts-cjs", new: func() generator.Plugin { return generator.NewTSClientServer() }, configure: func(t *testing.T, fs *flag.FlagSet) {
+			setVariantFlag(t, fs, "ts-module", "cjs")
+			setVariantFlag(t, fs, "ts-gen-package-json", "true")
+			setVariantFlag(t, fs, "ts-gen-tsconfig", "true")
 		}},
 		{name: "csharp", new: func() generator.Plugin { return generator.NewCSharpClientServer() }},
 	}
@@ -80,7 +93,7 @@ func generateVariant(t *testing.T, variant generatorVariant, dir string) map[str
 	fs.String("base-dir", "", "Base directory")
 	plugin.RegisterFlags(fs)
 	if variant.configure != nil {
-		variant.configure(fs)
+		variant.configure(t, fs)
 	}
 	if err := fs.Parse(nil); err != nil {
 		t.Fatalf("parse flags: %v", err)

@@ -59,12 +59,20 @@ These are no longer `[V]`; the catalog text is stale.
 - **G30 [H][U] Import de-duplication is by resolved absolute path.** The first
   literal spelling is retained for diagnostics, but `inc.pulse` and
   `./inc.pulse` resolve to one import and do not raise a duplicate-namespace
-  error. (Resolved; `TestImportDedupByResolvedPath`.)
+  error. Symlinks are followed and the key is case-folded on Windows/macOS, so
+  `Inc.pulse` also de-duplicates. (Resolved; `TestImportDedupByResolvedPath`,
+  `TestImportDedupByCaseInsensitivePath`.)
 - **G31 [H][U] Import paths resolve relative to the importing file's
   directory; absolute paths are accepted** (`parser.go`; absolute-path test).
 - **G32 [H][U] The root namespace is compared with imported namespaces.** A
-  collision is rejected with an error naming both files. (Resolved;
-  `TestRootImportNamespaceCollision`.)
+  collision is rejected with an error naming both files, including a namespace
+  reintroduced transitively (A -> B -> C where A and C share one).
+  (Resolved; `TestRootImportNamespaceCollision`,
+  `TestRootImportNamespaceCollisionTransitive`.)
+- **G29 addendum** Import lines accept only trailing whitespace and a `//`
+  comment. A `/* */` (or any other token) after the path is rejected with a
+  targeted `invalid import` error instead of a generic grammar failure
+  (`TestImportRejectsBlockCommentAfterPath`).
 - **G33 [H][U] Import prefixing is asymmetric.** Imported declarations are
   renamed `Namespace.Type`; their field/parameter/`extends` references are left
   unqualified. Root declarations are not prefixed (`parser.go:650-680`).

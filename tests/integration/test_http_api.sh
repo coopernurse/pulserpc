@@ -39,13 +39,17 @@ REQUEST_STATUS=""
 REQUEST_CONTENT_TYPE=""
 
 # Pick a JSON implementation once. python3/python is preferred because the
-# probes need real type information; jq is the fallback.
+# probes need real type information; jq is the fallback. A candidate only
+# counts when it can actually run: on Windows `python3` is often the Microsoft
+# Store stub, which is on PATH but exits non-zero with an install hint.
 JSON_PY=""
-if command -v python3 >/dev/null 2>&1; then
-    JSON_PY="python3"
-elif command -v python >/dev/null 2>&1; then
-    JSON_PY="python"
-fi
+for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && \
+        "$candidate" -c 'import json' >/dev/null 2>&1; then
+        JSON_PY="$candidate"
+        break
+    fi
+done
 JSON_JQ=""
 if command -v jq >/dev/null 2>&1; then
     JSON_JQ="jq"
@@ -168,12 +172,13 @@ json_type() {
     json_probe "$1" | cut -f1
 }
 
-# do_request <METHOD> <body> [url] sets REQUEST_STATUS/REQUEST_BODY/
+# do_request <METHOD> <body> [url] [max-time] sets REQUEST_STATUS/REQUEST_BODY/
 # REQUEST_CONTENT_TYPE.
 do_request() {
     local method="$1"
     local body="${2:-}"
     local url="${3:-$SERVER_URL}"
+    local max_time="${4:-30}"
     local body_file headers_file payload_file
 
     body_file=$(mktemp "${TMPDIR:-/tmp}/pulserpc-body.XXXXXX")
@@ -182,11 +187,11 @@ do_request() {
     printf '%s' "$body" > "$payload_file"
 
     if [ "$method" = "POST" ]; then
-        REQUEST_STATUS=$(curl -sS -o "$body_file" -D "$headers_file" -w '%{http_code}' \
+        REQUEST_STATUS=$(curl -sS --connect-timeout 5 --max-time "$max_time" -o "$body_file" -D "$headers_file" -w '%{http_code}' \
             -X POST "$url" -H "Content-Type: application/json" \
             --data-binary "@$payload_file" 2>/dev/null || echo "000")
     else
-        REQUEST_STATUS=$(curl -sS -o "$body_file" -D "$headers_file" -w '%{http_code}' \
+        REQUEST_STATUS=$(curl -sS --connect-timeout 5 --max-time "$max_time" -o "$body_file" -D "$headers_file" -w '%{http_code}' \
             -X "$method" "$url" 2>/dev/null || echo "000")
     fi
 
@@ -334,7 +339,7 @@ test_validation_error() {
 
 # Wait for server to be ready
 echo -e "${YELLOW}Checking if server is ready...${NC}"
-if ! curl -s -X POST "$SERVER_URL" -H "Content-Type: application/json" \
+if ! curl -sS --connect-timeout 5 --max-time 30 -X POST "$SERVER_URL" -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"pulserpc-idl","id":1}' > /dev/null 2>&1; then
     echo -e "${RED}ERROR: Server at $SERVER_URL is not responding${NC}"
     exit 1
@@ -410,16 +415,20 @@ test_validation_error "A.calc" "[[33,22],\"subtract\"]" "A.calc with invalid enu
 test_validation_error "A.calc" "[[33,22],\"ADD\"]" "A.calc with wrong case enum" "-32602"
 
 # Missing jsonrpc field
-bad_request='{"method":"A.add","params":[5,3],"id":1}'
-response=$(curl -s -X POST "$SERVER_URL" -H "Content-Type: application/json" -d "$bad_request")
-if echo "$response" | grep -q '"error"'; then
-    echo -e "${GREEN}✓ PASS${NC}: Request without jsonrpc field (validation)"
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-else
-    echo -e "${RED}✗ FAIL${NC}: Request without jsonrpc field (should return error)"
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-    FAILED_TESTS+=("Request without jsonrpc field")
+do_request POST '{"method":"A.add","params":[5,3],"id":1}'
+probe_ok=1
+probe_detail=""
+if [ "$REQUEST_STATUS" != "200" ]; then
+    probe_ok=0; probe_detail="${probe_detail}expected HTTP 200, got $REQUEST_STATUS; "
 fi
+if [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0; probe_detail="${probe_detail}response is not a JSON object; "
+else
+    [ "$(json_get jsonrpc)" = "2.0" ] || { probe_ok=0; probe_detail="${probe_detail}jsonrpc != 2.0; "; }
+    [ "$(json_get id)" = "null" ] || { probe_ok=0; probe_detail="${probe_detail}id is not null; "; }
+    [ "$(json_get error.code)" = "-32600" ] || { probe_ok=0; probe_detail="${probe_detail}error.code != -32600; "; }
+fi
+record_result "Request without jsonrpc field returns -32600" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 
 # Invalid method names
 test_validation_error "A.nonexistent" "[5,3]" "A.nonexistent method" "-32601"

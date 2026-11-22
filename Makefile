@@ -1,4 +1,4 @@
-.PHONY: build build-linux test cover lint quality quality-full clean install-tools test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-ts-cjs test-runtime-csharp test-runtime-java test-runtime-go test-runtimes test-all-runtimes test-integration test-integration-java test-integration-scripts test-numeric-types test-enum-case test-raises-propagation test-static-client-ts test-java-compile test-errors test-limits test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generator-go test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-python2 test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
+.PHONY: build build-linux test cover lint quality quality-full clean install-tools test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-ts-cjs test-runtime-csharp test-runtime-java test-runtime-go test-runtimes test-all-runtimes test-integration test-integration-java test-integration-scripts test-numeric-types test-enum-case test-raises-propagation test-static-client-ts test-java-compile test-errors test-limits test-cross-generator test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generator-go test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-python2 test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
 
 # Variables
 BINARY_NAME=pulserpc
@@ -144,6 +144,12 @@ test-all-runtimes:
 
 # Canonical integration target: protocol, limit, and matrix checks.
 test-integration: test-all-runtimes
+
+# Cross-generator checks (C1/C2/C4/C5) are opt-in while per-runtime plans land.
+# This target is intentionally not part of `quality-full`/`test-integration`.
+test-cross-generator:
+	@echo "Running cross-generator artifact checks..."
+	@PULSERPC_CROSS_GENERATOR=1 go test ./tests/integration -run 'TestCrossGenerator' -count=1
 
 # The Java runtime's historical `test-integration` target referenced generated
 # TestServer/TestClient classes that no longer exist. This is the supported

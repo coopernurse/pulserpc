@@ -55,11 +55,13 @@ and 25% have no test of any kind.
 >    every runtime.
 >
 > Grammar invariants G29, G30, G32, G35 and security invariant S1 are resolved
-> with unit tests in `pkg/parser` and `pkg/playground`. C1/C2/C4/C5 have a
-> gated cross-generator check (`PULSERPC_CROSS_GENERATOR=1`) that is not wired
-> into `make test` until the Java/TS/Go plans land. Rows below are retained as
-> the pre-remediation snapshot; runtime-owned rows still depend on the
-> per-runtime plans.
+> with unit tests in `pkg/parser` and `pkg/playground`. G30 de-duplication is
+> case-folded on Windows/macOS and follows symlinks; G32 also rejects a root
+> namespace reintroduced through a transitive import. C1/C2/C4/C5 have a gated
+> cross-generator check reachable via `make test-cross-generator`
+> (`PULSERPC_CROSS_GENERATOR=1`); it stays out of `make test` until the
+> Java/TS/Go plans land. Rows below are retained as the pre-remediation
+> snapshot; runtime-owned rows still depend on the per-runtime plans.
 
 Three suite-level problems amplify the gap:
 
