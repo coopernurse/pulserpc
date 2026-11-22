@@ -119,7 +119,10 @@ it separated harness bugs from genuine product divergences.
   `A.repeat` handler throwing `PULSERPC_SECRET_TOKEN_7F3A`; the old SKIP-based
   probe was removed.
 
-Gaps 1–8 and 11–12 are therefore closed, pending final CI confirmation.
+CI confirmed all checks green after the fix wave: CI (9 jobs), CI Conformance
+(`Multi-runtime conformance (Docker)` and `Quickstart guides (Docker)`), and
+Documentation CI. Gaps 1–8 and 11–12 are closed.
+
 Remaining: 9 (client-side conformance), 10 (generator artifacts), 13 (grammar
 negatives — intentionally unit-only), 14 (playground/path/meta — out of scope),
 and the R17/D6/D7/C10/R27 items in WP7.
