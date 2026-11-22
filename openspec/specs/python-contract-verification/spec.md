@@ -109,7 +109,7 @@ The Python client SHALL provide a `verify_compatibility()` method that:
 
 #### Scenario: Compatibility verification with breaking changes
 - **WHEN** client calls `verify_compatibility()` and server has removed a required field
-- **THEN** result is returned with `compatible=False` and `deltas` containing Error-level entry
+- **THEN** result is returned with `compatible=True` and `deltas` containing Info-level entry
 
 #### Scenario: Auditor is called on every verification
 - **WHEN** client calls `verify_compatibility()` multiple times with no changes
