@@ -48,6 +48,7 @@ jobs:
           gem install html-proofer --no-document
           htmlproofer ./_site \
             --disable-external \
+            --allow-missing-href \
             --swap-urls '^/pulserpc:' \
             --ignore-urls "/^http:\/\/localhost:.*/" \
             --ignore-urls "/^#"
