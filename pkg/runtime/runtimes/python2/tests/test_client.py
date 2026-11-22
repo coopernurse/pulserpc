@@ -1,8 +1,25 @@
 """Client tests: in-process round trips, RPCError propagation, envelopes."""
 
+import threading
+import time
+
 from pulserpc import Client, Contract, InProcTransport, RPCError, Server, Transport
 
 from support import assert_rpc_error, sample_idl
+
+
+class EchoTransport(Transport):
+    """Serves the IDL, then echoes the request id with a fixed result."""
+
+    def __init__(self):
+        self.idl = sample_idl()
+        self.requests = []
+
+    def request(self, req):
+        self.requests.append(req)
+        if req.get("method") == "pulserpc-idl":
+            return {"jsonrpc": "2.0", "result": self.idl, "id": req.get("id")}
+        return {"jsonrpc": "2.0", "result": "ok", "id": req.get("id")}
 
 
 class ScriptedTransport(Transport):
@@ -143,9 +160,86 @@ def test_notify_sends_no_id():
     print("  PASS: client notifications")
 
 
+# --- M20: named params are converted to positional before going on the wire ---
+
+def test_named_params_are_converted_to_positional():
+    print("Testing named->positional conversion (M20)...")
+    transport = EchoTransport()
+    client = Client(transport)  # validation disabled on purpose
+
+    assert client.CalcService.add(a=2, b=3) == "ok"
+
+    calls = [r for r in transport.requests if r.get("method") == "CalcService.add"]
+    assert len(calls) == 1
+    assert calls[0]["params"] == [2, 3], calls[0]["params"]
+    print("  PASS: named->positional conversion")
+
+
+# --- R20: request ids are unique under concurrency ---------------------------
+
+
+class _SlowCounter(int):
+    """An int whose increment sleeps, exposing an unprotected read-modify-write.
+
+    ``client._request_id += 1`` therefore spans a real interval: without the
+    lock every thread reads the same value and they all store the same result.
+    """
+
+    def __add__(self, other):
+        time.sleep(0.002)
+        return _SlowCounter(int(self) + other)
+
+    __radd__ = __add__
+
+
+def test_concurrent_calls_get_unique_and_contiguous_request_ids():
+    print("Testing concurrent request ids (R20)...")
+    transport = EchoTransport()
+    client = Client(transport)
+    # Deterministic interleaving: the slow increment makes a missing lock lose
+    # updates every run instead of depending on GIL switch timing.
+    client._request_id = _SlowCounter(0)
+
+    thread_count = 8
+    per_thread = 25
+    start = threading.Event()
+    errors = []
+
+    def worker():
+        try:
+            start.wait()
+            for _ in range(per_thread):
+                assert client.CalcService.add(1, 2) == "ok"
+        except Exception as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(thread_count)]
+    for t in threads:
+        t.start()
+    # Give every thread time to reach the barrier before releasing them.
+    time.sleep(0.05)
+    start.set()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    total = thread_count * per_thread
+    ids = [
+        r.get("id") for r in transport.requests
+        if r.get("method") == "CalcService.add" and r.get("id") is not None
+    ]
+    assert len(ids) == total
+    assert len(set(ids)) == len(ids), "request ids must be unique"
+    # Ids are handed out exactly once: no gaps, no duplicates.
+    assert sorted(ids) == list(range(1, total + 1))
+    print("  PASS: concurrent request ids")
+
+
 def main():
     test_in_proc_round_trip()
     test_rpc_error_raised_on_server_error()
     test_response_envelope_validation()
     test_notify_sends_no_id()
+    test_named_params_are_converted_to_positional()
+    test_concurrent_calls_get_unique_and_contiguous_request_ids()
     print("  test_client: ALL PASSED")

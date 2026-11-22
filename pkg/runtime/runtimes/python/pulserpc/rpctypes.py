@@ -4,6 +4,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+import threading
 from typing import Any, Dict, List, Optional
 
 
@@ -100,25 +101,43 @@ class NameResolutionIndex:
 # is held strongly so its id() cannot be recycled while it is cached.  The
 # cache is bounded so long-running processes do not accumulate every transient
 # dict ever passed to a helper.
+#
+# The cache is shared process-wide and validation may run concurrently on
+# several threads, so every read/mutation takes ``_INDEX_CACHE_LOCK`` (R21).
+# ``OrderedDict`` is not safe for concurrent get/move_to_end/popitem: without
+# the lock an eviction can race with a hit and raise ``RuntimeError`` or corrupt
+# the ordering.
 _INDEX_CACHE_MAX = 256
+_INDEX_CACHE_LOCK = threading.Lock()
 _index_cache: "OrderedDict[int, tuple]" = OrderedDict()
 
 
 def _get_resolution_index(definitions: Dict[str, Any]) -> NameResolutionIndex:
     """Return the cached index for ``definitions``, rebuilding on mutation."""
     cache_key = id(definitions)
-    cached = _index_cache.get(cache_key)
-    if cached is not None:
-        cached_defs, index = cached
-        if cached_defs is definitions and index.size == len(definitions):
-            _index_cache.move_to_end(cache_key)
-            return index
+    with _INDEX_CACHE_LOCK:
+        cached = _index_cache.get(cache_key)
+        if cached is not None:
+            cached_defs, index = cached
+            if cached_defs is definitions and index.size == len(definitions):
+                _index_cache.move_to_end(cache_key)
+                return index
 
+    # Build outside the lock so unrelated lookups are not serialized on the
+    # (potentially large) sort.  Re-check under the lock before inserting in
+    # case another thread won the race.
     index = NameResolutionIndex(definitions)
-    _index_cache[cache_key] = (definitions, index)
-    _index_cache.move_to_end(cache_key)
-    while len(_index_cache) > _INDEX_CACHE_MAX:
-        _index_cache.popitem(last=False)
+    with _INDEX_CACHE_LOCK:
+        cached = _index_cache.get(cache_key)
+        if cached is not None:
+            cached_defs, existing = cached
+            if cached_defs is definitions and existing.size == len(definitions):
+                _index_cache.move_to_end(cache_key)
+                return existing
+        _index_cache[cache_key] = (definitions, index)
+        _index_cache.move_to_end(cache_key)
+        while len(_index_cache) > _INDEX_CACHE_MAX:
+            _index_cache.popitem(last=False)
     return index
 
 

@@ -1,6 +1,9 @@
 """Server class for handling JSON-RPC 2.0 requests"""
 
-from typing import Any, Callable, Dict, List, Optional, Union
+import inspect
+import logging
+import math
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from .rpc import (
     RPCError,
     INVALID_REQUEST,
@@ -10,12 +13,30 @@ from .rpc import (
 )
 from .contract import Contract
 
+logger = logging.getLogger(__name__)
+
 
 # Default upper bound on the number of entries accepted in a single JSON-RPC
 # batch.  Without a bound an attacker can submit an arbitrarily large array and
 # force one handler invocation (and one response object) per element, which is a
 # cheap request-amplification / memory-exhaustion vector (review finding 1).
 DEFAULT_MAX_BATCH_SIZE = 100
+
+
+def _is_valid_request_id(req_id: Any) -> bool:
+    """Return True when ``req_id`` is a legal JSON-RPC id (D2/R24).
+
+    JSON-RPC 2.0 allows a String, Number, or Null id.  Python's ``bool`` is a
+    subclass of ``int``, and objects/arrays are not numbers, so all three must
+    be rejected explicitly rather than echoed back on the wire.
+    """
+    if req_id is None or isinstance(req_id, str):
+        return True
+    if isinstance(req_id, (int, float)) and not isinstance(req_id, bool):
+        # JSON has no NaN/Infinity; json.loads accepts them by default, so a
+        # non-finite number would be echoed as invalid JSON.
+        return not isinstance(req_id, float) or math.isfinite(req_id)
+    return False
 
 
 class Server:
@@ -50,6 +71,13 @@ class Server:
         self.validate_responses = validate_responses
         self.on_error = on_error
         self.max_batch_size = max_batch_size
+        # inspect.signature() is comparatively expensive and the handler
+        # signature never changes between calls, so cache it per
+        # (interface, method).  add_handler clears it so a replaced handler is
+        # re-introspected (review finding: per-call introspection).
+        self._signature_cache: Dict[
+            Tuple[str, str], Optional[inspect.Signature]
+        ] = {}
 
     def add_handler(self, iface_name: str, handler: Any) -> None:
         """Register a handler instance for an interface
@@ -59,6 +87,22 @@ class Server:
             handler: Handler instance with methods matching the interface
         """
         self.handlers[iface_name] = handler
+        self._signature_cache.clear()
+
+    def _signature(self, iface_name: str, func_name: str, func: Any
+                   ) -> Optional[inspect.Signature]:
+        """Return the cached signature for a handler method.
+
+        ``None`` is cached when the callable cannot be introspected (e.g. a
+        C function); the invocation itself then decides success or failure.
+        """
+        key = (iface_name, func_name)
+        if key not in self._signature_cache:
+            try:
+                self._signature_cache[key] = inspect.signature(func)
+            except (TypeError, ValueError):
+                self._signature_cache[key] = None
+        return self._signature_cache[key]
 
     def call(self, req: Union[Dict[str, Any], List[Any]], ctx: Any = None
              ) -> Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]:
@@ -128,6 +172,15 @@ class Server:
         # Notifications (requests with no 'id') must never receive a response,
         # including for format errors and the pulserpc-idl path (audit python-05).
         req_id = req.get('id')
+
+        # An id that is not a string, number or null is an invalid request.  The
+        # response cannot echo the bad value, so id is always null here (R24).
+        if not _is_valid_request_id(req_id):
+            return self._error_response(
+                None, INVALID_REQUEST, "Invalid Request",
+                "Request id must be a string, number, or null",
+            )
+
         is_notification = req_id is None
 
         def error_response(code: int, message: str, data: Any = None
@@ -201,27 +254,37 @@ class Server:
             except RPCError as e:
                 return error_response(e.code, e.message, e.data)
 
+        # Distinguish a call-signature mismatch (a client error) from a
+        # TypeError raised inside the handler body (a server bug).  Binding
+        # before the call keeps handler bugs out of the invalid-params path so
+        # their text is never reflected to the client (R15).
+        signature = self._signature(iface_name, func_name, func)
+        if signature is not None:
+            try:
+                signature.bind(ctx, *params)
+            except TypeError:
+                return error_response(
+                    INVALID_PARAMS, "Invalid params", "Parameter mismatch"
+                )
+
         # Invoke handler method
         try:
             result = func(ctx, *params)
-        except TypeError as e:
-            return error_response(
-                INVALID_PARAMS, "Invalid params", f"Parameter mismatch: {e}"
-            )
         except Exception as e:
             # Convert application errors to RPC errors
             if isinstance(e, RPCError):
                 return error_response(e.code, e.message, e.data)
             else:
-                # Log unexpected errors and return internal error
+                # Log unexpected errors server-side only.  The wire response
+                # must not leak exception text, stack traces or handler
+                # messages (R15 / D4).
                 if self.on_error is not None:
                     self.on_error(e)
                 else:
-                    import traceback
-                    traceback.print_exc()
-                return error_response(
-                    INTERNAL_ERROR, "Internal error", f"Handler exception: {e}"
-                )
+                    logger.exception(
+                        "Unhandled handler exception in %s", method
+                    )
+                return error_response(INTERNAL_ERROR, "Internal error")
 
         # Validate response if validation is enabled.  A null result for a
         # required return type must be validated, not silently accepted
@@ -248,8 +311,13 @@ class Server:
                         data: Any = None) -> Dict[str, Any]:
         """Create a JSON-RPC error response
 
+        ``id`` is always present on the wire, including ``None`` for requests
+        whose id could not be accepted and for transport-level parse/batch
+        errors (M18/M26).  Notifications never reach this helper, so they are
+        still silent.
+
         Args:
-            req_id: Request ID (can be None for notifications)
+            req_id: Request ID (None when the request had no usable id)
             code: Error code
             message: Error message
             data: Optional error data
@@ -264,11 +332,8 @@ class Server:
         if data is not None:
             error['data'] = data
 
-        response = {
+        return {
             'jsonrpc': '2.0',
-            'error': error
+            'error': error,
+            'id': req_id,
         }
-        if req_id is not None:
-            response['id'] = req_id
-
-        return response

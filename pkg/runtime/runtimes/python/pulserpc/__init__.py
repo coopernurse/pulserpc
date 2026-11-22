@@ -47,7 +47,13 @@ from .contract import (
 from .server import Server, DEFAULT_MAX_BATCH_SIZE
 from .client import Client
 from .contract import Contract
-from .transport import Transport, HttpTransport, InProcTransport
+from .transport import (
+    Transport,
+    HttpTransport,
+    InProcTransport,
+    DEFAULT_TIMEOUT,
+    MAX_RESPONSE_BODY_SIZE,
+)
 
 __all__ = [
     "RPCError",
@@ -89,5 +95,7 @@ __all__ = [
     "Transport",
     "HttpTransport",
     "InProcTransport",
+    "DEFAULT_TIMEOUT",
+    "MAX_RESPONSE_BODY_SIZE",
 ]
 

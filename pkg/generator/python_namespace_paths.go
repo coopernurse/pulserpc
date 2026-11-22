@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // PythonNamespacePaths holds the resolved output paths for Python multi-namespace generation
@@ -86,6 +87,10 @@ func CollectNamespaces(namespaceMap map[string]*NamespaceTypes) []string {
 	if len(namespaces) == 0 && hasEmptyNamespace {
 		namespaces = append(namespaces, "")
 	}
+
+	// Map iteration order is randomized; sort so every caller that derives an
+	// output location or ordering from this list is deterministic (C1).
+	sort.Strings(namespaces)
 
 	return namespaces
 }

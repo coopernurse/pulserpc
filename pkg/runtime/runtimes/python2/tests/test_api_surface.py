@@ -1,9 +1,10 @@
 """API-surface guard for the deliberately feature-reduced Python 2 runtime.
 
-Python 3 exports 33 symbols; Python 2 intentionally exports 19. The 14 omitted
-symbols are documented in ``docs/languages/python/python2.md`` (see the
-"Python 2 support policy" section). This test fails on either kind of drift:
-accidentally adding a Python-3-only symbol, or removing a promised one.
+Python 2 intentionally exports 19 symbols; the Python 3 runtime exports the
+full surface. The 14 omitted symbols are documented in
+``docs/languages/python/python2.md`` (see the "Python 2 support policy"
+section). This test fails on either kind of drift: accidentally adding a
+Python-3-only symbol, or removing a promised one.
 """
 
 import io

@@ -2,6 +2,10 @@
 InProcTransport round trips (audit python-03, python-04, python-07, python-08).
 """
 
+import json
+import threading
+import time
+
 import pytest
 
 from pulserpc import (
@@ -147,3 +151,109 @@ def test_client_validates_non_null_result_type():
     with pytest.raises(RPCError) as exc:
         client.call('Demo.echo', ['x'])
     assert exc.value.code == INTERNAL_ERROR
+
+
+# --- R20: request ids are unique under concurrency ----------------------------
+
+class _SlowCounter(int):
+    """An int whose increment sleeps, exposing an unprotected read-modify-write.
+
+    ``client._request_id += 1`` therefore spans a real interval: without the
+    lock every thread reads the same value and they all store the same result.
+    """
+
+    def __add__(self, other):
+        time.sleep(0.002)
+        return _SlowCounter(int(self) + other)
+
+    __radd__ = __add__
+
+
+def test_concurrent_calls_get_unique_and_contiguous_request_ids():
+    transport = RecordingTransport(make_server())
+    client = Client(transport)
+    # Deterministic interleaving instead of relying on GIL switch timing: the
+    # slow increment makes a missing lock lose updates every run.
+    client._request_id = _SlowCounter(0)
+
+    thread_count = 8
+    per_thread = 25
+    barrier = threading.Barrier(thread_count)
+    errors = []
+
+    def worker():
+        try:
+            barrier.wait()
+            for _ in range(per_thread):
+                assert client.Demo.echo('x') == 'x'
+        except Exception as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(thread_count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    total = thread_count * per_thread
+    ids = [
+        r['id'] for r in transport.requests
+        if r.get('method') == 'Demo.echo' and r.get('id') is not None
+    ]
+    assert len(ids) == total
+    assert len(set(ids)) == len(ids), 'request ids must be unique'
+    # Ids are handed out exactly once: no gaps, no duplicates.
+    assert sorted(ids) == list(range(1, total + 1))
+
+
+# --- M24: numeric ids are compared by value ----------------------------------
+
+def test_numeric_id_comparison_is_type_tolerant():
+    client = scripted_client([response(result='x', req_id=1.0)])
+    assert client.call('Demo.echo', ['x']) == 'x'
+
+
+# --- R31: verification diffs against the fetched server IDL -------------------
+
+def test_verify_compatibility_detects_divergent_server_idl():
+    server_idl = make_contract().idl_parsed
+    client = scripted_client([])
+    client.set_local_idl(json.dumps({
+        'interfaces': [{
+            'name': 'Demo',
+            'methods': [{
+                'name': 'onlyInClient',
+                'parameters': [],
+                'returnType': {'builtIn': 'string'},
+            }],
+        }],
+        'structs': [],
+        'enums': [],
+        'rootNamespace': '',
+        'checksum': 'client-checksum',
+    }))
+
+    result = client.verify_compatibility()
+
+    assert result.compatible is False
+    assert any(d.severity.value == 'Error' for d in result.deltas)
+    assert result.server_checksum != result.client_checksum
+
+
+def test_verify_compatibility_matches_identical_idl():
+    server_idl = make_contract().idl_parsed
+    client = scripted_client([])
+    client.set_local_idl(json.dumps(server_idl))
+
+    result = client.verify_compatibility()
+
+    assert result.compatible is True
+    assert result.deltas == []
+
+
+def test_verify_compatibility_requires_local_idl():
+    client = scripted_client([])
+    client._local_idl = None
+    with pytest.raises(RuntimeError):
+        client.verify_compatibility()

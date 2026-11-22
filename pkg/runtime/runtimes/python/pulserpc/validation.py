@@ -14,6 +14,23 @@ def _join_path(parent: str, child: str) -> str:
     return f"{parent}.{child}" if parent else f".{child}"
 
 
+# IDL `int` is a signed 32-bit integer (D1/R25).  Python integers are
+# arbitrary precision, so the range must be enforced by validation even though
+# generated native types may be wider.
+INT_MIN = -2147483648
+INT_MAX = 2147483647
+
+
+def _validate_int_range(value: Any, path: str) -> List["ValidationError"]:
+    if value < INT_MIN or value > INT_MAX:
+        return [_make_error(
+            path,
+            f"Expected int in signed 32-bit range "
+            f"[{INT_MIN}, {INT_MAX}], got {value}",
+        )]
+    return []
+
+
 def _array_index_path(parent: str, index: Any) -> str:
     return f"{parent}[{index}]"
 
@@ -32,7 +49,7 @@ def validate_int(value: Any, path: str = "") -> List[ValidationError]:
     if isinstance(value, bool):
         return [_make_error(path, f"Expected int, got bool")]
     if isinstance(value, int):
-        return []
+        return _validate_int_range(value, path)
     if isinstance(value, float):
         if value != value:  # NaN check
             return [_make_error(path, f"Expected int, got float NaN")]
@@ -42,7 +59,7 @@ def validate_int(value: Any, path: str = "") -> List[ValidationError]:
         # Near-integers with any fractional part are rejected (audit python-02,
         # invariant R2). Go no longer applies a 1e-9 tolerance.
         if value == int(value):
-            return []
+            return _validate_int_range(int(value), path)
     return [_make_error(path, f"Expected int, got {type(value).__name__}")]
 
 
