@@ -1,4 +1,4 @@
-.PHONY: build build-linux test cover lint quality quality-full clean install-tools test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-csharp test-runtime-java test-runtimes test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-python2 test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
+.PHONY: build build-linux test cover lint quality quality-full clean install-tools test-runtime-python test-runtime-python2 test-runtime-ts test-runtime-ts-cjs test-runtime-csharp test-runtime-java test-runtime-go test-runtimes test-all-runtimes test-integration test-integration-java test-integration-scripts test-numeric-types test-enum-case test-raises-propagation test-static-client-ts test-java-compile test-errors test-limits test-generator-python test-generator-ts test-generator-csharp test-generator-java test-generator-go test-generators build-webui lint-webui test-webui start-test-servers stop-test-servers status-test-servers docs-build docs-serve docs-clean test-quickstarts test-quickstart-go test-quickstart-python test-quickstart-python2 test-quickstart-java test-quickstart-ts test-quickstart-csharp test-quickstart-csharp-docker test-openapi
 
 # Variables
 BINARY_NAME=pulserpc
@@ -78,8 +78,9 @@ test-webui:
 quality: lint test lint-webui test-webui
 	@echo "Quality checks completed"
 
-# Run quality checks plus slower generator and quickstart tests
-quality-full: build quality test-runtimes test-quickstarts test-generators
+# Run quality checks plus slower generator, quickstart, and cross-cutting
+# integration scripts.
+quality-full: build quality test-runtimes test-quickstarts test-generators test-integration-scripts test-openapi
 	@echo "Full quality checks completed"
 
 # Install required tools
@@ -140,6 +141,43 @@ test-runtimes: test-runtime-python test-runtime-python2 test-runtime-ts test-run
 test-all-runtimes:
 	@echo "Running HTTP API integration tests against all runtimes..."
 	@bash tests/integration/test_all_runtimes.sh
+
+# Canonical integration target: protocol, limit, and matrix checks.
+test-integration: test-all-runtimes
+
+# The Java runtime's historical `test-integration` target referenced generated
+# TestServer/TestClient classes that no longer exist. This is the supported
+# replacement (the generated-server harness is owned by this repository root).
+test-integration-java: test-generator-java
+
+# Resource limits (D5) against a running server:
+#   make test-limits SERVER_URL=http://localhost:9000
+SERVER_URL ?= http://localhost:8080
+test-limits:
+	@echo "Testing resource limits against $(SERVER_URL)..."
+	@SERVER_URL=$(SERVER_URL) bash tests/integration/test_limits.sh
+
+# Orphaned harness scripts, now reachable from `make`.
+test-numeric-types: build
+	@bash tests/integration/test_numeric_types.sh
+
+test-enum-case: build
+	@bash tests/integration/test_enum_case.sh
+
+test-raises-propagation: build
+	@bash tests/integration/test_raises_propagation.sh
+
+test-static-client-ts: build
+	@bash tests/integration/test_static_client_ts.sh
+
+test-java-compile: build
+	@bash tests/integration/test_java_compile.sh
+
+test-errors: build
+	@bash tests/integration/test_errors.sh
+
+test-integration-scripts: test-numeric-types test-enum-case test-raises-propagation test-static-client-ts test-java-compile test-errors
+	@echo "All integration scripts passed"
 
 # Test Python generator integration
 test-generator-python:

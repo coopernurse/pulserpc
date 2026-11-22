@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEST_SERVERS_SCRIPT="$PROJECT_ROOT/scripts/test-servers.sh"
 HTTP_TEST_SCRIPT="$SCRIPT_DIR/test_http_api.sh"
+LIMITS_TEST_SCRIPT="$SCRIPT_DIR/test_limits.sh"
 
 # Runtime ports (matching test-servers.sh configuration)
 # All seven runtimes advertised in docs/RUNTIME_IMPLEMENTATION_GUIDE.md.
@@ -51,6 +52,11 @@ fi
 # Check if HTTP test script exists
 if [ ! -f "$HTTP_TEST_SCRIPT" ]; then
     echo -e "${RED}ERROR: HTTP test script not found at $HTTP_TEST_SCRIPT${NC}"
+    exit 1
+fi
+
+if [ ! -f "$LIMITS_TEST_SCRIPT" ]; then
+    echo -e "${RED}ERROR: Limit test script not found at $LIMITS_TEST_SCRIPT${NC}"
     exit 1
 fi
 
@@ -110,15 +116,28 @@ for runtime in python ts csharp java go python2 ts-cjs; do
         continue
     fi
     
-    # Run HTTP tests
+    # Run HTTP protocol tests and resource-limit probes
+    runtime_ok=1
     echo ""
-    if bash "$HTTP_TEST_SCRIPT" "$url"; then
+    if ! bash "$HTTP_TEST_SCRIPT" "$url"; then
         echo ""
-        echo -e "${GREEN}✓ $runtime runtime: All HTTP tests passed${NC}"
+        echo -e "${RED}✗ $runtime runtime: HTTP protocol tests failed${NC}"
+        runtime_ok=0
+    fi
+
+    echo ""
+    if ! SERVER_URL="$url" bash "$LIMITS_TEST_SCRIPT"; then
+        echo ""
+        echo -e "${RED}✗ $runtime runtime: limit tests failed${NC}"
+        runtime_ok=0
+    fi
+
+    echo ""
+    if [ "$runtime_ok" = "1" ]; then
+        echo -e "${GREEN}✓ $runtime runtime: All HTTP and limit tests passed${NC}"
         PASSED_RUNTIMES=$((PASSED_RUNTIMES + 1))
     else
-        echo ""
-        echo -e "${RED}✗ $runtime runtime: HTTP tests failed${NC}"
+        echo -e "${RED}✗ $runtime runtime: integration tests failed${NC}"
         FAILED_RUNTIMES+=("$runtime")
     fi
 done

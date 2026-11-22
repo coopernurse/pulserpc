@@ -63,6 +63,61 @@ func TestHTTPAPIHarnessFailsOnWrongErrorCode(t *testing.T) {
 	}
 }
 
+// D5: test_limits.sh must pass against a server that enforces the documented
+// body and batch caps.
+func TestLimitsHarnessAgainstFakeServer(t *testing.T) {
+	bash := findBash(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.ContentLength > 1024*1024 {
+			fmt.Fprint(w, `{"jsonrpc":"2.0","error":{"code":-32600,"message":"Request body too large"},"id":null}`)
+			return
+		}
+
+		var body json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			fmt.Fprint(w, `{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}`)
+			return
+		}
+
+		var batch []json.RawMessage
+		if err := json.Unmarshal(body, &batch); err == nil {
+			if len(batch) > 100 {
+				fmt.Fprint(w, `{"jsonrpc":"2.0","error":{"code":-32600,"message":"Batch exceeds maximum size"},"id":null}`)
+				return
+			}
+		}
+
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{},"id":1}`)
+	}))
+	defer server.Close()
+
+	cmd := exec.Command(bash, filepath.Join("test_limits.sh"), server.URL)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("test_limits.sh failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "All limit tests passed") {
+		t.Errorf("expected the limit harness to report success, got:\n%s", out)
+	}
+}
+
+func findBash(t *testing.T) string {
+	t.Helper()
+	for _, candidate := range []string{`C:\Program Files\Git\bin\bash.exe`, `C:\Program Files\Git\usr\bin\bash.exe`} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available on PATH")
+	}
+	return bash
+}
+
 // core-11: the advertised runtime matrix must cover all seven runtimes and be
 // reachable from `make test-all-runtimes`.
 func TestAllRuntimesMatrixIsComplete(t *testing.T) {
@@ -86,5 +141,50 @@ func TestAllRuntimesMatrixIsComplete(t *testing.T) {
 	}
 	if !strings.Contains(string(mk), "test-all-runtimes:") || !strings.Contains(string(mk), "test_all_runtimes.sh") {
 		t.Errorf("Makefile does not wire up test-all-runtimes")
+	}
+}
+
+// The runtime matrix must be real, not nominal: test-servers.sh has to launch
+// python2 and ts-cjs as well.
+func TestTestServersConfiguresAllRuntimes(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "test-servers.sh"))
+	if err != nil {
+		t.Fatalf("read test-servers.sh: %v", err)
+	}
+	script := string(data)
+	for _, runtime := range []string{"python", "ts", "csharp", "java", "go", "python2", "ts-cjs"} {
+		if !strings.Contains(script, runtime+":") {
+			t.Errorf("RUNTIMES is missing %q", runtime)
+		}
+	}
+}
+
+// Orphaned harness scripts must be reachable from the root Makefile, and the
+// dead Java runtime target must have a documented replacement.
+func TestMakefileWiresIntegrationScripts(t *testing.T) {
+	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	text := string(mk)
+
+	for _, script := range []string{
+		"test_numeric_types.sh",
+		"test_enum_case.sh",
+		"test_raises_propagation.sh",
+		"test_static_client_ts.sh",
+		"test_java_compile.sh",
+		"test_errors.sh",
+	} {
+		if !strings.Contains(text, script) {
+			t.Errorf("Makefile does not reference %s", script)
+		}
+	}
+
+	if !strings.Contains(text, "test-integration-java:") {
+		t.Error("Makefile is missing the Java integration replacement target")
+	}
+	if !strings.Contains(text, "test-integration-scripts:") {
+		t.Error("Makefile is missing test-integration-scripts")
 	}
 }

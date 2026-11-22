@@ -31,6 +31,8 @@ RUNTIMES=(
     "csharp:csharp-client-server:mcr.microsoft.com/dotnet/sdk:8.0:9002:dotnet run --project TestServer.csproj"
     "java:java-client-server:maven:3.9-eclipse-temurin-17:9003:mvn exec:java -Dexec.mainClass=TestServer"
     "go:go-client-server:golang:1.21-alpine:9004:rm -f client.go test_client.go && go build -o test-server-bin ./... && ./test-server-bin"
+    "python2:python-client-server:python:2.7-slim:9005:python test_server.py"
+    "ts-cjs:ts-client-server:node:18-slim:9006:node test_server.js"
 )
 
 # Parse runtime config
@@ -88,39 +90,113 @@ build_binary() {
     fi
 }
 
+# Set by generate_code for start_runtime.
+TEST_SERVER_DIR=""
+TEST_SERVER_FILE=""
+
 # Generate code for a runtime
 generate_code() {
     local runtime_config="$1"
     local output_dir="$2"
-    
+
     IFS='|' read -r name plugin image port start_cmd <<< "$(parse_runtime "$runtime_config")"
-    
+
     echo -e "${YELLOW}Generating $name code...${NC}"
-    # For Java code generation, the generator requires a package flag.
+
+    local generate_ok=0
     if [ "$plugin" = "java-client-server" ]; then
-        JAVA_BASE_PACKAGE="com.pulserpc.test"
-        if ! "$BINARY_PATH" -plugin "$plugin" -package "$JAVA_BASE_PACKAGE" -generate-test-files -dir "$output_dir" "$TEST_IDL"; then
-            echo -e "${RED}ERROR: Code generation failed for $name${NC}"
-            return 1
+        # The Java generator requires a package flag.
+        if "$BINARY_PATH" -plugin "$plugin" -package "com.pulserpc.test" \
+            -generate-test-files -dir "$output_dir" "$TEST_IDL"; then
+            generate_ok=1
+        fi
+    elif [ "$plugin" = "python-client-server" ]; then
+        if [ "$name" = "python2" ]; then
+            if "$BINARY_PATH" -plugin "$plugin" -python-version 2 \
+                -generate-test-files -dir "$output_dir" "$TEST_IDL"; then
+                generate_ok=1
+            fi
+        else
+            if "$BINARY_PATH" -plugin "$plugin" -generate-test-files \
+                -dir "$output_dir" "$TEST_IDL"; then
+                generate_ok=1
+            fi
+        fi
+    elif [ "$plugin" = "ts-client-server" ]; then
+        if [ "$name" = "ts-cjs" ]; then
+            if "$BINARY_PATH" -plugin "$plugin" -generate-test-files \
+                -ts-module cjs -ts-gen-package-json -ts-gen-tsconfig \
+                -dir "$output_dir" "$TEST_IDL"; then
+                generate_ok=1
+            fi
+        else
+            if "$BINARY_PATH" -plugin "$plugin" -generate-test-files \
+                -dir "$output_dir" "$TEST_IDL"; then
+                generate_ok=1
+            fi
         fi
     else
-        if ! "$BINARY_PATH" -plugin "$plugin" -generate-test-files -dir "$output_dir" "$TEST_IDL"; then
-            echo -e "${RED}ERROR: Code generation failed for $name${NC}"
-            return 1
+        if "$BINARY_PATH" -plugin "$plugin" -generate-test-files \
+            -dir "$output_dir" "$TEST_IDL"; then
+            generate_ok=1
         fi
     fi
-    
-    # Verify test_server file exists
-    local test_server_file=""
+
+    if [ "$generate_ok" != "1" ]; then
+        echo -e "${RED}ERROR: Code generation failed for $name${NC}"
+        return 1
+    fi
+
+    # The Python 2 generator intentionally emits only idl.json + the runtime.
+    # Supply the shared conformance server used by the HTTP harness.
+    if [ "$name" = "python2" ]; then
+        local idl_src
+        idl_src=$(find "$output_dir" -type f -name idl.json | head -1)
+        if [ -z "$idl_src" ]; then
+            echo -e "${RED}ERROR: idl.json was not generated for $name${NC}"
+            return 1
+        fi
+        cp "$idl_src" "$output_dir/idl.json"
+        cp "$PROJECT_ROOT/tests/integration/servers/python2_conform_server.py" \
+            "$output_dir/test_server.py"
+        TEST_SERVER_DIR="$output_dir"
+        TEST_SERVER_FILE="$output_dir/test_server.py"
+        return 0
+    fi
+
+    # Test files are emitted under the entry-point namespace directory for
+    # multi-namespace layouts (e.g. conform/test_server.py). Locate them
+    # recursively instead of assuming the output root.
+    local expected=""
     case "$name" in
-        python)
-            test_server_file="$output_dir/test_server.py"
+        python|python2)
+            expected="test_server.py"
             ;;
-        ts)
-            test_server_file="$output_dir/test_server.ts"
-            # Create tsconfig.json if it doesn't exist
-            if [ ! -f "$output_dir/tsconfig.json" ]; then
-                cat > "$output_dir/tsconfig.json" << 'EOF'
+        ts|ts-cjs)
+            expected="test_server.ts"
+            ;;
+        csharp)
+            expected="TestServer.cs"
+            ;;
+        java)
+            expected="TestServer.java"
+            ;;
+        go)
+            expected="test_server.go"
+            ;;
+    esac
+
+    TEST_SERVER_FILE=$(find "$output_dir" -type f -name "$expected" | head -1)
+    if [ -z "$TEST_SERVER_FILE" ]; then
+        echo -e "${RED}ERROR: Test server file not generated: $expected${NC}"
+        return 1
+    fi
+    TEST_SERVER_DIR=$(dirname "$TEST_SERVER_FILE")
+
+    # Create a tsconfig.json for the ESM ts-node variant when the generator
+    # did not emit one (the CJS path passes -ts-gen-tsconfig).
+    if [ "$name" = "ts" ] && [ ! -f "$output_dir/tsconfig.json" ]; then
+        cat > "$output_dir/tsconfig.json" << 'EOF'
 {
   "compilerOptions": {
     "target": "ES2020",
@@ -143,24 +219,8 @@ generate_code() {
   }
 }
 EOF
-            fi
-            ;;
-        csharp)
-            test_server_file="$output_dir/TestServer.cs"
-            ;;
-        java)
-            test_server_file="$output_dir/TestServer.java"
-            ;;
-        go)
-            test_server_file="$output_dir/test_server.go"
-            ;;
-    esac
-    
-    if [ ! -f "$test_server_file" ]; then
-        echo -e "${RED}ERROR: Test server file not generated: $test_server_file${NC}"
-        return 1
     fi
-    
+
     return 0
 }
 
@@ -209,32 +269,45 @@ start_runtime() {
         return 1
     fi
     
-    # Prepare container command
+    # Prepare container command. Test files may live in an entry-point
+    # namespace subdirectory, so run from the directory that contains them.
+    local rel_test_dir="${TEST_SERVER_DIR#"$output_dir"}"
+    rel_test_dir="${rel_test_dir#/}"
+    local container_test_dir="/workspace"
+    if [ -n "$rel_test_dir" ]; then
+        container_test_dir="/workspace/$rel_test_dir"
+    fi
+
     local container_cmd=""
     case "$name" in
-        python)
-            # Install dependencies if needed (test_server.py should work standalone)
-            container_cmd="cd /workspace && $start_cmd"
+        python|python2)
+            # The runtime package lives at /workspace/pulserpc.
+            container_cmd="cd $container_test_dir && PYTHONPATH=/workspace $start_cmd"
             ;;
         ts)
-            # Install TypeScript tools and run server
-            container_cmd="cd /workspace && npm install -g typescript ts-node @types/node >/dev/null 2>&1 && $start_cmd"
+            # Install TypeScript tools and run the ESM server with ts-node.
+            container_cmd="cd $container_test_dir && npm install -g typescript ts-node @types/node >/dev/null 2>&1 && ts-node --project /workspace/tsconfig.json test_server.ts"
+            ;;
+        ts-cjs)
+            # Compile the CommonJS output, then run it with node. @types/node
+            # must be resolvable from the project root for tsc.
+            container_cmd="npm install -g typescript@5 >/dev/null 2>&1 && cd /workspace && npm install --no-save @types/node >/dev/null 2>&1 && cd $container_test_dir && npx tsc --project /workspace/tsconfig.json >/dev/null 2>&1 && node test_server.js"
             ;;
         csharp)
             # Build and run C# server
-            container_cmd="cd /workspace && dotnet build TestServer.csproj >/dev/null 2>&1 && $start_cmd"
+            container_cmd="cd $container_test_dir && dotnet build TestServer.csproj >/dev/null 2>&1 && $start_cmd"
             ;;
         java)
             # If the image already contains Maven (e.g., maven:...), just run mvn; otherwise install it
             if echo "$image" | grep -q "maven"; then
-                container_cmd="cd /workspace && mvn -q package -DskipTests >/dev/null 2>&1 && $start_cmd"
+                container_cmd="cd $container_test_dir && mvn -q package -DskipTests >/dev/null 2>&1 && $start_cmd"
             else
-                container_cmd="cd /workspace && apt-get update >/dev/null 2>&1 && apt-get install -y maven >/dev/null 2>&1 && mvn -q package -DskipTests >/dev/null 2>&1 && $start_cmd"
+                container_cmd="cd $container_test_dir && apt-get update >/dev/null 2>&1 && apt-get install -y maven >/dev/null 2>&1 && mvn -q package -DskipTests >/dev/null 2>&1 && $start_cmd"
             fi
             ;;
         go)
             # Initialize Go module and run server
-            container_cmd="cd /workspace && go mod init test-server 2>/dev/null || true && $start_cmd"
+            container_cmd="cd $container_test_dir && go mod init test-server 2>/dev/null || true && $start_cmd"
             ;;
     esac
     
