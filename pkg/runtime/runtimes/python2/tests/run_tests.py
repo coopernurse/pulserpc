@@ -16,6 +16,7 @@ import test_client
 import test_contract
 import test_rpc
 import test_server
+import test_transport
 import pulserpc.test_validation as test_validation
 
 MODULES = [
@@ -23,6 +24,7 @@ MODULES = [
     ("contract", test_contract),
     ("server", test_server),
     ("client", test_client),
+    ("transport", test_transport),
     ("rpc", test_rpc),
     ("api_surface", test_api_surface),
 ]

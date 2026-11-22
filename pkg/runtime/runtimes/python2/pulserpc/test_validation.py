@@ -105,6 +105,19 @@ def test_int_validation():
     except TypeError:
         pass
 
+    # D1/R25: IDL int is signed 32-bit, inclusive at both boundaries.
+    validate_int(-2147483648)
+    validate_int(2147483647)
+    validate_int(-2147483648.0)
+    validate_int(2147483647.0)
+    for out_of_range in (2147483648, -2147483649, 2 ** 63, -(2 ** 63),
+                         2147483648.0, -2147483649.0):
+        try:
+            validate_int(out_of_range)
+            assert False, "Should have raised TypeError for %r" % (out_of_range,)
+        except TypeError as exc:
+            assert "signed 32-bit" in str(exc), str(exc)
+
     print("  PASS: Int validation")
 
 

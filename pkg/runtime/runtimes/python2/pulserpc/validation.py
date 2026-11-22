@@ -7,6 +7,19 @@ _string_types = (str, type(u""))
 _large_int = 2 ** 100
 _int_types = (int,) if isinstance(_large_int, int) else (int, type(_large_int))
 
+# IDL `int` is a signed 32-bit integer (D1/R25).  Python 2 integers are
+# arbitrary precision (`long`), so the range must be enforced by validation.
+INT_MIN = -2147483648
+INT_MAX = 2147483647
+
+
+def _check_int_range(value):
+    if value < INT_MIN or value > INT_MAX:
+        raise TypeError(
+            "Expected int in signed 32-bit range [%d, %d], got %s"
+            % (INT_MIN, INT_MAX, value)
+        )
+
 
 def validate_string(value):
     """Validate that value is a string"""
@@ -25,6 +38,7 @@ def validate_int(value):
     if isinstance(value, bool):
         raise TypeError("Expected int, got bool")
     if isinstance(value, _int_types):
+        _check_int_range(value)
         return
     if isinstance(value, float):
         if value != value:  # NaN
@@ -32,6 +46,7 @@ def validate_int(value):
         if value == float("inf") or value == float("-inf"):
             raise TypeError("Expected int, got float infinity")
         if value == int(value):
+            _check_int_range(int(value))
             return
     raise TypeError("Expected int, got %s" % type(value).__name__)
 

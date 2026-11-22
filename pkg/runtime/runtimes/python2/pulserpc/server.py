@@ -1,9 +1,38 @@
 """Server class for handling JSON-RPC 2.0 requests"""
 
+import inspect
+import logging
+
 from rpc import RPCError
 from contract import Contract
 
 _string_types = (str, type(u""))
+
+logger = logging.getLogger(__name__)
+
+# Adapters are responsible for reading the request body (the Server is
+# transport-independent).  They should refuse anything larger than this so an
+# oversized payload cannot be buffered in memory (R16/D5).  Kept here so
+# generated documentation and hand-written handlers share one constant.
+DEFAULT_MAX_BODY_SIZE = 1024 * 1024  # 1 MiB
+
+
+def _is_valid_request_id(req_id):
+    """Return True when ``req_id`` is a legal JSON-RPC id (D2/R24).
+
+    JSON-RPC 2.0 allows a string, number or null id.  ``bool`` subclasses
+    ``int`` in Python 2 and dicts/lists are not numbers, so all three must be
+    rejected explicitly instead of being echoed back on the wire.
+    """
+    if req_id is None or isinstance(req_id, _string_types):
+        return True
+    if isinstance(req_id, (int, float)) and not isinstance(req_id, bool):
+        # JSON has no NaN/Infinity; reject non-finite numbers so they are not
+        # echoed as invalid JSON.
+        if isinstance(req_id, float):
+            return req_id == req_id and req_id not in (float("inf"), float("-inf"))
+        return True
+    return False
 
 
 class Server(object):
@@ -43,6 +72,20 @@ class Server(object):
         # A request without an id is a notification: it must never produce a
         # response, not even an error response (JSON-RPC 2.0 section 4.4).
         req_id = req.get("id")
+
+        # An id that is not a string, number or null is an invalid request.  The
+        # bad value cannot be echoed back, so id is always null here (R24).
+        if not _is_valid_request_id(req_id):
+            return {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32600,
+                    "message": "Invalid Request",
+                    "data": "Request id must be a string, number, or null",
+                },
+                "id": None,
+            }
+
         is_notification = req_id is None
 
         def error_response(code, message, data=None):
@@ -105,24 +148,33 @@ class Server(object):
             except (TypeError, ValueError) as e:
                 return error_response(-32602, "Invalid params", str(e))
 
+        # Distinguish a call-signature mismatch (a client error) from a
+        # TypeError raised inside the handler body (a server bug) so handler
+        # bugs are redacted as internal errors instead of returned as -32602
+        # (R15).
+        args = [ctx] + list(params)
         try:
-            args = [ctx] + list(params)
+            inspect.getcallargs(func, *args)
+        except TypeError:
+            return error_response(
+                -32602, "Invalid params", "Parameter mismatch"
+            )
+
+        try:
             result = func(*args)
-        except TypeError as e:
-            return error_response(-32602, "Invalid params", "Parameter mismatch: %s" % e)
         except Exception as e:
             if isinstance(e, RPCError):
                 return error_response(e.code, getattr(e, "message"), e.data)
             else:
+                # Log server-side only; the wire response must not leak
+                # exception text, traceback or handler messages (R15/D4).
                 if self.on_error is not None:
                     self.on_error(e)
                 else:
-                    import traceback
-
-                    traceback.print_exc()
-                return error_response(
-                    -32603, "Internal error", "Handler exception: %s" % e
-                )
+                    logger.exception(
+                        "Unhandled handler exception in %s", method
+                    )
+                return error_response(-32603, "Internal error")
 
         # Validate every response, including None. A None result for a required
         # (non-void) return must be rejected, not silently skipped.

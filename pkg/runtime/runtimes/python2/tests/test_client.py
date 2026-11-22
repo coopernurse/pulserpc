@@ -1,8 +1,24 @@
 """Client tests: in-process round trips, RPCError propagation, envelopes."""
 
+import threading
+
 from pulserpc import Client, Contract, InProcTransport, RPCError, Server, Transport
 
 from support import assert_rpc_error, sample_idl
+
+
+class EchoTransport(Transport):
+    """Serves the IDL, then echoes the request id with a fixed result."""
+
+    def __init__(self):
+        self.idl = sample_idl()
+        self.requests = []
+
+    def request(self, req):
+        self.requests.append(req)
+        if req.get("method") == "pulserpc-idl":
+            return {"jsonrpc": "2.0", "result": self.idl, "id": req.get("id")}
+        return {"jsonrpc": "2.0", "result": "ok", "id": req.get("id")}
 
 
 class ScriptedTransport(Transport):
@@ -143,9 +159,60 @@ def test_notify_sends_no_id():
     print("  PASS: client notifications")
 
 
+# --- M20: named params are converted to positional before going on the wire ---
+
+def test_named_params_are_converted_to_positional():
+    print("Testing named->positional conversion (M20)...")
+    transport = EchoTransport()
+    client = Client(transport)  # validation disabled on purpose
+
+    assert client.CalcService.add(a=2, b=3) == "ok"
+
+    calls = [r for r in transport.requests if r.get("method") == "CalcService.add"]
+    assert len(calls) == 1
+    assert calls[0]["params"] == [2, 3], calls[0]["params"]
+    print("  PASS: named->positional conversion")
+
+
+# --- R20: request ids are unique under concurrency ---------------------------
+
+def test_concurrent_calls_get_unique_request_ids():
+    print("Testing concurrent request ids (R20)...")
+    transport = EchoTransport()
+    client = Client(transport)
+    # The id counter is shared; it must be guarded by a lock.
+    assert hasattr(client, "_request_id_lock")
+
+    errors = []
+
+    def worker():
+        try:
+            for _ in range(100):
+                assert client.CalcService.add(1, 2) == "ok"
+        except Exception as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    ids = [
+        r.get("id") for r in transport.requests
+        if r.get("method") == "CalcService.add" and r.get("id") is not None
+    ]
+    assert len(ids) == 8 * 100
+    assert len(set(ids)) == len(ids), "request ids must be unique"
+    print("  PASS: concurrent request ids")
+
+
 def main():
     test_in_proc_round_trip()
     test_rpc_error_raised_on_server_error()
     test_response_envelope_validation()
     test_notify_sends_no_id()
+    test_named_params_are_converted_to_positional()
+    test_concurrent_calls_get_unique_request_ids()
     print("  test_client: ALL PASSED")

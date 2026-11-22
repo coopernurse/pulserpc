@@ -1,5 +1,7 @@
 """Client class for making JSON-RPC 2.0 requests"""
 
+import threading
+
 from transport import Transport
 from rpc import RPCError
 from contract import Contract
@@ -43,6 +45,9 @@ class Client(object):
         self.validate_request = validate_request
         self.validate_response = validate_response
         self._request_id = 0
+        # Shared clients may be used from several threads; the read-modify-write
+        # increment must be atomic or ids can be reused (R20).
+        self._request_id_lock = threading.Lock()
         self.contract = None
 
         self._bootstrap()
@@ -76,13 +81,19 @@ class Client(object):
         except ValueError:
             raise ValueError("Invalid method name format: %s" % method)
 
+        if isinstance(params, dict):
+            # Named params are converted to a positional list using the IDL
+            # signature before they go on the wire: JSON-RPC 'params' is always
+            # an array (M20).  This mirrors the Python 3 client.
+            converted = self._named_to_positional(
+                iface_name, func_name, params
+            )
+            params = converted if converted is not None else []
+        elif params is not None and not isinstance(params, list):
+            params = [params]
+
         if self.validate_request and self.contract:
-            if isinstance(params, dict):
-                param_list = self._named_to_positional(iface_name, func_name, params)
-            elif isinstance(params, list):
-                param_list = params
-            else:
-                param_list = [] if params is None else [params]
+            param_list = params if params is not None else []
 
             try:
                 self.contract.validate_request(iface_name, func_name, param_list)
@@ -91,8 +102,9 @@ class Client(object):
             except (TypeError, ValueError) as e:
                 raise ValueError("Request validation failed: %s" % e)
 
-        self._request_id += 1
-        req_id = self._request_id if expect_response else None
+        with self._request_id_lock:
+            self._request_id += 1
+            req_id = self._request_id if expect_response else None
 
         req = {
             "jsonrpc": "2.0",

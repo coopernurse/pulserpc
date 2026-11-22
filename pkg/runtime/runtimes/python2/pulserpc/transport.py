@@ -11,6 +11,10 @@ except ImportError:
     urlopen = _u2.urlopen
     HTTPError = _u2.HTTPError
 
+# Defaults shared by every HTTP client (D5/D6, R17/R19).
+DEFAULT_TIMEOUT = 30
+MAX_RESPONSE_BODY_SIZE = 10 * 1024 * 1024  # 10 MiB
+
 
 class Transport(object):
     """Abstract base class for RPC transports"""
@@ -23,11 +27,17 @@ class Transport(object):
 class HttpTransport(Transport):
     """HTTP transport implementation using urllib2"""
 
-    def __init__(self, url, timeout=30, headers=None):
-        """Initialize HTTP transport"""
-        self.url = url
+    def __init__(self, url, timeout=DEFAULT_TIMEOUT, headers=None,
+                 max_response_size=MAX_RESPONSE_BODY_SIZE):
+        """Initialize HTTP transport
+
+        A single trailing ``/`` is normalized away from ``url`` (R30).
+        ``headers`` are merged over the default Content-Type (R29).
+        """
+        self.url = url.rstrip("/") if url else url
         self.timeout = timeout
         self.headers = headers or {}
+        self.max_response_size = max_response_size
 
     def request(self, req):
         """Send request via HTTP POST"""
@@ -40,17 +50,33 @@ class HttpTransport(Transport):
 
         try:
             response = urlopen(http_req, timeout=self.timeout)
-            response_body = response.read().decode("utf-8")
+            # Read one byte past the cap so oversized responses are rejected
+            # without buffering the entire body (R17).
+            raw_body = response.read(self.max_response_size + 1)
+            if len(raw_body) > self.max_response_size:
+                raise ValueError(
+                    "Response body exceeds maximum size of %d bytes"
+                    % self.max_response_size
+                )
+            response_body = raw_body.decode("utf-8")
 
             if not response_body:
                 return {}
 
             return json.loads(response_body)
         except HTTPError as e:
-            response_body = e.read().decode("utf-8")
+            raw_body = e.read(self.max_response_size + 1)
+            if len(raw_body) > self.max_response_size:
+                raise ValueError(
+                    "Response body exceeds maximum size of %d bytes"
+                    % self.max_response_size
+                )
+            response_body = raw_body.decode("utf-8")
             if response_body:
                 return json.loads(response_body)
             return {}
+        except ValueError:
+            raise
         except Exception as e:
             raise ValueError("HTTP request failed: %s" % str(e))
 
