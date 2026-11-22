@@ -42,35 +42,37 @@ public class Server {
 
         // Invariant R24/D2: id must be a string, number, or null.
         Object reqId = request.get("id");
+
+        // Check for notification (no 'id' means no response expected). Computed up
+        // front so every error path below can suppress the response (java-01).
+        boolean isNotification = (reqId == null);
+
         if (reqId != null && !(reqId instanceof String) && !(reqId instanceof Number)) {
-            return errorResponse(null, -32600, "Invalid Request", "id must be a string, number, or null");
+            return isNotification ? null : errorResponse(null, -32600, "Invalid Request", "id must be a string, number, or null");
         }
 
         // Check JSON-RPC version
         Object jsonrpc = request.get("jsonrpc");
         if (!"2.0".equals(jsonrpc)) {
-            return errorResponse(reqId, -32600, "Invalid Request", "jsonrpc version must be '2.0'");
+            return isNotification ? null : errorResponse(reqId, -32600, "Invalid Request", "jsonrpc version must be '2.0'");
         }
 
         // Check for method
         Object methodObj = request.get("method");
         if (!(methodObj instanceof String) || ((String) methodObj).isEmpty()) {
-            return errorResponse(reqId, -32600, "Invalid Request", "Method must be a string");
+            return isNotification ? null : errorResponse(reqId, -32600, "Invalid Request", "Method must be a string");
         }
         String method = (String) methodObj;
 
         // Handle pulserpc-idl request
         if ("pulserpc-idl".equals(method)) {
-            return successResponse(reqId, contract.idlParsed);
+            return isNotification ? null : successResponse(reqId, contract.idlParsed);
         }
-
-        // Check for notification (no 'id' means no response expected)
-        boolean isNotification = reqId == null;
 
         // Parse method name (e.g., "UserService.getUser")
         String[] parts = parseMethodName(method);
         if (parts == null) {
-            return errorResponse(reqId, -32601, "Method not found", "Invalid method name format: " + method);
+            return isNotification ? null : errorResponse(reqId, -32601, "Method not found", "Invalid method name format: " + method);
         }
         String ifaceName = parts[0];
         String funcName = parts[1];
@@ -78,13 +80,13 @@ public class Server {
         // Look up handler
         Object handler = handlers.get(ifaceName);
         if (handler == null) {
-            return errorResponse(reqId, -32601, "Method not found", "Unknown interface: " + ifaceName);
+            return isNotification ? null : errorResponse(reqId, -32601, "Method not found", "Unknown interface: " + ifaceName);
         }
 
         // Get function from handler using reflection
         Method methodInfo = findMethod(handler.getClass(), funcName);
         if (methodInfo == null) {
-            return errorResponse(reqId, -32601, "Method not found", "Unknown method: " + method);
+            return isNotification ? null : errorResponse(reqId, -32601, "Method not found", "Unknown method: " + method);
         }
 
         // Get params
@@ -96,7 +98,7 @@ public class Server {
         if (paramsObj instanceof List) {
             positionalParams.addAll((List<Object>) paramsObj);
         } else if (paramsObj != null) {
-            return errorResponse(reqId, -32602, "Invalid params", "params must be an array");
+            return isNotification ? null : errorResponse(reqId, -32602, "Invalid params", "params must be an array");
         }
 
         // java-09: always validate the parameter count, even when no params were
@@ -105,7 +107,7 @@ public class Server {
             try {
                 contract.validateRequest(ifaceName, funcName, positionalParams);
             } catch (IllegalArgumentException ex) {
-                return errorResponse(reqId, -32602, "Invalid params", ex.getMessage());
+                return isNotification ? null : errorResponse(reqId, -32602, "Invalid params", ex.getMessage());
             }
         }
 
@@ -117,18 +119,18 @@ public class Server {
         try {
             result = invokeHandler(handler, methodInfo, namedParams);
         } catch (IllegalArgumentException ex) {
-            return errorResponse(reqId, -32602, "Invalid params", ex.getMessage());
+            return isNotification ? null : errorResponse(reqId, -32602, "Invalid params", ex.getMessage());
         } catch (RPCError rpcErr) {
-            return errorResponse(reqId, rpcErr.getCode(), rpcErr.getMessage(), rpcErr.getData());
+            return isNotification ? null : errorResponse(reqId, rpcErr.getCode(), rpcErr.getMessage(), rpcErr.getData());
         } catch (Exception ex) {
             if (ex.getCause() instanceof RPCError) {
                 RPCError rpcErr = (RPCError) ex.getCause();
-                return errorResponse(reqId, rpcErr.getCode(), rpcErr.getMessage(), rpcErr.getData());
+                return isNotification ? null : errorResponse(reqId, rpcErr.getCode(), rpcErr.getMessage(), rpcErr.getData());
             }
             // Invariant R15/D4: details stay server-side; the wire gets a fixed
             // message and no data.
             InternalErrors.log("method " + method, ex);
-            return errorResponse(reqId, -32603, "Internal error", null);
+            return isNotification ? null : errorResponse(reqId, -32603, "Internal error", null);
         }
 
         // java-10: let validateResponse decide whether null is acceptable for the
@@ -138,7 +140,7 @@ public class Server {
                 contract.validateResponse(ifaceName, funcName, result);
             } catch (IllegalArgumentException ex) {
                 InternalErrors.log("response validation for " + ifaceName + "." + funcName, ex);
-                return errorResponse(reqId, -32603, "Internal error", null);
+                return isNotification ? null : errorResponse(reqId, -32603, "Internal error", null);
             }
         }
 
