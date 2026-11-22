@@ -7,6 +7,8 @@
 # Covered here:
 #   - request body > 1 MiB  -> -32600 "Request body too large"
 #   - batch entries > 100   -> -32600 "Batch exceeds maximum size"
+#   - boundary probes: exactly 100 entries and a body just under 1 MiB are
+#     accepted, guarding against off-by-one and overly aggressive caps.
 #
 # The 10 MiB response cap is enforced inside generated *clients*. It cannot be
 # asserted by a raw curl probe without a per-runtime client wrapper, so that
@@ -34,7 +36,6 @@ echo ""
 
 TESTS_PASSED=0
 TESTS_FAILED=0
-TESTS_SKIPPED=0
 FAILED_TESTS=()
 
 # A candidate only counts as a JSON interpreter when it can actually run. On
@@ -121,6 +122,33 @@ print(kind + "\t" + value)
 json_get() { json_probe "$1" | cut -f2-; }
 json_type() { json_probe "$1" | cut -f1; }
 
+# json_array_length prints the element count when RESPONSE_BODY is a JSON array
+# and a non-numeric marker otherwise. The python path is exact; the fallback
+# counts the "jsonrpc" keys of a batch response when no interpreter is present.
+json_array_length() {
+    if [ -n "$JSON_PY" ]; then
+        printf '%s' "$RESPONSE_BODY" | "$JSON_PY" -c '
+import json, sys
+
+try:
+    data = json.loads(sys.stdin.read())
+except Exception:
+    print("__INVALID__")
+    raise SystemExit
+
+print(len(data) if isinstance(data, list) else "__NOT_LIST__")
+'
+        return 0
+    fi
+
+    local trimmed
+    trimmed=$(printf '%s' "$RESPONSE_BODY" | tr -d '[:space:]')
+    case "${trimmed:0:1}" in
+        '[') printf '%s\n' "$(printf '%s' "$RESPONSE_BODY" | grep -o '"jsonrpc"' | wc -l | tr -d '[:space:]')" ;;
+        *) printf '__NOT_LIST__\n' ;;
+    esac
+}
+
 # error_detail_matches <prefix>: runtimes disagree on where the human-readable
 # reason lives (Go/Java/C#/TS use error.message, Python uses error.data) and on
 # the exact wording ("Batch exceeds maximum size of 100"). Accept either field
@@ -198,43 +226,55 @@ fi
 do_post "$LARGE_BODY" 60
 probe_ok=1
 probe_detail=""
-cap_enforced=0
 if [ "$RESPONSE_STATUS" = "413" ]; then
     # Some HTTP front ends reject at the transport layer. The documented
     # PulseRPC behavior is a JSON-RPC -32600 body, so only accept 413 when it
     # also carries an error object.
-    if [ "$(json_get error.code)" = "-32600" ]; then
-        cap_enforced=1
-    else
+    if [ "$(json_get error.code)" != "-32600" ]; then
         probe_ok=0
         probe_detail="${probe_detail}HTTP 413 without a -32600 JSON-RPC body; "
     fi
 elif [ "$RESPONSE_STATUS" = "200" ]; then
-    if [ "$(json_get error.code)" = "-32600" ]; then
-        cap_enforced=1
-        error_detail_matches "Request body too large" || {
-            probe_ok=0
-            probe_detail="${probe_detail}error.message/error.data does not start with 'Request body too large'; "
-        }
-    elif [ "$(json_get result)" != "__MISSING__" ]; then
-        # The body was accepted and dispatched: this runtime does not cap the
-        # request body yet (R16). Record it as skipped, not as a core failure.
-        cap_enforced=0
-    else
+    if [ "$(json_get error.code)" != "-32600" ]; then
         probe_ok=0
-        probe_detail="${probe_detail}unexpected response for an oversize body; "
+        if [ "$(json_type result)" != "__MISSING__" ]; then
+            probe_detail="${probe_detail}oversize body was accepted and dispatched (result returned) instead of rejected with -32600; "
+        else
+            probe_detail="${probe_detail}unexpected response for an oversize body (no -32600 and no result); "
+        fi
+    elif ! error_detail_matches "Request body too large"; then
+        probe_ok=0
+        probe_detail="${probe_detail}error.message/error.data does not start with 'Request body too large'; "
     fi
 else
     probe_ok=0
     probe_detail="${probe_detail}expected HTTP 200 or 413, got $RESPONSE_STATUS; "
 fi
+record_result "Oversize request body is rejected with -32600" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
 
-if [ "$probe_ok" = "1" ] && [ "$cap_enforced" = "0" ]; then
-    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
-    echo -e "${YELLOW}SKIP${NC}: Request body cap (1 MiB) is not enforced by this server"
+# Boundary guard (R16): a body just under the cap must still be dispatched,
+# so an overly aggressive cap cannot hide behind the rejection probe above.
+if [ -n "$JSON_PY" ]; then
+    NEAR_LIMIT_BODY=$("$JSON_PY" -c 'import json; print(json.dumps({"jsonrpc": "2.0", "method": "A.add", "params": [1, 2], "id": 1, "pad": "A" * 921600}, separators=(",", ":")))')
 else
-    record_result "Oversize request body is rejected with -32600" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
+    PAD=$(head -c 921600 /dev/zero | tr '\0' 'A')
+    NEAR_LIMIT_BODY="{\"jsonrpc\":\"2.0\",\"method\":\"A.add\",\"params\":[1,2],\"id\":1,\"pad\":\"$PAD\"}"
 fi
+
+do_post "$NEAR_LIMIT_BODY" 60
+probe_ok=1
+probe_detail=""
+if [ "$RESPONSE_STATUS" != "200" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}expected HTTP 200 for a body just under 1 MiB, got $RESPONSE_STATUS; "
+elif [ "$(json_get error.code)" = "-32600" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}body just under 1 MiB was rejected with -32600; "
+elif [ "$(json_type result)" = "__MISSING__" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}body just under 1 MiB did not return a normal result; "
+fi
+record_result "Body just under 1 MiB is accepted" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
 
 # ---------------------------------------------------------------------------
 # D5: batch entries > 100
@@ -253,17 +293,16 @@ BATCH_BODY="$BATCH_BODY]"
 do_post "$BATCH_BODY"
 probe_ok=1
 probe_detail=""
-cap_enforced=0
 if [ "$RESPONSE_STATUS" != "200" ]; then
     probe_ok=0
     probe_detail="${probe_detail}expected HTTP 200, got $RESPONSE_STATUS; "
 elif [ "$(json_type "")" = "list" ]; then
-    # Every entry was dispatched and returned: this runtime does not cap batch
-    # size yet (R18). Record it as skipped, not as a core failure.
-    cap_enforced=0
+    # Every entry was dispatched: the runtime does not cap batch size (R18).
+    # That is a hard failure, not a probe to skip.
+    probe_ok=0
+    probe_detail="${probe_detail}over-limit batch was accepted and dispatched (response is an array) instead of a single -32600 error object; "
 elif [ "$(json_type "")" = "dict" ]; then
     if [ "$(json_get error.code)" = "-32600" ]; then
-        cap_enforced=1
         error_detail_matches "Batch exceeds maximum size" || {
             probe_ok=0
             probe_detail="${probe_detail}error.message/error.data does not start with 'Batch exceeds maximum size'; "
@@ -276,21 +315,41 @@ else
     probe_ok=0
     probe_detail="${probe_detail}over-limit batch must return a single error object; "
 fi
+record_result "Batch with more than 100 entries is rejected" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
 
-if [ "$probe_ok" = "1" ] && [ "$cap_enforced" = "0" ]; then
-    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
-    echo -e "${YELLOW}SKIP${NC}: Batch size cap (100) is not enforced by this server"
+# Boundary guard (R18): exactly 100 entries must be dispatched, so an
+# off-by-one cap cannot reject a legal batch.
+EXACT_BATCH_BODY="["
+for i in $(seq 1 100); do
+    if [ "$i" -gt 1 ]; then
+        EXACT_BATCH_BODY="$EXACT_BATCH_BODY,"
+    fi
+    EXACT_BATCH_BODY="$EXACT_BATCH_BODY{\"jsonrpc\":\"2.0\",\"method\":\"A.add\",\"params\":[1,2],\"id\":$i}"
+done
+EXACT_BATCH_BODY="$EXACT_BATCH_BODY]"
+
+do_post "$EXACT_BATCH_BODY"
+probe_ok=1
+probe_detail=""
+if [ "$RESPONSE_STATUS" != "200" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}expected HTTP 200 for a 100-entry batch, got $RESPONSE_STATUS; "
+elif [ "$(json_get error.code)" = "-32600" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}100-entry batch was rejected with -32600 (off-by-one cap); "
 else
-    record_result "Batch with more than 100 entries is rejected" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
+    entry_count=$(json_array_length)
+    if [ "$entry_count" != "100" ]; then
+        probe_ok=0
+        probe_detail="${probe_detail}100-entry batch must return a 100-element array, got ${entry_count}; "
+    fi
 fi
+record_result "Batch with exactly 100 entries is accepted" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
 
 echo ""
 echo -e "${BLUE}=== Test Summary ===${NC}"
 echo -e "Total tests: $((TESTS_PASSED + TESTS_FAILED))"
 echo -e "${GREEN}Passed: $TESTS_PASSED${NC}"
-if [ "$TESTS_SKIPPED" -gt 0 ]; then
-    echo -e "${YELLOW}Skipped (cap not implemented): $TESTS_SKIPPED${NC}"
-fi
 if [ "$TESTS_FAILED" -gt 0 ]; then
     echo -e "${RED}Failed: $TESTS_FAILED${NC}"
     for test in "${FAILED_TESTS[@]}"; do
