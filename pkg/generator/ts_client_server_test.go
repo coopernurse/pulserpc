@@ -1900,9 +1900,9 @@ func TestResolveStyleMalformedTsconfig(t *testing.T) {
 // correctly for every supported style.
 func TestTSImportPathFreeFunction(t *testing.T) {
 	cases := []struct {
-		style   string
-		target  string
-		want    string
+		style  string
+		target string
+		want   string
 	}{
 		// esm-node: explicit .js suffix required.
 		{"esm-node", "./pulserpc/rpc", "./pulserpc/rpc.js"},
@@ -2074,11 +2074,11 @@ func TestTransformEsmBundler(t *testing.T) {
 		`import { Foo } from './foo.js';`,
 		`import * as bar from '../bar/bar.js';`,
 		`import * as types from './types';`,
-		`import { fileURLToPath } from "url";`,           // package import (no .js)
-		`import { existsSync } from 'fs';`,                // package import (no .js)
+		`import { fileURLToPath } from "url";`, // package import (no .js)
+		`import { existsSync } from 'fs';`,     // package import (no .js)
 		``,
 		`export class X {`,
-		`  field = import.meta.url;`,                      // bundler keeps import.meta.url
+		`  field = import.meta.url;`, // bundler keeps import.meta.url
 		`}`,
 		`export * from './other.js';`,
 		`export { a, b } from './combo.js';`,
@@ -2676,11 +2676,11 @@ func TestGenPackageJSONMultiNamespaceExports(t *testing.T) {
 // "pulserpc-generated".
 func TestGenPackageJSONNameFallback(t *testing.T) {
 	// Construct an outputDir whose basename strips to empty after
-	// sanitizePackageName. Using a directory whose name is "..." works
-	// reliably: filepath.Base returns "...", and all "." runes are
-	// non-alphanumeric, so sanitizePackageName returns "".
+	// sanitizePackageName. Use "@@@": all runes are non-alphanumeric so
+	// sanitizePackageName returns "". ("..." is invalid as a directory name
+	// on Windows, which rejects trailing dots.)
 	base := t.TempDir()
-	outputDir := filepath.Join(base, "...")
+	outputDir := filepath.Join(base, "@@@")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		t.Fatalf("mkdir fallback dir: %v", err)
 	}
@@ -2729,8 +2729,8 @@ func TestGenTSConfigEsmNode(t *testing.T) {
 	withTempOutputDir(t, func(outputDir string) {
 		idl := tsFlatSingleInterfaceIDL()
 		tsRunGenWithFlags(t, idl, outputDir, map[string]string{
-			"ts-module":         "esm-node",
-			"ts-gen-tsconfig":   "true",
+			"ts-module":       "esm-node",
+			"ts-gen-tsconfig": "true",
 		})
 
 		cfg := tsReadJSONFile(t, outputDir, "tsconfig.json")
@@ -2753,8 +2753,8 @@ func TestGenTSConfigEsmBundler(t *testing.T) {
 	withTempOutputDir(t, func(outputDir string) {
 		idl := tsFlatSingleInterfaceIDL()
 		tsRunGenWithFlags(t, idl, outputDir, map[string]string{
-			"ts-module":         "esm-bundler",
-			"ts-gen-tsconfig":   "true",
+			"ts-module":       "esm-bundler",
+			"ts-gen-tsconfig": "true",
 		})
 
 		cfg := tsReadJSONFile(t, outputDir, "tsconfig.json")
@@ -2777,8 +2777,8 @@ func TestGenTSConfigCjs(t *testing.T) {
 	withTempOutputDir(t, func(outputDir string) {
 		idl := tsFlatSingleInterfaceIDL()
 		tsRunGenWithFlags(t, idl, outputDir, map[string]string{
-			"ts-module":         "cjs",
-			"ts-gen-tsconfig":   "true",
+			"ts-module":       "cjs",
+			"ts-gen-tsconfig": "true",
 		})
 
 		cfg := tsReadJSONFile(t, outputDir, "tsconfig.json")
@@ -2992,6 +2992,10 @@ func TestTsCjsOutputIsCjsParseable(t *testing.T) {
 		sb.WriteString("  let ok = 0, fail = 0;\n")
 		for _, tf := range tsFiles {
 			rel, _ := filepath.Rel(outputDir, tf)
+			// JS import specifiers always use forward slashes. On Windows
+			// filepath.Rel returns backslashes, which would be interpreted as
+			// escape sequences (e.g. \t, \n) inside the generated JS string.
+			rel = filepath.ToSlash(rel)
 			sb.WriteString(fmt.Sprintf("  try { await import('./%s'); ok++; } catch(e) { console.error('FAIL %s:', e.message); fail++; }\n", rel, rel))
 		}
 		sb.WriteString("  console.log(`ok=${ok} fail=${fail} total=" + fmt.Sprintf("%d", len(tsFiles)) + "`);\n")
