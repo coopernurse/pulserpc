@@ -227,6 +227,7 @@ generate_code() {
         return 1
     fi
     TEST_SERVER_DIR=$(dirname "$TEST_SERVER_FILE")
+    printf 'SELECTED_TEST_SERVER %s -> %s\n' "$name" "$TEST_SERVER_FILE" >&2
     local rel_test_file="${TEST_SERVER_FILE#"$output_dir"}"
     rel_test_file="${rel_test_file#/}"
     local container_test_file="/workspace/$rel_test_file"
@@ -376,6 +377,7 @@ start_runtime() {
         "$image" \
         $shell -c "$container_cmd" 2>&1) || {
         echo -e "${RED}ERROR: Failed to start $name container: ${container_run_output}${NC}"
+        printf 'CONTAINER_CMD %s: %s\n' "$name" "$container_cmd" >&2
         cleanup_output_dir "$output_dir"
         return 1
     }
@@ -387,7 +389,8 @@ start_runtime() {
     local url="http://localhost:$port"
     if ! wait_for_server "$url" "$name"; then
         echo -e "${YELLOW}Checking container logs...${NC}"
-        docker logs "$container_name"
+        docker logs "$container_name" 2>&1 | tail -60 >&2 || true
+        printf 'CONTAINER_CMD %s: %s\n' "$name" "$container_cmd" >&2
         docker rm -f "$container_name" >/dev/null 2>&1 || true
         cleanup_output_dir "$output_dir"
         return 1
