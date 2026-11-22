@@ -45,7 +45,8 @@ jobs:
       - name: Check for broken links
         working-directory: docs
         run: |
-          bundle exec htmlproofer ./_site \
+          gem install htmlproofer --no-document
+          htmlproofer ./_site \
             --disable-external \
             --ignore-urls "/^http:\/\/localhost:.*/" \
             --ignore-urls "/^#"
