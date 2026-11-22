@@ -208,7 +208,19 @@ generate_code() {
     if [ "$name" = "go" ]; then
         TEST_SERVER_FILE=$(find "$output_dir/cmd/test_server" -type f -name "$expected" | head -1)
     else
-        TEST_SERVER_FILE=$(find "$output_dir" -type f -name "$expected" | head -1)
+        # Multi-namespace output has one test server per namespace, but only
+        # the entry namespace has idl.json. Prefer that one deterministically.
+        local candidate=""
+        while IFS= read -r candidate; do
+            [ -z "$candidate" ] && continue
+            if [ -f "$(dirname "$candidate")/idl.json" ]; then
+                TEST_SERVER_FILE="$candidate"
+                break
+            fi
+            if [ -z "$TEST_SERVER_FILE" ]; then
+                TEST_SERVER_FILE="$candidate"
+            fi
+        done < <(find "$output_dir" -type f -name "$expected")
     fi
     if [ -z "$TEST_SERVER_FILE" ]; then
         echo -e "${RED}ERROR: Test server file not generated: $expected${NC}"
