@@ -103,16 +103,17 @@ func (s *Server) handleJS(w http.ResponseWriter, r *http.Request) {
 
 // handleCSS serves CSS files
 func (s *Server) handleCSS(w http.ResponseWriter, r *http.Request) {
-	// Extract the CSS file path
-	path := strings.TrimPrefix(r.URL.Path, "/css/")
-	if path == "" {
+	// Extract the CSS file path. Named cssPath to avoid shadowing the
+	// imported "path" package used below for embed.FS paths.
+	cssPath := strings.TrimPrefix(r.URL.Path, "/css/")
+	if cssPath == "" {
 		http.NotFound(w, r)
 		return
 	}
 
 	// embed.FS paths always use forward slashes regardless of the host OS.
 	// filepath.Join emits backslashes on Windows, which embed.FS rejects.
-	filePath := path.Join("dist", "css", path)
+	filePath := path.Join("dist", "css", cssPath)
 	data, err := WebUIFiles.ReadFile(filePath)
 	if err != nil {
 		http.NotFound(w, r)
