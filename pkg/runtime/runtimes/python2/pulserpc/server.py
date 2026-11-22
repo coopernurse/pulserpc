@@ -134,8 +134,14 @@ class Server(object):
             return self._error_response(req_id, code, message, data)
 
         if req.get("jsonrpc") != "2.0":
-            return error_response(
-                -32600, "Invalid Request", "jsonrpc version must be '2.0'"
+            # A bad jsonrpc version is an invalid request, so the offending id
+            # must not be echoed back: use null (while keeping notifications
+            # silent).  Do not use the `error_response` closure, which echoes
+            # `req_id`.
+            if is_notification:
+                return None
+            return self._error_response(
+                None, -32600, "Invalid Request", "jsonrpc version must be '2.0'"
             )
 
         method = req.get("method")

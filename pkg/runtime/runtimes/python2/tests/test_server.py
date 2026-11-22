@@ -52,6 +52,17 @@ def test_standard_error_codes():
     print("  PASS: all four standard JSON-RPC error codes")
 
 
+def test_invalid_jsonrpc_version_uses_null_id():
+    print("Testing missing jsonrpc version uses null id...")
+    # A request missing `jsonrpc` is an invalid request (-32600); its id must
+    # be null on the wire rather than echoing the non-notification id of 1.
+    req = {"method": "CalcService.add", "params": [1, 2], "id": 1}
+    resp = _server().call(req)
+    assert _error_code(resp) == -32600, repr(resp)
+    assert "id" in resp and resp["id"] is None, repr(resp)
+    print("  PASS: missing jsonrpc version uses null id")
+
+
 def test_success_and_null_validation():
     print("Testing successful calls and null-result validation...")
     server = _server(person={"name": "Ada"})
@@ -262,6 +273,7 @@ def test_notifications_produce_no_response():
 
 def main():
     test_standard_error_codes()
+    test_invalid_jsonrpc_version_uses_null_id()
     test_success_and_null_validation()
     test_handler_rpc_error_propagation()
     test_internal_error_does_not_leak_details()
