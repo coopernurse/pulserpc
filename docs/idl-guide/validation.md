@@ -114,6 +114,11 @@ Validates `Cart` and `User` structures recursively.
 
 In addition to automatic request/response validation, you can validate arbitrary data against any named type using the `Contract.validate()` method. This is useful for form validation, testing, or validating data before passing it to business logic.
 
+> **Python 2 carve-out:** `Contract.validate()` and the `ValidationResult` /
+> `ValidationError` classes are Python 3 only. The Python 2 `Contract` exposes
+> only `validate_request()` / `validate_response()`, which raise `RPCError` with
+> the reduced `{"error": ..., "invalid_fields": [...]}` data map described above.
+
 ### Loading a Contract
 
 ```python
@@ -247,9 +252,10 @@ When validation fails, PulseRPC returns an RPC error:
 ```
 
 Every runtime emits this structured `ValidationResult` shape (Go, Java, Python,
-Python 2, TypeScript and C#). `invalid_fields` lists the field paths of every
-invalid value and is omitted when no path is available; `error` is the
-human-readable summary.
+TypeScript and C#), except Python 2. Python 2's `Contract` emits a reduced map
+`{"error": ..., "invalid_fields": [...]}` (no `valid` key; `invalid_fields` is
+always present). `invalid_fields` lists the field paths of every invalid value;
+`error` is the human-readable summary.
 
 ## Custom Validation
 

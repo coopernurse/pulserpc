@@ -160,7 +160,7 @@ def handle_error(e: Exception) -> None:
 server = Server(contract, on_error=handle_error)
 ```
 
-When `on_error` is set, it is invoked with the exception rather than logging it. If `on_error` is not set (default `None`), unhandled exceptions are logged to the `pulserpc.server` logger (with traceback) and the client receives only `-32603 "Internal error"` with no `data` (D4/R15).
+When `on_error` is set, it is invoked with the exception rather than logging it. If `on_error` is not set (default `None`), unhandled exceptions are logged (with traceback) through the module logger — `logging.getLogger(__name__)`, which resolves to `pulserpc.server` when the runtime is imported under its normal package name — and the client receives only `-32603 "Internal error"` with no `data` (D4/R15).
 
 ## Transports and Resource Limits
 
@@ -171,8 +171,8 @@ The Python 3 runtime exposes these defaults from `pulserpc`:
 | `DEFAULT_TIMEOUT` | `30` seconds | D6/R19 |
 | `MAX_RESPONSE_BODY_SIZE` | `10485760` (10 MiB) | D5/R17 |
 
-`HttpTransport` accepts custom headers and strips every trailing `/` from
-the base URL (D13/R29/R30):
+`HttpTransport` accepts custom headers and strips **every** trailing `/` from
+the base URL (`url.rstrip("/")`, so no trailing slash survives; D13/R29/R30):
 
 ```python
 from pulserpc import HttpTransport
@@ -187,10 +187,15 @@ transport = HttpTransport(
 A response body larger than `MAX_RESPONSE_BODY_SIZE` raises `ValueError`
 ("Response body exceeds maximum size ...") instead of being buffered.
 
-Generated test servers (`-generate-test-files`) cap request bodies at 1 MiB
-(`MAX_BODY_SIZE`) and batch entries at 100, and return HTTP **405** with a
-JSON-RPC `-32600` body (`id: null`, message
+Generated test servers (`-generate-test-files`) for Go, Java, C#, TypeScript and
+Python 3 cap request bodies at 1 MiB (`MAX_BODY_SIZE`) and batch entries at 100,
+and return HTTP **405** with a JSON-RPC `-32600` body (`id: null`, message
 `"Invalid Request - only POST allowed"`) for non-POST methods (D3/D5/R16/R18/R22).
+
+Python 2 generates no server or adapter — only `idl.json` and the runtime
+package — so the 1 MiB body cap and the 405 handling must live in your own
+adapter. See the [Python 2 Server Guide](python2.html) for a complete
+`BaseHTTPServer` example.
 
 ## Client Usage
 

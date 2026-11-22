@@ -56,8 +56,9 @@ These rules are identical to Python 3 and the other runtimes:
   are rejected with `-32600` and a response `id` of `null`.
 - **D4/R15 — internal errors never leak details.** An unhandled handler
   exception returns `{"code": -32603, "message": "Internal error"}` with no
-  `data`. The exception and traceback are logged server-side via
-  `logging.getLogger("pulserpc.server")` (or passed to `on_error`). Declared
+  `data`. The exception and traceback are logged server-side through the module
+  logger, `logging.getLogger(__name__)` — `pulserpc.server` for the runtime
+  imported under its normal package name — or passed to `on_error`. Declared
   `RPCError` messages/data and `-32602` validation messages are preserved.
 - **D5 — resource limits.** The request body cap is
   `pulserpc.server.DEFAULT_MAX_BODY_SIZE` (1 MiB) for your adapter to enforce;
@@ -66,7 +67,8 @@ These rules are identical to Python 3 and the other runtimes:
 - **D6/R19 — 30 s HTTP timeout** (`pulserpc.transport.DEFAULT_TIMEOUT`).
 - **D13/R29/R30 — custom headers and trailing-slash normalization.**
   `HttpTransport(url, headers={...})` merges headers over `Content-Type`, and
-  `HttpTransport("http://host/api/")` is normalized to
+  **every** trailing `/` is stripped from the base URL: the runtime applies
+  `url.rstrip("/")`, so `HttpTransport("http://host/api///")` is normalized to
   `http://host/api`.
 
 ## Prerequisites
@@ -108,7 +110,7 @@ def handle_error(e):
 server = Server(contract, on_error=handle_error)
 ```
 
-When `on_error` is set, it is invoked with unhandled handler exceptions instead of logging them. If `on_error` is not set (default `None`), unhandled exceptions are logged (with traceback) to the `pulserpc.server` logger, and the client receives only `-32603 "Internal error"` with no `data`.
+When `on_error` is set, it is invoked with unhandled handler exceptions instead of logging them. If `on_error` is not set (default `None`), unhandled exceptions are logged (with traceback) through the `pulserpc.server` logger — `server.py` uses `logging.getLogger(__name__)`, which resolves to that name for the normally imported runtime — and the client receives only `-32603 "Internal error"` with no `data`.
 
 ## Transport Context (ctx)
 
