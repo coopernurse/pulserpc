@@ -189,8 +189,10 @@ public class ServerTest {
             Map<String, Object> response = server.call(req);
             Assert.assertEquals("id type " + badId.getClass().getSimpleName(),
                 -32600, errorCode(response));
-            Assert.assertFalse("invalid id responses must not echo the bad id",
-                response.containsKey("id"));
+            // D3: error envelopes always carry id; an unusable id is reported
+            // as null rather than echoing the bad value.
+            Assert.assertTrue("error responses must include an id member", response.containsKey("id"));
+            Assert.assertNull("invalid id responses must not echo the bad id", response.get("id"));
         }
 
         Map<String, Object> numeric = request("Svc.oneArg", Arrays.asList("hi"));
@@ -228,5 +230,25 @@ public class ServerTest {
         Assert.assertTrue(error.get("code") instanceof Number);
         Assert.assertTrue(error.get("message") instanceof String);
         Assert.assertFalse(error.containsKey("data"));
+        Assert.assertEquals(1, response.get("id"));
+    }
+
+    @Test
+    public void testUnknownIdErrorEnvelopeHasNullIdOnTheWire() {
+        // D3/JSON-RPC: an error response whose request id is unknown must still
+        // serialize an explicit "id": null, matching the generated adapters.
+        Server server = new Server(contract(), true, false);
+        Map<String, Object> response = server.call(null);
+        Assert.assertEquals(-32600, errorCode(response));
+        Assert.assertTrue("error envelope must carry an id member", response.containsKey("id"));
+        Assert.assertNull(response.get("id"));
+
+        for (JsonParser parser : new JsonParser[] { new GsonJsonParser(), new JacksonJsonParser() }) {
+            String wire = parser.toJson(response);
+            Map<String, Object> parsed = parser.fromJson(wire, Map.class);
+            Assert.assertTrue(parser.getClass().getSimpleName() + " dropped the null id: " + wire,
+                parsed.containsKey("id"));
+            Assert.assertNull(parsed.get("id"));
+        }
     }
 }

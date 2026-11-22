@@ -127,7 +127,7 @@ public class Server {
             }
             // Invariant R15/D4: details stay server-side; the wire gets a fixed
             // message and no data.
-            logInternalError("method " + method, ex);
+            InternalErrors.log("method " + method, ex);
             return errorResponse(reqId, -32603, "Internal error", null);
         }
 
@@ -137,7 +137,7 @@ public class Server {
             try {
                 contract.validateResponse(ifaceName, funcName, result);
             } catch (IllegalArgumentException ex) {
-                logInternalError("response validation for " + ifaceName + "." + funcName, ex);
+                InternalErrors.log("response validation for " + ifaceName + "." + funcName, ex);
                 return errorResponse(reqId, -32603, "Internal error", null);
             }
         }
@@ -151,16 +151,9 @@ public class Server {
     }
 
     /**
-     * Logs internal error details server-side only (invariant R15/D4).
-     */
-    private void logInternalError(String where, Throwable error) {
-        System.err.println("Internal error in " + where + ": "
-            + error.getClass().getName() + ": " + error.getMessage());
-        error.printStackTrace(System.err);
-    }
-
-    /**
-     * Creates a JSON-RPC error response
+     * Creates a JSON-RPC error response. Per JSON-RPC 2.0 (and invariant D3)
+     * error responses always carry {@code id}; it is {@code null} when the
+     * request id could not be determined.
      */
     private Map<String, Object> errorResponse(Object reqId, int code, String message, Object data) {
         Map<String, Object> errObj = new HashMap<>();
@@ -173,9 +166,7 @@ public class Server {
         Map<String, Object> response = new HashMap<>();
         response.put("jsonrpc", "2.0");
         response.put("error", errObj);
-        if (reqId != null) {
-            response.put("id", reqId);
-        }
+        response.put("id", reqId);
         return response;
     }
 

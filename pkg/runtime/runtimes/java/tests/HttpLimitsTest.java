@@ -4,6 +4,7 @@ import org.junit.Assert;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.Duration;
 
 /**
@@ -35,9 +36,11 @@ public class HttpLimitsTest {
         byte[] body = new byte[1025];
         try {
             HttpLimits.readBounded(new ByteArrayInputStream(body), 1024, "Request body");
-            Assert.fail("Expected IOException for an oversized stream");
-        } catch (IOException e) {
+            Assert.fail("Expected BodyTooLargeException for an oversized stream");
+        } catch (HttpLimits.BodyTooLargeException e) {
             Assert.assertTrue(e.getMessage().contains("exceeds maximum size"));
+        } catch (IOException e) {
+            Assert.fail("size violations must use BodyTooLargeException, got " + e);
         }
     }
 
@@ -49,9 +52,31 @@ public class HttpLimitsTest {
 
         try {
             HttpLimits.checkDeclaredLength("1025", 1024, "Request body");
-            Assert.fail("Expected IOException for an oversized Content-Length");
-        } catch (IOException e) {
+            Assert.fail("Expected BodyTooLargeException for an oversized Content-Length");
+        } catch (HttpLimits.BodyTooLargeException e) {
             Assert.assertTrue(e.getMessage().contains("exceeds maximum size"));
+        } catch (IOException e) {
+            Assert.fail("size violations must use BodyTooLargeException, got " + e);
+        }
+    }
+
+    @Test
+    public void testTransportReadErrorIsNotMislabelledAsOversize() {
+        // A client disconnect or corrupt chunked encoding is a transport error,
+        // not a size violation: generated servers must answer -32603 for it.
+        InputStream failing = new InputStream() {
+            @Override
+            public int read() throws IOException {
+                throw new IOException("connection reset by peer");
+            }
+        };
+        try {
+            HttpLimits.readBounded(failing, 1024, "Request body");
+            Assert.fail("Expected the transport IOException to propagate");
+        } catch (HttpLimits.BodyTooLargeException e) {
+            Assert.fail("transport read errors must not be labelled as oversized: " + e);
+        } catch (IOException expected) {
+            Assert.assertEquals("connection reset by peer", expected.getMessage());
         }
     }
 }

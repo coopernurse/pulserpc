@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -16,6 +17,13 @@ import (
 // failures are fatal.
 func generateJavaFixture(t *testing.T, idl *parser.IDL, dir string, testFiles bool) {
 	t.Helper()
+	generateJavaFixtureWithLib(t, idl, dir, testFiles, "jackson")
+}
+
+// generateJavaFixtureWithLib is generateJavaFixture with an explicit JSON
+// library selection.
+func generateJavaFixtureWithLib(t *testing.T, idl *parser.IDL, dir string, testFiles bool, jsonLib string) {
+	t.Helper()
 	p := NewJavaClientServer()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.String("dir", "", "output dir")
@@ -26,6 +34,9 @@ func generateJavaFixture(t *testing.T, idl *parser.IDL, dir string, testFiles bo
 	}
 	if err := fs.Set("package", "com.example.rpc"); err != nil {
 		t.Fatalf("set package: %v", err)
+	}
+	if err := fs.Set("json-lib", jsonLib); err != nil {
+		t.Fatalf("set json-lib: %v", err)
 	}
 	if testFiles {
 		if err := fs.Set("generate-test-files", "true"); err != nil {
@@ -161,11 +172,11 @@ func TestJavaGenerationIsByteDeterministic(t *testing.T) {
 	}
 }
 
-// Invariant C10/D7: optional built-in fields, parameters, and returns are boxed
-// so absence is representable; required built-ins stay primitive. R26: float is
-// a Java double.
-func TestJavaOptionalBuiltInsAreBoxed(t *testing.T) {
-	idl := parseTestIDL(t, `
+// optionalBuiltInsIDL is the C10 fixture: required and optional built-ins in a
+// struct and in interface signatures.
+func optionalBuiltInsIDL(t *testing.T) *parser.IDL {
+	t.Helper()
+	return parseTestIDL(t, `
 namespace metrics
 
 struct Sample {
@@ -186,6 +197,13 @@ interface Probe {
   optionalRatio() float [optional]
 }
 `)
+}
+
+// Invariant C10/D7: optional built-in fields, parameters, and returns are boxed
+// so absence is representable; required built-ins stay primitive. R26: float is
+// a Java double.
+func TestJavaOptionalBuiltInsAreBoxed(t *testing.T) {
+	idl := optionalBuiltInsIDL(t)
 	dir := t.TempDir()
 	generateJavaFixture(t, idl, dir, false)
 
@@ -225,6 +243,103 @@ interface Probe {
 	client := readFileString(t, filepath.Join(base, "ProbeClient.java"))
 	if !strings.Contains(client, "public Integer optionalCount()") {
 		t.Errorf("ProbeClient.java should box the optional return type:\n%s", client)
+	}
+}
+
+// Invariant C10: the optional-built-in fixture must actually compile, not only
+// contain boxed declarations. This runs javac over the whole generated project
+// for both JSON libraries, with a minimal stub for the selected library's
+// annotation and type token so no third-party jar is needed.
+//
+// When javac is not on PATH (for example the WSL Go test runner) the test is
+// skipped: the Docker-based integration gate
+// tests/integration/test_generator_java.sh runs `mvn test-compile` on the full
+// generated project for examples/conform.pulse with Jackson and Gson and is the
+// authoritative compile check.
+func TestJavaOptionalBuiltInsFixtureCompiles(t *testing.T) {
+	javac, err := exec.LookPath("javac")
+	if err != nil {
+		t.Skip("javac not on PATH; tests/integration/test_generator_java.sh (mvn test-compile) is the compile gate")
+	}
+
+	fixtures := []struct {
+		jsonLib string
+		stubs   map[string]string
+	}{
+		{
+			jsonLib: "jackson",
+			stubs: map[string]string{
+				"com/fasterxml/jackson/annotation/JsonProperty.java": "package com.fasterxml.jackson.annotation;\n\npublic @interface JsonProperty {\n    String value();\n}\n",
+				"com/fasterxml/jackson/core/type/TypeReference.java": "package com.fasterxml.jackson.core.type;\n\npublic abstract class TypeReference<T> {\n    public java.lang.reflect.Type getType() {\n        return null;\n    }\n}\n",
+			},
+		},
+		{
+			jsonLib: "gson",
+			stubs: map[string]string{
+				"com/google/gson/annotations/SerializedName.java": "package com.google.gson.annotations;\n\npublic @interface SerializedName {\n    String value();\n}\n",
+				"com/google/gson/reflect/TypeToken.java":          "package com.google.gson.reflect;\n\npublic class TypeToken<T> {\n    public java.lang.reflect.Type getType() {\n        return null;\n    }\n}\n",
+			},
+		},
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.jsonLib, func(t *testing.T) {
+			dir := t.TempDir()
+			generateJavaFixtureWithLib(t, optionalBuiltInsIDL(t), dir, false, fixture.jsonLib)
+
+			stubDir := filepath.Join(dir, "stubs")
+			for rel, content := range fixture.stubs {
+				stubPath := filepath.Join(stubDir, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(stubPath), 0o755); err != nil {
+					t.Fatalf("create stub dir: %v", err)
+				}
+				if err := os.WriteFile(stubPath, []byte(content), 0o644); err != nil {
+					t.Fatalf("write stub %s: %v", rel, err)
+				}
+			}
+
+			var sources []string
+			srcRoot := filepath.Join(dir, "src", "main", "java")
+			err := filepath.Walk(srcRoot, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.IsDir() || !strings.HasSuffix(path, ".java") {
+					return nil
+				}
+				sources = append(sources, path)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("walk generated sources: %v", err)
+			}
+			err = filepath.Walk(stubDir, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.IsDir() || !strings.HasSuffix(path, ".java") {
+					return nil
+				}
+				sources = append(sources, path)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("walk stubs: %v", err)
+			}
+			if len(sources) < 10 {
+				t.Fatalf("expected the generated project plus stubs, got %d sources", len(sources))
+			}
+
+			classesDir := filepath.Join(dir, "classes")
+			if err := os.MkdirAll(classesDir, 0o755); err != nil {
+				t.Fatalf("create classes dir: %v", err)
+			}
+			args := append([]string{"-d", classesDir, "-encoding", "UTF-8", "-proc:none", "-nowarn"}, sources...)
+			cmd := exec.Command(javac, args...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("javac failed for the %s optional-built-in fixture:\n%s", fixture.jsonLib, out)
+			}
+		})
 	}
 }
 
@@ -286,7 +401,8 @@ func TestGeneratedJavaAdapterInvariants(t *testing.T) {
 	t.Run("R16_request_body_cap", func(t *testing.T) {
 		for _, want := range []string{
 			"HttpLimits.checkDeclaredLength(declaredLength, HttpLimits.MAX_REQUEST_BODY, \"Request body\");",
-			"HttpLimits.readBounded(exchange.getRequestBody(), HttpLimits.MAX_REQUEST_BODY, \"Request body\");",
+			"HttpLimits.readBounded(requestBodyStream, HttpLimits.MAX_REQUEST_BODY, \"Request body\");",
+			"try (java.io.InputStream requestBodyStream = exchange.getRequestBody()) {",
 			"sendError(exchange, 200, -32600, \"Request body too large\");",
 		} {
 			if !strings.Contains(server, want) {
@@ -298,15 +414,32 @@ func TestGeneratedJavaAdapterInvariants(t *testing.T) {
 		}
 	})
 
+	t.Run("R16_transport_errors_are_not_oversize", func(t *testing.T) {
+		// A request-body read failure (client disconnect, corrupt chunked
+		// encoding) is a transport error, not a size violation: it must reach
+		// the outer handler (-32603), never the "too large" branch.
+		if !strings.Contains(server, "catch (HttpLimits.BodyTooLargeException bodyTooLarge) {") {
+			t.Error("generated server catches a generic IOException for the body cap")
+		}
+		if strings.Contains(server, "catch (IOException bodyTooLarge)") {
+			t.Error("generated server still mislabels transport read errors as oversize")
+		}
+	})
+
 	t.Run("R17_response_body_cap", func(t *testing.T) {
 		for _, want := range []string{
-			"HttpLimits.readBounded(body, HttpLimits.MAX_RESPONSE_BODY, \"Response body\")",
-			"declaredLength > HttpLimits.MAX_RESPONSE_BODY",
+			"HttpLimits.readResponseBody(response, HttpLimits.MAX_RESPONSE_BODY, \"Response body\")",
 			"HttpResponse.BodyHandlers.ofInputStream()",
 		} {
 			if !strings.Contains(client, want) {
 				t.Errorf("generated client missing response-body cap: %q", want)
 			}
+		}
+		// The shared helper owns the status/length checks and closes the body
+		// on every path; the generated client must not duplicate them outside a
+		// try-with-resources.
+		if strings.Contains(client, "response.statusCode() != 200") {
+			t.Error("generated client checks the status outside the body-closing helper")
 		}
 	})
 
@@ -325,8 +458,20 @@ func TestGeneratedJavaAdapterInvariants(t *testing.T) {
 		if !strings.Contains(client, ".timeout(HttpLimits.REQUEST_TIMEOUT)") {
 			t.Error("generated client has no request timeout")
 		}
-		if !strings.Contains(client, ".connectTimeout(java.time.Duration.ofSeconds(10))") {
-			t.Error("generated client has no connect timeout")
+		if !strings.Contains(client, ".connectTimeout(HttpLimits.CONNECT_TIMEOUT)") {
+			t.Error("generated client does not use the shared connect timeout")
+		}
+	})
+
+	t.Run("D3_error_envelope_always_has_id", func(t *testing.T) {
+		if !strings.Contains(server, "        response.put(\"id\", id);\n") {
+			t.Error("generated error envelope must always carry id (null when unknown)")
+		}
+		if !strings.Contains(server, "InternalErrors.log(") {
+			t.Error("generated server does not use the shared internal-error logger")
+		}
+		if strings.Contains(server, "private void logInternalError(") {
+			t.Error("generated server still defines its own logInternalError helper")
 		}
 	})
 
@@ -384,7 +529,7 @@ func TestGeneratedJavaInternalErrorsAreRedacted(t *testing.T) {
 	if strings.Count(server, `"Internal error"`) < 3 {
 		t.Errorf("generated server should return the fixed Internal error message on every internal path:\n%s", server)
 	}
-	if !strings.Contains(server, `logInternalError("request dispatch", e);`) {
+	if !strings.Contains(server, `InternalErrors.log("request dispatch", e);`) {
 		t.Error("generated server does not log request-dispatch errors server-side")
 	}
 }

@@ -2,7 +2,6 @@ package generator
 
 import (
 	"flag"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,90 +201,4 @@ func TestJavaCrossNamespaceImportVerification(t *testing.T) {
 
 func packageToPath(pkg string) string {
 	return strings.ReplaceAll(pkg, ".", string(filepath.Separator))
-}
-
-func TestJavaTestsAreDeterministic(t *testing.T) {
-	for iteration := 0; iteration < 3; iteration++ {
-		t.Run(fmt.Sprintf("iteration_%d", iteration), func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "pulserpc-java-det-")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			defer func() { _ = os.RemoveAll(tmpDir) }()
-
-			idl := &parser.IDL{
-				Structs: []*parser.Struct{
-					{
-						Name:      "book.Book",
-						Namespace: "book",
-						Fields:    []*parser.Field{{Name: "title", Type: &parser.Type{BuiltIn: "string"}}},
-					},
-					{
-						Name:      "user.User",
-						Namespace: "user",
-						Fields: []*parser.Field{
-							{Name: "name", Type: &parser.Type{BuiltIn: "string"}},
-							{Name: "book", Type: &parser.Type{UserDefined: "book.Book"}},
-						},
-					},
-				},
-				Interfaces: []*parser.Interface{
-					{
-						Name:      "book.Library",
-						Namespace: "book",
-					},
-				},
-			}
-
-			p := NewJavaClientServer()
-			fs := flag.NewFlagSet("test", flag.ContinueOnError)
-			fs.String("dir", "src/main/java", "output dir")
-			p.RegisterFlags(fs)
-			if err := fs.Set("dir", tmpDir); err != nil {
-				t.Fatalf("failed to set dir flag: %v", err)
-			}
-			if err := fs.Set("package", "com.test.ns"); err != nil {
-				t.Fatalf("failed to set package flag: %v", err)
-			}
-
-			if err := p.Generate(idl, fs); err != nil {
-				t.Fatalf("Generate failed: %v", err)
-			}
-
-			basePath := filepath.Join(tmpDir, "src", "main", "java")
-
-			bookDir := filepath.Join(basePath, packageToPath("com.test.ns"), "book")
-			if _, err := os.Stat(bookDir); err != nil {
-				t.Fatalf("expected book namespace directory at %s, missing: %v", bookDir, err)
-			}
-
-			userDir := filepath.Join(basePath, packageToPath("com.test.ns"), "user")
-			if _, err := os.Stat(userDir); err != nil {
-				t.Fatalf("expected user namespace directory at %s, missing: %v", userDir, err)
-			}
-
-			bookPath := filepath.Join(bookDir, "Book.java")
-			content, err := os.ReadFile(bookPath)
-			if err != nil {
-				t.Fatalf("failed to read Book.java: %v", err)
-			}
-			if !strings.Contains(string(content), "package com.test.ns.book;") {
-				t.Fatalf("Book.java should contain 'package com.test.ns.book;' but got:\n%s", string(content))
-			}
-
-			userPath := filepath.Join(userDir, "User.java")
-			userContent, err := os.ReadFile(userPath)
-			if err != nil {
-				t.Fatalf("failed to read User.java: %v", err)
-			}
-			if !strings.Contains(string(userContent), "import com.test.ns.book.Book;") {
-				t.Fatalf("User.java should contain 'import com.test.ns.book.Book;' but got:\n%s", string(userContent))
-			}
-
-			runtimeDir := filepath.Join(tmpDir, "src/main/java/com/bitmechanic/pulserpc")
-			if _, err := os.Stat(runtimeDir); err != nil {
-				t.Fatalf("runtime should be at %s, missing: %v", runtimeDir, err)
-			}
-		})
-	}
 }

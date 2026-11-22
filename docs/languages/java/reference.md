@@ -309,14 +309,15 @@ for (Product p : products) {
 }
 ```
 
-## Client Usage
+## Client Usage (optional returns)
 
 ```java
 import checkout.*;
 import com.bitmechanic.pulserpc.*;
 
-Transport transport = new HTTPTransport("http://localhost:8080");
-CatalogServiceClient catalog = new CatalogServiceClient(transport);
+JsonParser jsonParser = new JacksonJsonParser(); // or GsonJsonParser
+Transport transport = new HTTPTransport("http://localhost:8080", jsonParser);
+CatalogServiceClient catalog = new CatalogServiceClient(transport, jsonParser);
 
 // Method calls return Java objects
 List<Product> products = catalog.listProducts();

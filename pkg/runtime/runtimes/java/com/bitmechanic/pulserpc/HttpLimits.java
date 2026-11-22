@@ -2,6 +2,8 @@ package com.bitmechanic.pulserpc;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 /**
@@ -37,13 +39,29 @@ public final class HttpLimits {
     }
 
     /**
-     * Read at most {@code max} bytes from {@code in}. Throws when the stream is
-     * longer than {@code max} so a caller never buffers an unbounded body.
+     * Raised only when a body violates a size limit. Callers map this to
+     * {@code -32600 "Request body too large"} (server) or a size error
+     * (client); every other {@link IOException} is a transport failure and must
+     * not be reported as an oversized body.
+     */
+    public static final class BodyTooLargeException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        public BodyTooLargeException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Read at most {@code max} bytes from {@code in}. Throws a
+     * {@link BodyTooLargeException} when the stream is longer than {@code max}
+     * so a caller never buffers an unbounded body. Transport read failures pass
+     * through unchanged as a plain {@link IOException}.
      */
     public static byte[] readBounded(InputStream in, int max, String what) throws IOException {
         byte[] data = in.readNBytes(max + 1);
         if (data.length > max) {
-            throw new IOException(what + " exceeds maximum size of " + max + " bytes");
+            throw new BodyTooLargeException(oversized(what, max));
         }
         return data;
     }
@@ -63,7 +81,36 @@ public final class HttpLimits {
             return;
         }
         if (declared > max) {
-            throw new IOException(what + " exceeds maximum size of " + max + " bytes");
+            throw new BodyTooLargeException(oversized(what, max));
         }
+    }
+
+    /**
+     * Read a bounded HTTP response body, closing the response stream on every
+     * path. The stream returned by
+     * {@code HttpResponse.BodyHandlers.ofInputStream()} must be closed even
+     * when the status or size checks reject the response, otherwise the
+     * underlying connection is leaked (invariant R17/D5).
+     *
+     * @throws IOException on a non-200 status or a transport read failure
+     * @throws BodyTooLargeException when the body exceeds {@code max} bytes
+     */
+    public static String readResponseBody(HttpResponse<InputStream> response, int max, String what)
+            throws IOException {
+        try (InputStream body = response.body()) {
+            int status = response.statusCode();
+            if (status != 200) {
+                throw new IOException("HTTP error: " + status);
+            }
+            long declaredLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+            if (declaredLength > max) {
+                throw new BodyTooLargeException(oversized(what, max));
+            }
+            return new String(readBounded(body, max, what), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static String oversized(String what, int max) {
+        return what + " exceeds maximum size of " + max + " bytes";
     }
 }
