@@ -488,8 +488,42 @@ test_method "A.putPerson" "[{\"personId\":\"456\",\"firstName\":\"Jane\",\"lastN
 
 # A.echoOptional - optional built-ins (score/active/ratio) must be nullable in
 # statically typed structs and round-trip over the wire (D7/C10).
-test_method "A.echoOptional" "[{\"personId\":\"1\",\"firstName\":\"A\",\"lastName\":\"B\",\"score\":null,\"active\":null,\"ratio\":null}]" "A.echoOptional with null built-ins" "result" "{\"personId\":\"1\",\"firstName\":\"A\",\"lastName\":\"B\",\"score\":null,\"active\":null,\"ratio\":null}"
-test_method "A.echoOptional" "[{\"personId\":\"2\",\"firstName\":\"C\",\"lastName\":\"D\",\"score\":7,\"active\":true,\"ratio\":2.5}]" "A.echoOptional with populated built-ins" "result" "{\"personId\":\"2\",\"firstName\":\"C\",\"lastName\":\"D\",\"score\":7,\"active\":true,\"ratio\":2.5}"
+# D7 allows either absence or an explicit null for optional fields, so assert
+# the required fields exactly and treat each optional field individually.
+do_request POST '{"jsonrpc":"2.0","method":"A.echoOptional","params":[{"personId":"1","firstName":"A","lastName":"B","score":null,"active":null,"ratio":null}],"id":1}'
+probe_ok=1
+probe_detail=""
+if [ "$REQUEST_STATUS" != "200" ]; then
+    probe_ok=0; probe_detail="${probe_detail}expected HTTP 200, got $REQUEST_STATUS; "
+elif [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0; probe_detail="${probe_detail}response is not a JSON object; "
+else
+    [ "$(json_get result.personId)" = "1" ] || { probe_ok=0; probe_detail="${probe_detail}personId not echoed; "; }
+    [ "$(json_get result.firstName)" = "A" ] || { probe_ok=0; probe_detail="${probe_detail}firstName not echoed; "; }
+    [ "$(json_get result.lastName)" = "B" ] || { probe_ok=0; probe_detail="${probe_detail}lastName not echoed; "; }
+    for optional_field in score active ratio email; do
+        optional_field_type=$(json_type "result.$optional_field")
+        if [ "$optional_field_type" != "NoneType" ] && [ "$optional_field_type" != "__MISSING__" ]; then
+            probe_ok=0; probe_detail="${probe_detail}$optional_field was $optional_field_type, expected absent-or-null; "
+        fi
+    done
+fi
+record_result "A.echoOptional with null built-ins" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
+do_request POST '{"jsonrpc":"2.0","method":"A.echoOptional","params":[{"personId":"2","firstName":"C","lastName":"D","score":7,"active":true,"ratio":2.5}],"id":1}'
+probe_ok=1
+probe_detail=""
+if [ "$REQUEST_STATUS" != "200" ]; then
+    probe_ok=0; probe_detail="${probe_detail}expected HTTP 200, got $REQUEST_STATUS; "
+elif [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0; probe_detail="${probe_detail}response is not a JSON object; "
+else
+    [ "$(json_get result.personId)" = "2" ] || { probe_ok=0; probe_detail="${probe_detail}personId not echoed; "; }
+    [ "$(json_get result.score)" = "7" ] || { probe_ok=0; probe_detail="${probe_detail}score was $(json_get result.score), expected 7; "; }
+    [ "$(json_get result.active)" = "true" ] || { probe_ok=0; probe_detail="${probe_detail}active was $(json_get result.active), expected true; "; }
+    [ "$(json_get result.ratio)" = "2.5" ] || { probe_ok=0; probe_detail="${probe_detail}ratio was $(json_get result.ratio), expected 2.5; "; }
+fi
+record_result "A.echoOptional with populated built-ins" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 
 # All three optional built-ins omitted: each echoed field must be absent OR
 # explicitly null (runtimes differ on whether they emit null optional fields).
