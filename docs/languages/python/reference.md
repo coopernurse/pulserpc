@@ -29,7 +29,7 @@ layout: default
 Each struct in your IDL becomes a dictionary in Python:
 
 ```python
-from checkout import Product, Cart, CartItem
+from checkout.rpctypes import Product, Cart, CartItem
 
 # Create instances using dicts
 product = {
@@ -51,7 +51,8 @@ cart = {
 When generating multi-namespace output, import generated symbols from the namespace package instead of the flat output file:
 
 ```python
-from myapp.lib.rpc.book import BookServiceClient
+from myapp.lib.rpc.book.client import Client, HttpTransport
+from myapp.lib.rpc.book.rpctypes import Product
 from myapp.lib.rpc.pulserpc import RPCError
 ```
 
@@ -119,29 +120,30 @@ Common error codes:
 Extend generated service classes. All handler methods receive `ctx` as the first positional argument after `self` for transport-level metadata:
 
 ```python
-from server import PulseRPCServer, CatalogService
+import json
+from pulserpc import Server, Contract
+from server import CatalogService
 
 class CatalogServiceImpl(CatalogService):
     def listProducts(self, ctx):
         # ctx is for transport-level metadata (headers, auth)
-        # Return list of Product dicts
         return [
             {"productId": "p1", "name": "Item 1", "price": 10.0, "stock": 5},
             {"productId": "p2", "name": "Item 2", "price": 20.0, "stock": 3}
         ]
 
     def getProduct(self, ctx, productId):
-        # ctx is for transport-level metadata (headers, auth)
-        # Return None for optional return type
-        for p in products:
+        for p in self.products:
             if p["productId"] == productId:
                 return p
         return None
 
-# Start server
-server = PulseRPCServer(host="0.0.0.0", port=8080)
-server.register("CatalogService", CatalogServiceImpl())
-server.serve_forever()
+with open("checkout/idl.json") as f:
+    contract = Contract(json.load(f))
+
+server = Server(contract, validate_requests=True, validate_responses=True)
+server.add_handler("CatalogService", CatalogServiceImpl())
+# Feed JSON-RPC request dicts to server.call(...) from your HTTP adapter.
 ```
 
 ### Error Callbacks
@@ -169,7 +171,7 @@ The Python 3 runtime exposes these defaults from `pulserpc`:
 | `DEFAULT_TIMEOUT` | `30` seconds | D6/R19 |
 | `MAX_RESPONSE_BODY_SIZE` | `10485760` (10 MiB) | D5/R17 |
 
-`HttpTransport` accepts custom headers and normalizes a single trailing `/` on
+`HttpTransport` accepts custom headers and strips every trailing `/` from
 the base URL (D13/R29/R30):
 
 ```python
@@ -193,18 +195,18 @@ JSON-RPC `-32600` body (`id: null`, message
 ## Client Usage
 
 ```python
-from client import HTTPTransport, CatalogServiceClient
+from client import Client, HttpTransport
 
-transport = HTTPTransport("http://localhost:8080")
-catalog = CatalogServiceClient(transport)
+transport = HttpTransport("http://localhost:8080")
+client = Client(transport)
 
-# Method calls return Python dicts or None
-products = catalog.listProducts()
+# One attribute per interface; methods return Python dicts or None
+products = client.CatalogService.listProducts()
 for product in products:
     print(f"{product['name']}: ${product['price']}")
 
 # Optional methods return None if not found
-product = catalog.getProduct("prod001")
+product = client.CatalogService.getProduct("prod001")
 if product:
     print(product['name'])
 ```

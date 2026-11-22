@@ -88,7 +88,7 @@ The Python client SHALL load local IDL from `idl.json` file located by walking u
 #### Scenario: Local IDL loaded automatically
 - **WHEN** Python client is instantiated
 - **THEN** it attempts to load IDL from `idl.json` relative to the client module
-- **IF** `idl.json` is not found, verification uses server IDL only (no local comparison)
+- **IF** `idl.json` is not found and `set_local_idl()` was not called, `verify_compatibility()` raises a `RuntimeError` (there is no server-IDL-only fallback)
 
 ### Requirement: VerifyCompatibility Method
 

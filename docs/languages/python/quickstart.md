@@ -53,10 +53,12 @@ pulserpc -plugin python-client-server checkout.pulse
 ```
 
 This creates:
-- `checkout.py` - IDL metadata and helpers (structs are dicts, enums are strings)
-- `server.py` - PulseRPCServer framework with abstract service classes
-- `client.py` - HTTPTransport and service client classes
-- `pulserpc/` - Runtime library (RPCError, validation, types)
+- `checkout/__init__.py` - package marker
+- `checkout/rpctypes.py` - struct/enum type definitions
+- `checkout/server.py` - abstract service classes (implement these)
+- `checkout/client.py` - `Client` and `HttpTransport`
+- `checkout/idl.json` - canonical IDL artifact served by `pulserpc-idl`
+- `pulserpc/` - runtime library (`Server`, `Contract`, `RPCError`, validation, types)
 
 For multi-namespace projects, add `-dir` and `-package` so each namespace is generated into its own package directory:
 
@@ -66,7 +68,7 @@ pulserpc -plugin python-client-server -dir ./generated -package myapp.lib.rpc ch
 
 That layout places runtime files in `./generated/myapp/lib/rpc/pulserpc/` and namespace code in `./generated/myapp/lib/rpc/<namespace>/`.
 
-The IDL is embedded directly in `server.py` for the `pulserpc-idl` RPC method.
+The IDL is written to `checkout/idl.json` for the `pulserpc-idl` RPC method (it is not embedded in `server.py`).
 
 Note: the Python generator only creates classes for interfaces (service stubs). Structs are plain dicts and enums are strings, so use maps and lists directly in your handlers and client code.
 
