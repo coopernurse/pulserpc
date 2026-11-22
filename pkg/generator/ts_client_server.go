@@ -954,6 +954,29 @@ func sortedNamespaceNames(namespaceMap map[string]*NamespaceTypes) []string {
 	return out
 }
 
+// allSortedNamespaceNames is like sortedNamespaceNames but keeps the empty
+// (default) namespace. Generation and the cross-namespace type index must still
+// visit it; only export-map/progress paths want it skipped.
+func allSortedNamespaceNames(namespaceMap map[string]*NamespaceTypes) []string {
+	out := make([]string, 0, len(namespaceMap))
+	for k := range namespaceMap {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sortedMapKeys returns a map's string keys in sorted order. Used wherever
+// map iteration would otherwise leak into emitted bytes (C1/D12).
+func sortedMapKeys[T any](m map[string]T) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // Generate generates TypeScript HTTP server and client code from the parsed IDL
 func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// Check silent flag
@@ -1018,7 +1041,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// when set) plus any per-namespace runtime subdirs as a defensive
 	// measure.
 	nsRuntimeDirs := make([]string, 0, len(namespaceMap))
-	for ns := range namespaceMap {
+	for _, ns := range sortedNamespaceNames(namespaceMap) {
 		nsRuntimeDirs = append(nsRuntimeDirs, filepath.Join(outputDir, ns, "pulserpc"))
 		if packagePrefix != "" {
 			nsRuntimeDirs = append(nsRuntimeDirs, filepath.Join(outputDir, packagePrefix, ns, "pulserpc"))
@@ -1044,7 +1067,7 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 
 	// Create per-namespace subdirectories when needed
 	if useNamespaceDirs {
-		for ns := range namespaceMap {
+		for _, ns := range sortedNamespaceNames(namespaceMap) {
 			if err := paths.EnsureNamespaceDir(ns); err != nil {
 				return fmt.Errorf("failed to create namespace directory: %w", err)
 			}
@@ -1056,10 +1079,10 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// This applies in ALL cases, regardless of multi-namespace mode
 	entryPointNs := idl.RootNamespace
 	if entryPointNs == "" {
-		// Fallback: if no RootNamespace set, use the first namespace
-		for ns := range namespaceMap {
-			entryPointNs = ns
-			break
+		// Fallback: if no RootNamespace is set, use the first namespace in
+		// sorted order so generation stays byte-deterministic (C1/D12).
+		if names := sortedNamespaceNames(namespaceMap); len(names) > 0 {
+			entryPointNs = names[0]
 		}
 	}
 	if entryPointNs != "" {
@@ -1082,7 +1105,8 @@ func (p *TSClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// or flat files for backwards-compatible single-namespace output without package.
 	if useNamespaceDirs {
 		// Multi-namespace or package mode: generate types.ts, server.ts, client.ts per namespace
-		for ns, nsTypes := range namespaceMap {
+		for _, ns := range allSortedNamespaceNames(namespaceMap) {
+			nsTypes := namespaceMap[ns]
 			nsDir := paths.ResolveNamespaceDir(ns)
 
 			// Build namespace-scoped maps for type resolution
@@ -1229,7 +1253,15 @@ func (p *TSClientServer) copyRuntimeFiles(paths TSNamespacePaths, silent bool) e
 		return err
 	}
 
-	for filename, data := range files {
+	// Sort filenames so runtime-copy output (and progress logs) is
+	// deterministic; the embedded runtime map is unordered (C1/D12).
+	filenames := make([]string, 0, len(files))
+	for filename := range files {
+		filenames = append(filenames, filename)
+	}
+	sort.Strings(filenames)
+	for _, filename := range filenames {
+		data := files[filename]
 		dstPath := filepath.Join(runtimeDir, filename)
 		transformed := p.transformFileForStyle(data, p.moduleStyle)
 		if err := os.WriteFile(dstPath, transformed, 0644); err != nil {
@@ -1276,7 +1308,9 @@ func writeIDLJSONTs(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 // Returns an error if the same base type name appears in multiple namespaces.
 func buildTypeIndex(namespaceMap map[string]*NamespaceTypes) (map[string]string, error) {
 	index := make(map[string]string)
-	for ns, nsTypes := range namespaceMap {
+	// Sorted iteration keeps duplicate-type diagnostics deterministic (C1).
+	for _, ns := range allSortedNamespaceNames(namespaceMap) {
+		nsTypes := namespaceMap[ns]
 		for _, s := range nsTypes.Structs {
 			base := GetBaseName(s.Name)
 			if existing, ok := index[base]; ok && existing != ns {
@@ -1401,8 +1435,10 @@ func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.
 			}
 			return typeName
 		}
-		// Try to find by base name (for namespaced types like "inc.Response")
-		for key := range structMap {
+		// Try to find by base name (for namespaced types like "inc.Response").
+		// Sorted keys pick a stable winner when two namespaces share a base
+		// name (C1/D16).
+		for _, key := range sortedMapKeys(structMap) {
 			if strings.HasSuffix(key, "."+typeName) {
 				if useTypesPrefix {
 					return "types." + key
@@ -1410,7 +1446,7 @@ func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.
 				return key
 			}
 		}
-		for key := range enumMap {
+		for _, key := range sortedMapKeys(enumMap) {
 			if strings.HasSuffix(key, "."+typeName) {
 				if useTypesPrefix {
 					return "types." + GetBaseName(key)
@@ -1615,8 +1651,10 @@ func getTypeScriptType(t *parser.Type, structMap map[string]*parser.Struct, enum
 			}
 			return typeName
 		}
-		// Try to find by base name (for namespaced types like "inc.Response")
-		for key := range structMap {
+		// Try to find by base name (for namespaced types like "inc.Response").
+		// Sorted keys pick a stable winner when two namespaces share a base
+		// name (C1/D16).
+		for _, key := range sortedMapKeys(structMap) {
 			if strings.HasSuffix(key, "."+typeName) {
 				if useTypesPrefix {
 					return "types." + key
@@ -1624,7 +1662,7 @@ func getTypeScriptType(t *parser.Type, structMap map[string]*parser.Struct, enum
 				return key
 			}
 		}
-		for key := range enumMap {
+		for _, key := range sortedMapKeys(enumMap) {
 			if strings.HasSuffix(key, "."+typeName) {
 				if useTypesPrefix {
 					return "types." + GetBaseName(key)
@@ -2121,6 +2159,10 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("\n")
 	sb.WriteString("// HTTP server\n")
 	sb.WriteString("import * as http from 'http';\n\n")
+	sb.WriteString("// D5/R16/R18: generated adapters enforce hard request limits so a single\n")
+	sb.WriteString("// request cannot force unbounded memory use or handler invocations.\n")
+	sb.WriteString("const MAX_BODY_SIZE = 1024 * 1024; // 1 MiB\n")
+	sb.WriteString("const MAX_BATCH_SIZE = 100;\n\n")
 	sb.WriteString("class TestRPCHandler {\n")
 	sb.WriteString("  private rpcServer: Server;\n\n")
 	sb.WriteString("  constructor(rpcServer: Server) {\n")
@@ -2128,25 +2170,58 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("  }\n\n")
 	sb.WriteString("  handle(req: http.IncomingMessage, res: http.ServerResponse): void {\n")
 	sb.WriteString("    let body = '';\n")
-	sb.WriteString("    req.on('data', (chunk) => { body += chunk.toString(); });\n")
+	sb.WriteString("    let size = 0;\n")
+	sb.WriteString("    let oversized = false;\n")
+	sb.WriteString("    req.on('data', (chunk) => {\n")
+	sb.WriteString("      if (oversized) {\n")
+	sb.WriteString("        // Keep draining the socket but stop retaining bytes.\n")
+	sb.WriteString("        return;\n")
+	sb.WriteString("      }\n")
+	sb.WriteString("      size += chunk.length;\n")
+	sb.WriteString("      if (size > MAX_BODY_SIZE) {\n")
+	sb.WriteString("        // R16: reject oversized bodies with a JSON-RPC error object. The\n")
+	sb.WriteString("        // message is the documented fixed string, not parser detail.\n")
+	sb.WriteString("        oversized = true;\n")
+	sb.WriteString("        const errorResponse = {\n")
+	sb.WriteString("          jsonrpc: '2.0',\n")
+	sb.WriteString("          error: { code: -32600, message: 'Request body too large' },\n")
+	sb.WriteString("          id: null,\n")
+	sb.WriteString("        };\n")
+	sb.WriteString("        res.writeHead(200, { 'Content-Type': 'application/json' });\n")
+	sb.WriteString("        res.end(JSON.stringify(errorResponse));\n")
+	sb.WriteString("      } else {\n")
+	sb.WriteString("        body += chunk.toString();\n")
+	sb.WriteString("      }\n")
+	sb.WriteString("    });\n")
 	sb.WriteString("    req.on('end', async () => {\n")
+	sb.WriteString("      if (oversized) {\n")
+	sb.WriteString("        return;\n")
+	sb.WriteString("      }\n")
 	sb.WriteString("      try {\n")
 	sb.WriteString("        const data = JSON.parse(body);\n")
-	sb.WriteString("        // M7: a batch is an array of requests. Notifications (no id) make\n")
-	sb.WriteString("        // Server.call return null and are dropped from the response array.\n")
-	sb.WriteString("        // An empty batch is invalid and must return a -32600 error object,\n")
-	sb.WriteString("        // not an empty 204 response.\n")
+	sb.WriteString("        // M7/M18/M19: a batch is an array of requests. Notifications (no\n")
+	sb.WriteString("        // id, or id:null) make Server.call return null and are dropped\n")
+	sb.WriteString("        // from the response array. An empty batch is invalid and must\n")
+	sb.WriteString("        // return a single -32600 error object, not an empty 204 response.\n")
+	sb.WriteString("        // Non-object entries become per-entry -32600 responses inside the\n")
+	sb.WriteString("        // array because Server.call rejects them.\n")
 	sb.WriteString("        let response;\n")
 	sb.WriteString("        if (Array.isArray(data)) {\n")
-	sb.WriteString("          response = data.length === 0\n")
-	sb.WriteString("            ? { jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request - empty batch' }, id: null }\n")
-	sb.WriteString("            : (await Promise.all(data.map((item) => this.rpcServer.call(item))))\n")
+	sb.WriteString("          if (data.length === 0) {\n")
+	sb.WriteString("            response = { jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request - empty batch' }, id: null };\n")
+	sb.WriteString("          } else if (data.length > MAX_BATCH_SIZE) {\n")
+	sb.WriteString("            // R18: bound the number of dispatched handler calls.\n")
+	sb.WriteString("            response = { jsonrpc: '2.0', error: { code: -32600, message: 'Batch exceeds maximum size' }, id: null };\n")
+	sb.WriteString("          } else {\n")
+	sb.WriteString("            response = (await Promise.all(data.map((item) => this.rpcServer.call(item))))\n")
 	sb.WriteString("                .filter((item) => item !== null && item !== undefined);\n")
+	sb.WriteString("          }\n")
 	sb.WriteString("        } else {\n")
 	sb.WriteString("          response = await this.rpcServer.call(data);\n")
 	sb.WriteString("        }\n")
 	sb.WriteString("        if (response === null || response === undefined ||\n")
 	sb.WriteString("            (Array.isArray(response) && response.length === 0)) {\n")
+	sb.WriteString("          // M28: a batch containing only notifications has no body.\n")
 	sb.WriteString("          res.writeHead(204);\n")
 	sb.WriteString("          res.end();\n")
 	sb.WriteString("        } else {\n")
@@ -2154,9 +2229,12 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("          res.end(JSON.stringify(response));\n")
 	sb.WriteString("        }\n")
 	sb.WriteString("      } catch (err: any) {\n")
+	sb.WriteString("        // M26: malformed JSON -> -32700. Log the parser detail server-side;\n")
+	sb.WriteString("        // do not echo it to the client.\n")
+	sb.WriteString("        console.error('Parse error:', err);\n")
 	sb.WriteString("        const errorResponse = {\n")
 	sb.WriteString("          jsonrpc: '2.0',\n")
-	sb.WriteString("          error: { code: -32700, message: `Parse error: ${err.message}` },\n")
+	sb.WriteString("          error: { code: -32700, message: 'Parse error' },\n")
 	sb.WriteString("          id: null,\n")
 	sb.WriteString("        };\n")
 	sb.WriteString("        res.writeHead(200, { 'Content-Type': 'application/json' });\n")
@@ -2170,8 +2248,14 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("  if (req.method === 'POST') {\n")
 	sb.WriteString("    handler.handle(req, res);\n")
 	sb.WriteString("  } else {\n")
+	sb.WriteString("    // D3/R22: non-POST requests return 405 with a JSON-RPC error body\n")
+	sb.WriteString("    // (id:null) rather than a bare HTTP status.\n")
 	sb.WriteString("    res.writeHead(405, { 'Content-Type': 'application/json' });\n")
-	sb.WriteString("    res.end(JSON.stringify({ error: 'Method Not Allowed' }));\n")
+	sb.WriteString("    res.end(JSON.stringify({\n")
+	sb.WriteString("      jsonrpc: '2.0',\n")
+	sb.WriteString("      error: { code: -32600, message: 'Invalid Request - only POST allowed' },\n")
+	sb.WriteString("      id: null,\n")
+	sb.WriteString("    }));\n")
 	sb.WriteString("  }\n")
 	sb.WriteString("});\n\n")
 	sb.WriteString("httpServer.listen(8080, '0.0.0.0', () => {\n")
@@ -2382,9 +2466,10 @@ func writeDefaultTestValueTs(sb *strings.Builder, t *parser.Type, structMap map[
 			// If not found with exact name, try to find by base name
 			// (e.g., 'Status' might be registered as 'inc.Status')
 			if e == nil {
-				for enumKey, enumVal := range enumMap {
+				// Sorted lookup keeps ambiguous base-name matches stable (C1).
+				for _, enumKey := range sortedMapKeys(enumMap) {
 					if strings.HasSuffix(enumKey, "."+t.UserDefined) || enumKey == t.UserDefined {
-						e = enumVal
+						e = enumMap[enumKey]
 						break
 					}
 				}
