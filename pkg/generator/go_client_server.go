@@ -1696,6 +1696,7 @@ func writeTestMethodImplGo(sb *strings.Builder, iface *parser.Interface, method 
 	case "repeat":
 		sb.WriteString("	text := req1.ToRepeat\n")
 		sb.WriteString("	count := req1.Count\n")
+		sb.WriteString("\tif count < 0 { panic(\"PULSERPC_SECRET_TOKEN_7F3A\") }\n")
 		sb.WriteString("	if req1.ForceUppercase {\n")
 		sb.WriteString("		text = strings.ToUpper(text)\n")
 		sb.WriteString("	}\n")

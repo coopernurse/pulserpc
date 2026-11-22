@@ -1189,6 +1189,7 @@ func writeTestMethodImpl(sb *strings.Builder, iface *parser.Interface, method *p
 		sb.WriteString("        # RepeatResponse.items should be a list of strings whose length is equal to req1.count\n")
 		sb.WriteString("        text = req1.get('to_repeat', '')\n")
 		sb.WriteString("        count = req1.get('count', 0)\n")
+		sb.WriteString("        if count < 0:\n            raise RuntimeError('PULSERPC_SECRET_TOKEN_7F3A')\n\n")
 		sb.WriteString("        force_uppercase = req1.get('force_uppercase', False)\n")
 		sb.WriteString("        \n")
 		sb.WriteString("        if force_uppercase:\n")

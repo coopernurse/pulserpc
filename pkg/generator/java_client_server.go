@@ -1762,6 +1762,7 @@ func writeTestMethodBody(sb *strings.Builder, iface *parser.Interface, method *p
 			return
 		case "repeat":
 			respType := getJavaTypeWithPackage(method.ReturnType, enumMap, basePackage, packageName, structMap)
+			sb.WriteString("        if (req1.getCount() < 0) throw new RuntimeException(\"PULSERPC_SECRET_TOKEN_7F3A\");\n")
 			sb.WriteString("        String toRepeat = req1.getTo_repeat();\n")
 			sb.WriteString("        if (req1.getForce_uppercase()) toRepeat = toRepeat.toUpperCase();\n")
 			sb.WriteString("        java.util.List<String> items = new java.util.ArrayList<>();\n")
