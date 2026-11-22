@@ -202,24 +202,25 @@ public class Contract {
                 paramDefs.size() + " param(s), " + params.size() + " given");
         }
 
-        // Validate each parameter
+        // Validate each parameter and accumulate errors
+        List<ValidationError> allErrors = new ArrayList<>();
         for (int i = 0; i < params.size(); i++) {
             Object paramValue = params.get(i);
             @SuppressWarnings("unchecked")
             Map<String, Object> paramDef = paramDefs.get(i) instanceof Map ? (Map<String, Object>) paramDefs.get(i) : null;
             if (paramDef == null) continue;
 
-            String paramName = (String) paramDef.get("name");
             @SuppressWarnings("unchecked")
             Map<String, Object> paramType = paramDef.get("type") instanceof Map ? (Map<String, Object>) paramDef.get("type") : new HashMap<>();
             boolean isOptional = paramDef.containsKey("optional") && (Boolean) paramDef.get("optional");
 
-            try {
-                Validation.validateType(paramValue, paramType, structs, enums, isOptional);
-            } catch (Exception e) {
-                throw new IllegalArgumentException("Function '" + ifaceName + "." + funcName +
-                    "' invalid param '" + paramName + "': " + e.getMessage(), e);
-            }
+            List<ValidationError> errs = Validation.validateType(paramValue, paramType, structs, enums, isOptional, "param[" + i + "]");
+            allErrors.addAll(errs);
+        }
+
+        if (!allErrors.isEmpty()) {
+            ValidationResult vr = ValidationResult.fail(allErrors);
+            throw new RPCError(-32602, "Function '" + ifaceName + "." + funcName + "' invalid params", vr.toMap());
         }
     }
 
@@ -251,11 +252,20 @@ public class Contract {
         Map<String, Object> returnType = (Map<String, Object>) fn.get("returnType");
         boolean isOptional = fn.containsKey("returnOptional") && (Boolean) fn.get("returnOptional");
 
-        try {
-            Validation.validateType(result, returnType, structs, enums, isOptional);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Function '" + ifaceName + "." + funcName +
-                "' invalid response: " + e.getMessage(), e);
+        if (result == null) {
+            if (!isOptional) {
+                List<ValidationError> errs = new ArrayList<>();
+                errs.add(new ValidationError("", "Value cannot be null for non-optional type"));
+                ValidationResult vr = ValidationResult.fail(errs);
+                throw new RPCError(-32603, "Function '" + ifaceName + "." + funcName + "' invalid response", vr.toMap());
+            }
+            return;
+        }
+
+        List<ValidationError> errs = Validation.validateType(result, returnType, structs, enums, isOptional, "");
+        if (!errs.isEmpty()) {
+            ValidationResult vr = ValidationResult.fail(errs);
+            throw new RPCError(-32603, "Function '" + ifaceName + "." + funcName + "' invalid response", vr.toMap());
         }
     }
 }
