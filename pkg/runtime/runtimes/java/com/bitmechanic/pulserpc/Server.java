@@ -55,7 +55,7 @@ public class Server {
         // Check JSON-RPC version
         Object jsonrpc = request.get("jsonrpc");
         if (!"2.0".equals(jsonrpc)) {
-            return isNotification ? null : errorResponse(reqId, -32600, "Invalid Request", "jsonrpc version must be '2.0'");
+            return isNotification ? null : errorResponse(null, -32600, "Invalid Request", "jsonrpc version must be '2.0'");
         }
 
         // Check for method
