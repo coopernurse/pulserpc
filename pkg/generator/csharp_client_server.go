@@ -2173,6 +2173,10 @@ func writeMethodImplementationCs(sb *strings.Builder, iface *parser.Interface, m
 			// returns the square root of a
 			sb.WriteString("        return Math.Sqrt(a);\n")
 			return
+		case "divide":
+			sb.WriteString("        if (b == 0) throw new RPCError(1001, \"Validation failed\");\n")
+			sb.WriteString("        return (double)a / b;\n")
+			return
 		case "repeat":
 			// Echos the req1.to_repeat string as a list, optionally forcing to_repeat to upper case
 			// RepeatResponse.items should be a list of strings whose length is equal to req1.count
