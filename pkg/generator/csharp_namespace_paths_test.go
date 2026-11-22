@@ -23,35 +23,36 @@ func TestCSharpNamespacePaths_ResolveNamespaceDir(t *testing.T) {
 			baseDir:     "/output",
 			packageBase: "",
 			namespace:   "",
-			expected:    "/output",
+			// No package base and no namespace: BaseDir is returned verbatim.
+			expected: "/output",
 		},
 		{
 			name:        "single namespace",
 			baseDir:     "/output",
 			packageBase: "",
 			namespace:   "common",
-			expected:    "/output/Common",
+			expected:    filepath.FromSlash("/output/Common"),
 		},
 		{
 			name:        "nested namespace",
 			baseDir:     "/output",
 			packageBase: "",
 			namespace:   "myapp.lib",
-			expected:    "/output/Myapp.lib",
+			expected:    filepath.FromSlash("/output/Myapp.lib"),
 		},
 		{
 			name:        "underscore namespace",
 			baseDir:     "/output",
 			packageBase: "",
 			namespace:   "user_account",
-			expected:    "/output/UserAccount",
+			expected:    filepath.FromSlash("/output/UserAccount"),
 		},
 		{
 			name:        "with package base",
 			baseDir:     "/output",
 			packageBase: "MyApp.Lib.Rpc",
 			namespace:   "book",
-			expected:    "/output/MyApp/Lib/Rpc/Book",
+			expected:    filepath.FromSlash("/output/MyApp/Lib/Rpc/Book"),
 		},
 	}
 
@@ -77,19 +78,19 @@ func TestCSharpNamespacePaths_ResolveRuntimeDir(t *testing.T) {
 			name:        "no package base",
 			baseDir:     "/output",
 			packageBase: "",
-			expected:    "/output/PulseRPC",
+			expected:    filepath.FromSlash("/output/PulseRPC"),
 		},
 		{
 			name:        "with package base",
 			baseDir:     "/output",
 			packageBase: "MyApp.Lib.Rpc",
-			expected:    "/output/MyApp/Lib/Rpc/PulseRPC",
+			expected:    filepath.FromSlash("/output/MyApp/Lib/Rpc/PulseRPC"),
 		},
 		{
 			name:        "simple package base",
 			baseDir:     "/output",
 			packageBase: "MyApp",
-			expected:    "/output/MyApp/PulseRPC",
+			expected:    filepath.FromSlash("/output/MyApp/PulseRPC"),
 		},
 	}
 
@@ -108,7 +109,7 @@ func TestCSharpNamespacePaths_ResolveOutputPath(t *testing.T) {
 	paths := NewCSharpNamespacePaths("/output", "")
 
 	result := paths.ResolveOutputPath("common", "Types.cs")
-	expected := "/output/Common/Types.cs"
+	expected := filepath.FromSlash("/output/Common/Types.cs")
 	if result != expected {
 		t.Errorf("ResolveOutputPath() = %v, want %v", result, expected)
 	}

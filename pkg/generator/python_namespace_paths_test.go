@@ -21,42 +21,43 @@ func TestPythonNamespacePathsResolveNamespaceDir(t *testing.T) {
 			baseDir:     "/output",
 			namespace:   "",
 			packageBase: "",
-			expected:    "/output",
+			// No package base and no namespace: BaseDir is returned verbatim.
+			expected: "/output",
 		},
 		{
 			name:        "named namespace returns base/namespace",
 			baseDir:     "/output",
 			namespace:   "common",
 			packageBase: "",
-			expected:    "/output/common",
+			expected:    filepath.FromSlash("/output/common"),
 		},
 		{
 			name:        "nested namespace returns base/namespace",
 			baseDir:     "/output",
 			namespace:   "inc",
 			packageBase: "",
-			expected:    "/output/inc",
+			expected:    filepath.FromSlash("/output/inc"),
 		},
 		{
 			name:        "named namespace with simple package base",
 			baseDir:     "/output",
 			namespace:   "common",
 			packageBase: "myapp",
-			expected:    "/output/myapp/common",
+			expected:    filepath.FromSlash("/output/myapp/common"),
 		},
 		{
 			name:        "named namespace with nested package base",
 			baseDir:     "/output",
 			namespace:   "common",
 			packageBase: "myapp.lib.rpc",
-			expected:    "/output/myapp/lib/rpc/common",
+			expected:    filepath.FromSlash("/output/myapp/lib/rpc/common"),
 		},
 		{
 			name:        "empty namespace with package base",
 			baseDir:     "/output",
 			namespace:   "",
 			packageBase: "myapp.lib.rpc",
-			expected:    "/output/myapp/lib/rpc",
+			expected:    filepath.FromSlash("/output/myapp/lib/rpc"),
 		},
 	}
 
@@ -82,19 +83,19 @@ func TestPythonNamespacePathsResolveRuntimeDir(t *testing.T) {
 			name:        "no package base uses pulserpc in base dir",
 			baseDir:     "/output",
 			packageBase: "",
-			expected:    "/output/pulserpc",
+			expected:    filepath.FromSlash("/output/pulserpc"),
 		},
 		{
 			name:        "simple package base prepends package path",
 			baseDir:     "/output",
 			packageBase: "myapp",
-			expected:    "/output/myapp/pulserpc",
+			expected:    filepath.FromSlash("/output/myapp/pulserpc"),
 		},
 		{
 			name:        "nested package base treats package as single dir",
 			baseDir:     "/output",
 			packageBase: "myapp.lib.rpc",
-			expected:    "/output/myapp/lib/rpc/pulserpc",
+			expected:    filepath.FromSlash("/output/myapp/lib/rpc/pulserpc"),
 		},
 	}
 
@@ -124,7 +125,7 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 			packageBase: "",
 			namespace:   "",
 			filename:    "rpctypes.py",
-			expected:    "/output/rpctypes.py",
+			expected:    filepath.FromSlash("/output/rpctypes.py"),
 		},
 		{
 			name:        "rpctypes.py in common namespace",
@@ -132,7 +133,7 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 			packageBase: "",
 			namespace:   "common",
 			filename:    "rpctypes.py",
-			expected:    "/output/common/rpctypes.py",
+			expected:    filepath.FromSlash("/output/common/rpctypes.py"),
 		},
 		{
 			name:        "server.py in book namespace",
@@ -140,7 +141,7 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 			packageBase: "",
 			namespace:   "book",
 			filename:    "server.py",
-			expected:    "/output/book/server.py",
+			expected:    filepath.FromSlash("/output/book/server.py"),
 		},
 		{
 			name:        "rpctypes.py in common namespace with simple package",
@@ -148,7 +149,7 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 			packageBase: "myapp",
 			namespace:   "common",
 			filename:    "rpctypes.py",
-			expected:    "/output/myapp/common/rpctypes.py",
+			expected:    filepath.FromSlash("/output/myapp/common/rpctypes.py"),
 		},
 		{
 			name:        "rpctypes.py in book namespace with nested package",
@@ -156,7 +157,7 @@ func TestPythonNamespacePathsResolveOutputPath(t *testing.T) {
 			packageBase: "myapp.lib.rpc",
 			namespace:   "book",
 			filename:    "rpctypes.py",
-			expected:    "/output/myapp/lib/rpc/book/rpctypes.py",
+			expected:    filepath.FromSlash("/output/myapp/lib/rpc/book/rpctypes.py"),
 		},
 	}
 
