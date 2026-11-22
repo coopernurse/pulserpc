@@ -1,6 +1,7 @@
 """Client tests: in-process round trips, RPCError propagation, envelopes."""
 
 import threading
+import time
 
 from pulserpc import Client, Contract, InProcTransport, RPCError, Server, Transport
 
@@ -176,35 +177,61 @@ def test_named_params_are_converted_to_positional():
 
 # --- R20: request ids are unique under concurrency ---------------------------
 
-def test_concurrent_calls_get_unique_request_ids():
+
+class _SlowCounter(int):
+    """An int whose increment sleeps, exposing an unprotected read-modify-write.
+
+    ``client._request_id += 1`` therefore spans a real interval: without the
+    lock every thread reads the same value and they all store the same result.
+    """
+
+    def __add__(self, other):
+        time.sleep(0.002)
+        return _SlowCounter(int(self) + other)
+
+    __radd__ = __add__
+
+
+def test_concurrent_calls_get_unique_and_contiguous_request_ids():
     print("Testing concurrent request ids (R20)...")
     transport = EchoTransport()
     client = Client(transport)
-    # The id counter is shared; it must be guarded by a lock.
-    assert hasattr(client, "_request_id_lock")
+    # Deterministic interleaving: the slow increment makes a missing lock lose
+    # updates every run instead of depending on GIL switch timing.
+    client._request_id = _SlowCounter(0)
 
+    thread_count = 8
+    per_thread = 25
+    start = threading.Event()
     errors = []
 
     def worker():
         try:
-            for _ in range(100):
+            start.wait()
+            for _ in range(per_thread):
                 assert client.CalcService.add(1, 2) == "ok"
         except Exception as exc:  # pragma: no cover - surfaced below
             errors.append(exc)
 
-    threads = [threading.Thread(target=worker) for _ in range(8)]
+    threads = [threading.Thread(target=worker) for _ in range(thread_count)]
     for t in threads:
         t.start()
+    # Give every thread time to reach the barrier before releasing them.
+    time.sleep(0.05)
+    start.set()
     for t in threads:
         t.join()
 
     assert errors == []
+    total = thread_count * per_thread
     ids = [
         r.get("id") for r in transport.requests
         if r.get("method") == "CalcService.add" and r.get("id") is not None
     ]
-    assert len(ids) == 8 * 100
+    assert len(ids) == total
     assert len(set(ids)) == len(ids), "request ids must be unique"
+    # Ids are handed out exactly once: no gaps, no duplicates.
+    assert sorted(ids) == list(range(1, total + 1))
     print("  PASS: concurrent request ids")
 
 
@@ -214,5 +241,5 @@ def main():
     test_response_envelope_validation()
     test_notify_sends_no_id()
     test_named_params_are_converted_to_positional()
-    test_concurrent_calls_get_unique_request_ids()
+    test_concurrent_calls_get_unique_and_contiguous_request_ids()
     print("  test_client: ALL PASSED")

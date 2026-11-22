@@ -317,7 +317,9 @@ def test_oversized_batch_is_rejected_without_running_handlers():
     ]
     response = server.call(batch)
     assert error_code(response) == INVALID_REQUEST
-    assert 'id' not in response  # a rejected batch has no request id
+    # A rejected batch has no request id, but the key is still emitted as null
+    # (M18/M26).
+    assert 'id' in response and response['id'] is None
     # The whole batch is refused up front: no per-entry amplification.
     assert server.handlers['Demo'].calls == []
 
@@ -404,6 +406,59 @@ def test_invalid_id_notification_also_returns_error_object():
         },
         'id': None,
     }
+
+
+# --- M18/M26: every error response carries an explicit id key ------------------
+
+def test_error_responses_always_emit_an_id_key():
+    server = make_server()
+
+    # An id that cannot be echoed back is reported as null, not omitted.
+    invalid = server.call({'jsonrpc': '2.0', 'method': 'Demo.echo', 'id': []})
+    assert 'id' in invalid and invalid['id'] is None
+
+    # Transport-level batch errors have no request id either.
+    empty_batch = server.call([])
+    assert 'id' in empty_batch and empty_batch['id'] is None
+
+    # A normal error still echoes the request id it was given.
+    normal = server.call(request('Demo.nope', req_id='abc'))
+    assert normal['id'] == 'abc'
+
+
+# --- review finding: handler signatures are introspected once per method -------
+
+def test_handler_signature_is_cached_per_method(monkeypatch):
+    import pulserpc.server as server_module
+
+    real = server_module.inspect.signature
+    calls = []
+
+    def counting(func):
+        calls.append(func)
+        return real(func)
+
+    monkeypatch.setattr(server_module.inspect, 'signature', counting)
+    server = make_server()
+    assert server.call(request('Demo.echo', ['a']))['result'] == 'a'
+    assert server.call(request('Demo.echo', ['b']))['result'] == 'b'
+
+    echo_lookups = [f for f in calls if getattr(f, '__name__', None) == 'echo']
+    assert len(echo_lookups) == 1
+
+
+def test_add_handler_clears_signature_cache():
+    server = make_server(validate_requests=False)
+    assert server.call(request('Demo.echo', ['x']))['result'] == 'x'
+
+    class NarrowEcho(DemoHandler):
+        def echo(self, ctx):
+            return 'narrow'
+
+    server.add_handler('Demo', NarrowEcho())
+    # A stale cached signature would still accept the extra argument.
+    assert error_code(server.call(request('Demo.echo', ['x']))) == INVALID_PARAMS
+    assert server.call(request('Demo.echo', []))['result'] == 'narrow'
 
 
 # --- M18/M21-M28: message-validation invariants -------------------------------

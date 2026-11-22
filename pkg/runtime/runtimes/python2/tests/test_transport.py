@@ -114,9 +114,27 @@ def test_empty_response():
     print("  PASS: empty response handling")
 
 
+def test_invalid_json_response_is_wrapped():
+    print("Testing invalid JSON response wrapping...")
+    fake = FakeUrlopen("not json")
+    original = _install(fake)
+    try:
+        transport = HttpTransport("http://example.com/api")
+        try:
+            transport.request({"jsonrpc": "2.0", "method": "x", "id": 1})
+            assert False, "Should have raised ValueError for invalid JSON"
+        except ValueError as exc:
+            # Python 2 has no JSONDecodeError; the bare message must not escape.
+            assert "Invalid JSON response" in str(exc), str(exc)
+    finally:
+        _install(original)
+    print("  PASS: invalid JSON response wrapping")
+
+
 def main():
     test_defaults()
     test_timeout_headers_and_url_normalization()
     test_response_cap()
     test_empty_response()
+    test_invalid_json_response_is_wrapped()
     print("  test_transport: ALL PASSED")

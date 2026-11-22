@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1612,10 +1613,125 @@ func TestGenerateTestServerPyMalformedJSONReturnsParseError(t *testing.T) {
 		"-32700",
 		"\"Parse error\"",
 		"Invalid JSON",
+		// json.loads raises plain ValueError (not JSONDecodeError) for huge
+		// integers, so the parse handler must catch the superclass (M26).
+		"except ValueError:",
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("generated test_server.py should contain %q, got:\n%s", want, code)
 		}
+	}
+	if strings.Contains(code, "except json.JSONDecodeError") {
+		t.Errorf("generated test_server.py must not catch only JSONDecodeError")
+	}
+}
+
+// runGeneratedParseErrorDriver generates a Python 3 test server for a single
+// namespace and exercises its do_POST with bodies whose decoding raises
+// ValueError rather than json.JSONDecodeError (invalid UTF-8 and, on Python
+// >=3.11, a huge integer).  Before the M26 fix these escaped do_POST and dropped
+// the connection instead of returning -32700.
+func TestGeneratedTestServerReturnsParseErrorForValueErrors(t *testing.T) {
+	pythonExe, err := exec.LookPath("python")
+	if err != nil {
+		pythonExe, err = exec.LookPath("python3")
+	}
+	if err != nil {
+		t.Skip("no python interpreter on PATH; generated-server execution is covered by tests/integration")
+	}
+
+	tmpDir := newPythonTestTempDir(t, "pulserpc-parseerror-")
+	idl := &parser.IDL{
+		RootNamespace: "demo",
+		Interfaces: []*parser.Interface{{
+			Name:      "A",
+			Namespace: "demo",
+			Methods: []*parser.Method{{
+				Name:       "m",
+				ReturnType: &parser.Type{BuiltIn: "string"},
+			}},
+		}},
+	}
+
+	p := NewPythonClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	fs.Bool("generate-test-files", false, "generate test files")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("generate-test-files", "true"); err != nil {
+		t.Fatalf("failed to set generate-test-files flag: %v", err)
+	}
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	driver := `import io
+import json
+import sys
+
+from demo.test_server import TestRPCHandler
+
+
+class _WFile(object):
+    def __init__(self):
+        self.data = b""
+
+    def write(self, chunk):
+        self.data += chunk
+        return len(chunk)
+
+
+def dispatch(body):
+    handler = TestRPCHandler.__new__(TestRPCHandler)
+    handler.rfile = io.BytesIO(body)
+    handler.wfile = _WFile()
+    handler.headers = {"Content-Length": str(len(body))}
+    handler._headers_buffer = []
+    handler.request_version = "HTTP/1.0"
+    handler.requestline = "POST / HTTP/1.0"
+    handler.command = "POST"
+    handler.client_address = ("127.0.0.1", 0)
+    handler.server = None
+    handler.close_connection = True
+    handler.do_POST()
+    head, _, payload = handler.wfile.data.partition(b"\r\n\r\n")
+    status = int(head.split(b" ")[1])
+    return status, json.loads(payload.decode("utf-8"))
+
+
+def check(label, body):
+    status, response = dispatch(body)
+    assert status == 200, (label, status, response)
+    assert response["error"]["code"] == -32700, (label, response)
+    assert response["id"] is None, (label, response)
+
+
+# Invalid UTF-8 raises UnicodeDecodeError, a ValueError but not JSONDecodeError.
+check("invalid utf-8", b'{"jsonrpc": "2.0", "id": 1, "v": "\xff"}')
+
+# A huge integer raises ValueError from json.loads on Python >= 3.11.
+if sys.version_info >= (3, 11):
+    huge = b'{"jsonrpc": "2.0", "method": "A.m", "id": ' + b"9" * 6000 + b"}"
+    check("huge integer", huge)
+
+print("OK")
+`
+	driverPath := filepath.Join(tmpDir, "parse_error_driver.py")
+	if err := os.WriteFile(driverPath, []byte(driver), 0644); err != nil {
+		t.Fatalf("failed to write driver: %v", err)
+	}
+
+	cmd := exec.Command(pythonExe, "parse_error_driver.py")
+	cmd.Dir = tmpDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated test server did not return -32700: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "OK") {
+		t.Fatalf("driver did not complete: %s", out)
 	}
 }
 
@@ -1675,6 +1791,39 @@ func TestPythonGeneratorIDLJSONCarriesRootNamespaceAndChecksum(t *testing.T) {
 	}
 	if _, ok := parsed["interfaces"].([]interface{}); !ok {
 		t.Errorf("idl.json must carry interfaces, got %T", parsed["interfaces"])
+	}
+}
+
+// C1: with several namespaces and no recorded root namespace, the fallback
+// entry point must be stable (lexicographically first), not map-iteration order.
+func TestPythonGeneratorIDLJSONPlacementIsDeterministic(t *testing.T) {
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{Name: "Zeta", Namespace: "zeta"},
+			{Name: "Alpha", Namespace: "alpha"},
+		},
+	}
+
+	for run := 0; run < 5; run++ {
+		tmpDir := newPythonTestTempDir(t, "pulserpc-idljson-multins-")
+
+		p := NewPythonClientServer()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		fs.String("dir", "", "output dir")
+		p.RegisterFlags(fs)
+		if err := fs.Set("dir", tmpDir); err != nil {
+			t.Fatalf("failed to set dir flag: %v", err)
+		}
+		if err := p.Generate(idl, fs); err != nil {
+			t.Fatalf("run %d: Generate failed: %v", run, err)
+		}
+
+		if _, err := os.Stat(filepath.Join(tmpDir, "alpha", "idl.json")); err != nil {
+			t.Fatalf("run %d: idl.json must be written to the lexicographically first namespace: %v", run, err)
+		}
+		if _, err := os.Stat(filepath.Join(tmpDir, "zeta", "idl.json")); err == nil {
+			t.Fatalf("run %d: idl.json must not also be written to zeta", run)
+		}
 	}
 }
 

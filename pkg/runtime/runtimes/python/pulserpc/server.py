@@ -3,7 +3,7 @@
 import inspect
 import logging
 import math
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from .rpc import (
     RPCError,
     INVALID_REQUEST,
@@ -71,6 +71,13 @@ class Server:
         self.validate_responses = validate_responses
         self.on_error = on_error
         self.max_batch_size = max_batch_size
+        # inspect.signature() is comparatively expensive and the handler
+        # signature never changes between calls, so cache it per
+        # (interface, method).  add_handler clears it so a replaced handler is
+        # re-introspected (review finding: per-call introspection).
+        self._signature_cache: Dict[
+            Tuple[str, str], Optional[inspect.Signature]
+        ] = {}
 
     def add_handler(self, iface_name: str, handler: Any) -> None:
         """Register a handler instance for an interface
@@ -80,6 +87,22 @@ class Server:
             handler: Handler instance with methods matching the interface
         """
         self.handlers[iface_name] = handler
+        self._signature_cache.clear()
+
+    def _signature(self, iface_name: str, func_name: str, func: Any
+                   ) -> Optional[inspect.Signature]:
+        """Return the cached signature for a handler method.
+
+        ``None`` is cached when the callable cannot be introspected (e.g. a
+        C function); the invocation itself then decides success or failure.
+        """
+        key = (iface_name, func_name)
+        if key not in self._signature_cache:
+            try:
+                self._signature_cache[key] = inspect.signature(func)
+            except (TypeError, ValueError):
+                self._signature_cache[key] = None
+        return self._signature_cache[key]
 
     def call(self, req: Union[Dict[str, Any], List[Any]], ctx: Any = None
              ) -> Optional[Union[Dict[str, Any], List[Dict[str, Any]]]]:
@@ -153,15 +176,10 @@ class Server:
         # An id that is not a string, number or null is an invalid request.  The
         # response cannot echo the bad value, so id is always null here (R24).
         if not _is_valid_request_id(req_id):
-            return {
-                'jsonrpc': '2.0',
-                'error': {
-                    'code': INVALID_REQUEST,
-                    'message': 'Invalid Request',
-                    'data': 'Request id must be a string, number, or null',
-                },
-                'id': None,
-            }
+            return self._error_response(
+                None, INVALID_REQUEST, "Invalid Request",
+                "Request id must be a string, number, or null",
+            )
 
         is_notification = req_id is None
 
@@ -240,10 +258,7 @@ class Server:
         # TypeError raised inside the handler body (a server bug).  Binding
         # before the call keeps handler bugs out of the invalid-params path so
         # their text is never reflected to the client (R15).
-        try:
-            signature = inspect.signature(func)
-        except (TypeError, ValueError):
-            signature = None
+        signature = self._signature(iface_name, func_name, func)
         if signature is not None:
             try:
                 signature.bind(ctx, *params)
@@ -296,8 +311,13 @@ class Server:
                         data: Any = None) -> Dict[str, Any]:
         """Create a JSON-RPC error response
 
+        ``id`` is always present on the wire, including ``None`` for requests
+        whose id could not be accepted and for transport-level parse/batch
+        errors (M18/M26).  Notifications never reach this helper, so they are
+        still silent.
+
         Args:
-            req_id: Request ID (can be None for notifications)
+            req_id: Request ID (None when the request had no usable id)
             code: Error code
             message: Error message
             data: Optional error data
@@ -312,11 +332,8 @@ class Server:
         if data is not None:
             error['data'] = data
 
-        response = {
+        return {
             'jsonrpc': '2.0',
-            'error': error
+            'error': error,
+            'id': req_id,
         }
-        if req_id is not None:
-            response['id'] = req_id
-
-        return response

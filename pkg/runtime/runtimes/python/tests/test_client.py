@@ -3,8 +3,8 @@ InProcTransport round trips (audit python-03, python-04, python-07, python-08).
 """
 
 import json
-import sys
 import threading
+import time
 
 import pytest
 
@@ -155,21 +155,31 @@ def test_client_validates_non_null_result_type():
 
 # --- R20: request ids are unique under concurrency ----------------------------
 
-def test_concurrent_calls_get_unique_request_ids(monkeypatch):
+class _SlowCounter(int):
+    """An int whose increment sleeps, exposing an unprotected read-modify-write.
+
+    ``client._request_id += 1`` therefore spans a real interval: without the
+    lock every thread reads the same value and they all store the same result.
+    """
+
+    def __add__(self, other):
+        time.sleep(0.002)
+        return _SlowCounter(int(self) + other)
+
+    __radd__ = __add__
+
+
+def test_concurrent_calls_get_unique_and_contiguous_request_ids():
     transport = RecordingTransport(make_server())
     client = Client(transport)
-    # The id counter is read-modify-write; it must be guarded by a lock.
-    assert hasattr(client, '_request_id_lock')
+    # Deterministic interleaving instead of relying on GIL switch timing: the
+    # slow increment makes a missing lock lose updates every run.
+    client._request_id = _SlowCounter(0)
 
     thread_count = 8
-    per_thread = 100
+    per_thread = 25
     barrier = threading.Barrier(thread_count)
     errors = []
-
-    # Make GIL switches frequent so the read-modify-write increment is
-    # interleaved if it is not protected.
-    old_interval = sys.getswitchinterval()
-    sys.setswitchinterval(1e-6)
 
     def worker():
         try:
@@ -179,22 +189,22 @@ def test_concurrent_calls_get_unique_request_ids(monkeypatch):
         except Exception as exc:  # pragma: no cover - surfaced below
             errors.append(exc)
 
-    try:
-        threads = [threading.Thread(target=worker) for _ in range(thread_count)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-    finally:
-        sys.setswitchinterval(old_interval)
+    threads = [threading.Thread(target=worker) for _ in range(thread_count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
 
     assert errors == []
+    total = thread_count * per_thread
     ids = [
         r['id'] for r in transport.requests
         if r.get('method') == 'Demo.echo' and r.get('id') is not None
     ]
-    assert len(ids) == thread_count * per_thread
+    assert len(ids) == total
     assert len(set(ids)) == len(ids), 'request ids must be unique'
+    # Ids are handed out exactly once: no gaps, no duplicates.
+    assert sorted(ids) == list(range(1, total + 1))
 
 
 # --- M24: numeric ids are compared by value ----------------------------------

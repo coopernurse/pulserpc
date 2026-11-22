@@ -16,6 +16,21 @@ DEFAULT_TIMEOUT = 30
 MAX_RESPONSE_BODY_SIZE = 10 * 1024 * 1024  # 10 MiB
 
 
+def _parse_response(response_body):
+    """Decode a JSON response body, normalizing parse failures.
+
+    Python 2's ``json`` module has no ``JSONDecodeError``; every parse failure
+    (and a decode failure) is a plain ``ValueError``.  Wrapping it here keeps
+    the error identifiable as an invalid response while leaving the distinct
+    "response body exceeds maximum size" ValueError raised by
+    ``HttpTransport.request`` untouched.
+    """
+    try:
+        return json.loads(response_body)
+    except ValueError as e:
+        raise ValueError("Invalid JSON response: %s" % e)
+
+
 class Transport(object):
     """Abstract base class for RPC transports"""
 
@@ -63,7 +78,7 @@ class HttpTransport(Transport):
             if not response_body:
                 return {}
 
-            return json.loads(response_body)
+            return _parse_response(response_body)
         except HTTPError as e:
             raw_body = e.read(self.max_response_size + 1)
             if len(raw_body) > self.max_response_size:
@@ -73,7 +88,7 @@ class HttpTransport(Transport):
                 )
             response_body = raw_body.decode("utf-8")
             if response_body:
-                return json.loads(response_body)
+                return _parse_response(response_body)
             return {}
         except ValueError:
             raise

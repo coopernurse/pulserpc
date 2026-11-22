@@ -99,7 +99,13 @@ func (p *PythonClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	// The entry-point is the namespace of the root file being parsed
 	entryPointNs := idl.RootNamespace
 	if entryPointNs == "" {
-		for ns := range namespaceMap {
+		// With multiple namespaces but no recorded root, pick the
+		// lexicographically first so idl.json lands in the same directory on
+		// every run (C1: map iteration order is randomized).
+		for _, ns := range CollectNamespaces(namespaceMap) {
+			if ns == "" {
+				continue
+			}
 			entryPointNs = ns
 			break
 		}
@@ -1030,10 +1036,15 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 	sb.WriteString("            self._send_error_response(None, -32600, \"Invalid Request\", \"Request body too large\")\n")
 	sb.WriteString("            return\n\n")
 	sb.WriteString("        body = self.rfile.read(content_length)\n\n")
-	sb.WriteString("        # Parse JSON request\n")
+	sb.WriteString("        # Parse JSON request.  Catch ValueError, not just\n")
+	sb.WriteString("        # json.JSONDecodeError: json.loads raises ValueError for integers\n")
+	sb.WriteString("        # beyond sys.int_max_str_digits (and UTF-8 decoding raises\n")
+	sb.WriteString("        # UnicodeDecodeError), neither of which is a JSONDecodeError.  An\n")
+	sb.WriteString("        # uncaught exception here would drop the connection instead of\n")
+	sb.WriteString("        # returning -32700 (M26).\n")
 	sb.WriteString("        try:\n")
 	sb.WriteString("            req = json.loads(body.decode('utf-8'))\n")
-	sb.WriteString("        except json.JSONDecodeError:\n")
+	sb.WriteString("        except ValueError:\n")
 	sb.WriteString("            self._send_error_response(None, -32700, \"Parse error\", \"Invalid JSON\")\n")
 	sb.WriteString("            return\n\n")
 	sb.WriteString("        # Handle request\n")

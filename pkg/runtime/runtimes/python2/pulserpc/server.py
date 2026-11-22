@@ -7,6 +7,11 @@ from rpc import RPCError
 from contract import Contract
 
 _string_types = (str, type(u""))
+# Python 2 promotes large integer literals (e.g. ``2**70``) to ``long``, which
+# ``isinstance(value, int)`` rejects.  Mirror validation.py so every legal
+# JSON-RPC numeric id is accepted (R24).
+_large_int = 2 ** 100
+_int_types = (int,) if isinstance(_large_int, int) else (int, type(_large_int))
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +31,7 @@ def _is_valid_request_id(req_id):
     """
     if req_id is None or isinstance(req_id, _string_types):
         return True
-    if isinstance(req_id, (int, float)) and not isinstance(req_id, bool):
+    if isinstance(req_id, _int_types + (float,)) and not isinstance(req_id, bool):
         # JSON has no NaN/Infinity; reject non-finite numbers so they are not
         # echoed as invalid JSON.
         if isinstance(req_id, float):
@@ -51,10 +56,48 @@ class Server(object):
         self.validate_requests = validate_requests
         self.validate_responses = validate_responses
         self.on_error = on_error
+        # Argument specs never change between calls, so cache them per
+        # (interface, method) instead of introspecting on every request.
+        self._signature_cache = {}
 
     def add_handler(self, iface_name, handler):
         """Register a handler instance for an interface"""
         self.handlers[iface_name] = handler
+        self._signature_cache.clear()
+
+    def _accepts_args(self, iface_name, func_name, func, args):
+        """Return True when ``func`` can be called with positional ``args``.
+
+        The argument spec is cached per (interface, method).  Simple
+        signatures (no defaults/``*args``/``**kwargs``) are checked with a
+        cheap arity comparison; anything richer falls back to
+        ``inspect.getcallargs`` so binding semantics stay exact.
+        """
+        key = (iface_name, func_name)
+        if key not in self._signature_cache:
+            try:
+                self._signature_cache[key] = inspect.getargspec(func)
+            except TypeError:
+                self._signature_cache[key] = None
+
+        spec = self._signature_cache[key]
+        if (
+            spec is not None
+            and not spec.varargs
+            and not spec.keywords
+            and not spec.defaults
+        ):
+            # getargspec exposes the underlying function's argument names, so
+            # drop the implicit ``self`` for bound methods.
+            bound = getattr(func, "im_self", None) is not None
+            expected = len(spec.args) - (1 if bound else 0)
+            return len(args) == expected
+
+        try:
+            inspect.getcallargs(func, *args)
+        except TypeError:
+            return False
+        return True
 
     def call(self, req, ctx=None):
         """Process a single JSON-RPC request
@@ -76,15 +119,12 @@ class Server(object):
         # An id that is not a string, number or null is an invalid request.  The
         # bad value cannot be echoed back, so id is always null here (R24).
         if not _is_valid_request_id(req_id):
-            return {
-                "jsonrpc": "2.0",
-                "error": {
-                    "code": -32600,
-                    "message": "Invalid Request",
-                    "data": "Request id must be a string, number, or null",
-                },
-                "id": None,
-            }
+            return self._error_response(
+                None,
+                -32600,
+                "Invalid Request",
+                "Request id must be a string, number, or null",
+            )
 
         is_notification = req_id is None
 
@@ -153,9 +193,7 @@ class Server(object):
         # bugs are redacted as internal errors instead of returned as -32602
         # (R15).
         args = [ctx] + list(params)
-        try:
-            inspect.getcallargs(func, *args)
-        except TypeError:
+        if not self._accepts_args(iface_name, func_name, func, args):
             return error_response(
                 -32602, "Invalid params", "Parameter mismatch"
             )
@@ -194,13 +232,14 @@ class Server(object):
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
     def _error_response(self, req_id, code, message, data=None):
-        """Create a JSON-RPC error response"""
+        """Create a JSON-RPC error response
+
+        ``id`` is always present on the wire (M18/M26): notifications never
+        reach this helper, so ``None`` only appears for requests whose id could
+        not be accepted and for transport-level parse/batch errors.
+        """
         error = {"code": code, "message": message}
         if data is not None:
             error["data"] = data
 
-        response = {"jsonrpc": "2.0", "error": error}
-        if req_id is not None:
-            response["id"] = req_id
-
-        return response
+        return {"jsonrpc": "2.0", "error": error, "id": req_id}
