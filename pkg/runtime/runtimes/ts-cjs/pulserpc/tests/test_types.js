@@ -129,9 +129,21 @@ function testGetStructFieldsOverrideParent() {
   console.log("✓ testGetStructFieldsOverrideParent");
 }
 
+function testAmbiguousBaseNameIsDeterministic() {
+  // Ambiguity resolves to the first key in sorted order, matching Go, Java
+  // and Python (invariant R6).
+  const allStructs = {
+    "b.Status": { fields: [] },
+    "a.Status": { fields: [] },
+  };
+  assert.strictEqual(findStruct("x.Status", allStructs), allStructs["a.Status"]);
+  console.log("testAmbiguousBaseNameIsDeterministic");
+}
+
 testFindStruct();
 testFindEnum();
 testFindQualifiedTypesByBaseName();
+testAmbiguousBaseNameIsDeterministic();
 testFindByTypeNameCachesIndex();
 testGetStructFieldsSimple();
 testGetStructFieldsWithExtends();

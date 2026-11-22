@@ -21,6 +21,38 @@ public class EnvelopeTest {
     }
 
     @Test
+    public void testNullResultIsSerializedAcrossParsers() {
+        // A null result is a valid JSON-RPC response and must retain an
+        // explicit "result" member. Gson drops null map values by default,
+        // which makes the envelope look like neither result nor error.
+        Map<String, Object> envelope = new HashMap<>();
+        envelope.put("jsonrpc", "2.0");
+        envelope.put("result", null);
+        envelope.put("id", 1);
+        for (JsonParser parser : new JsonParser[]{ new GsonJsonParser(), new JacksonJsonParser() }) {
+            String json = parser.toJson(envelope);
+            Map<String, Object> parsed = parser.fromJson(json, Map.class);
+            Assert.assertTrue(parser.getClass().getSimpleName() + " dropped a null result", parsed.containsKey("result"));
+            Response.validateMap(parsed, 1);
+        }
+    }
+
+    @Test
+    public void testNumericIdMatchesAcrossParsers() {
+        // Gson parses JSON numbers as Double while Jackson uses Integer. A
+        // numeric request id (the runtime and generated clients use one) must
+        // still match the echoed id (invariant M5).
+        JsonParser[] parsers = { new GsonJsonParser(), new JacksonJsonParser() };
+        String body = "{\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}";
+        for (JsonParser parser : parsers) {
+            Map<String, Object> envelope = parser.fromJson(body, Map.class);
+            Response.validateMap(envelope, 1);
+            Response response = Response.fromMap(envelope);
+            response.validate(1);
+        }
+    }
+
+    @Test
     public void testIdMismatchRejected() {
         Map<String, Object> response = new HashMap<>();
         response.put("jsonrpc", "2.0");
@@ -120,8 +152,8 @@ public class EnvelopeTest {
         // HTTPTransport now parses the body once into a Map, validates that
         // Map, and builds the Response from the same parsed data. Both parsers
         // must produce Maps that validate and convert identically.
-        // Use a string id: Gson and Jackson disagree on the Java type of JSON
-        // numbers (Double vs Integer), which is orthogonal to envelope shape.
+        // String ids are covered here; numeric ids (which Gson and Jackson type
+        // differently) are covered by testNumericIdMatchesAcrossParsers.
         JsonParser[] parsers = { new GsonJsonParser(), new JacksonJsonParser() };
         String[] bodies = {
             "{\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true},\"id\":\"req-7\"}",

@@ -110,11 +110,10 @@ const baseNameIndexCache = new WeakMap<object, BaseNameIndex<any>>();
 function getBaseNameIndex<T>(types: { [key: string]: T }): BaseNameIndex<T> {
   let index = baseNameIndexCache.get(types) as BaseNameIndex<T> | undefined;
   if (index === undefined) {
-    // Built lazily, once per map. Object.keys preserves the same order as
-    // Object.entries, so resolution stays deterministic: the first definition
-    // with a matching base name wins.
+    // Built lazily, once per map. Sorted keys make ambiguous base names
+    // deterministic and match the Go/Java/Python runtimes (invariant R6).
     const byBase = new Map<string, T>();
-    for (const key of Object.keys(types)) {
+    for (const key of Object.keys(types).sort()) {
       const base = baseTypeName(key);
       if (!byBase.has(base)) {
         byBase.set(base, types[key]);

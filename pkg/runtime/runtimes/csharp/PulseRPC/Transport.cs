@@ -112,6 +112,14 @@ namespace PulseRPC
             var responseJson = await response.Content.ReadAsStringAsync();
             var responseDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object?>>(responseJson);
 
+            // Validate the JSON-RPC 2.0 envelope before interpreting it so a
+            // malformed success or error response is never silently accepted
+            // (invariant M5). Client.Call validates again for other transports.
+            if (responseDict != null)
+            {
+                Client.ValidateEnvelope(responseDict, id, "HttpTransport");
+            }
+
             if (responseDict != null && responseDict.TryGetValue("error", out var errorObj) && errorObj != null)
             {
                 var code = -32603;

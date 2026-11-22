@@ -59,13 +59,16 @@ class TestBuiltInTypes:
         assert len(errs5) == 1
         assert "Expected int" in errs5[0].message
 
-    def test_validate_int_accepts_near_integral_floats(self):
-        # Match the Go runtime's 1e-9 tolerance for integral floats.
-        assert validate_int(5.0000000001) == []
+    def test_validate_int_rejects_fractional_floats(self):
+        # Exact integral floats are accepted, but any fractional part is
+        # rejected. This matches Go/C#/TS/Java, which do not apply a tolerance
+        # (invariant R2).
+        assert validate_int(5.0) == []
         assert validate_int(-5.0) == []
-        errs = validate_int(5.00001)
-        assert len(errs) == 1
-        assert "Expected int" in errs[0].message
+        for value in (5.0000000001, 5.0000000005, 4.9999999995, 5.00001):
+            errs = validate_int(value)
+            assert len(errs) == 1
+            assert "Expected int" in errs[0].message
     
     def test_validate_float_success(self):
         validate_float(3.14)

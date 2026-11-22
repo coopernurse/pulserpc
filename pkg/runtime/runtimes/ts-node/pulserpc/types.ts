@@ -72,12 +72,60 @@ export interface EnumDef {
 export type StructMap = { [key: string]: StructDef };
 export type EnumMap = { [key: string]: EnumDef };
 
+function baseTypeName(name: string): string {
+  return name.substring(name.lastIndexOf(".") + 1);
+}
+
+interface BaseNameIndex<T> {
+  /** First definition for each base name, in sorted key order. */
+  byBase: Map<string, T>;
+}
+
+/**
+ * Cache of base-name indexes, keyed by the types map object itself. Type maps
+ * are built once by the Contract parser and then treated as immutable, so the
+ * map's identity doubles as the "did the map change" sentinel: a different map
+ * object gets a freshly built index. Weak keys avoid retaining discarded
+ * contracts.
+ */
+const baseNameIndexCache = new WeakMap<object, BaseNameIndex<any>>();
+
+function getBaseNameIndex<T>(types: { [key: string]: T }): BaseNameIndex<T> {
+  let index = baseNameIndexCache.get(types) as BaseNameIndex<T> | undefined;
+  if (index === undefined) {
+    // Built lazily, once per map. Sorted keys make ambiguous base names
+    // deterministic and match the Go/Java/Python runtimes (invariant R6).
+    const byBase = new Map<string, T>();
+    for (const key of Object.keys(types).sort()) {
+      const base = baseTypeName(key);
+      if (!byBase.has(base)) {
+        byBase.set(base, types[key]);
+      }
+    }
+    index = { byBase };
+    baseNameIndexCache.set(types, index);
+  }
+  return index;
+}
+
+function findByTypeName<T>(name: string, types: { [key: string]: T }): T | undefined {
+  // Prefer an exact match. Generated idl.json files store imported types under
+  // their qualified names ("inc.Status") while type references inside the
+  // entry-point namespace are unqualified ("Status"), so fall back to the last
+  // name component — the same suffix resolution other runtimes use.
+  if (types[name]) {
+    return types[name];
+  }
+  // O(1) after the first lookup: no per-call Object.entries scan/allocation.
+  return getBaseNameIndex(types).byBase.get(baseTypeName(name));
+}
+
 export function findStruct(structName: string, allStructs: StructMap): StructDef | undefined {
-  return allStructs[structName];
+  return findByTypeName(structName, allStructs);
 }
 
 export function findEnum(enumName: string, allEnums: EnumMap): EnumDef | undefined {
-  return allEnums[enumName];
+  return findByTypeName(enumName, allEnums);
 }
 
 export function getStructFields(structName: string, allStructs: StructMap): FieldDef[] {

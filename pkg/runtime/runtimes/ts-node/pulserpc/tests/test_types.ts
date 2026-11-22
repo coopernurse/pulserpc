@@ -85,9 +85,39 @@ function testGetStructFieldsOverrideParent() {
   console.log("✓ testGetStructFieldsOverrideParent");
 }
 
+function testFindQualifiedTypesByBaseName() {
+  // Generated idl.json keeps imported names qualified while local references
+  // are unqualified; lookups must resolve both forms (invariant R6).
+  const allStructs: StructMap = {
+    "inc.Response": { fields: [{ name: "status", type: { userDefined: "Status" } }] },
+  };
+  const allEnums: EnumMap = {
+    "inc.Status": { values: [{ name: "ok" }] },
+  };
+  assert.deepStrictEqual(findStruct("Response", allStructs), allStructs["inc.Response"]);
+  assert.deepStrictEqual(findStruct("inc.Response", allStructs), allStructs["inc.Response"]);
+  assert.deepStrictEqual(findEnum("Status", allEnums), allEnums["inc.Status"]);
+  assert.strictEqual(findStruct("Missing", allStructs), undefined);
+  assert.strictEqual(findEnum("Missing", allEnums), undefined);
+  console.log("testFindQualifiedTypesByBaseName");
+}
+
+function testAmbiguousBaseNameIsDeterministic() {
+  // Ambiguity resolves to the first key in sorted order, matching Go, Java
+  // and Python (invariant R6).
+  const allStructs: StructMap = {
+    "b.Status": { fields: [] },
+    "a.Status": { fields: [] },
+  };
+  assert.strictEqual(findStruct("x.Status", allStructs), allStructs["a.Status"]);
+  console.log("testAmbiguousBaseNameIsDeterministic");
+}
+
 // Run tests
 testFindStruct();
 testFindEnum();
+testFindQualifiedTypesByBaseName();
+testAmbiguousBaseNameIsDeterministic();
 testGetStructFieldsSimple();
 testGetStructFieldsWithExtends();
 testGetStructFieldsOverrideParent();

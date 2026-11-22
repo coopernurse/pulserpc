@@ -1,6 +1,5 @@
 """Validation functions for PulseRPC types"""
 
-import math
 from typing import Any, Callable, Dict, List, Optional
 
 from .rpctypes import (
@@ -39,9 +38,10 @@ def validate_int(value: Any, path: str = "") -> List[ValidationError]:
             return [_make_error(path, f"Expected int, got float NaN")]
         if value == float('inf') or value == float('-inf'):
             return [_make_error(path, f"Expected int, got float infinity")]
-        # Match the Go runtime's acceptance set: an exact integral value, or a
-        # value within 1e-9 of the next-lower integer (audit python-02).
-        if value == int(value) or abs(value - math.floor(value)) < 1e-9:
+        # Match the Go/C#/TS/Java acceptance set exactly: only integral values.
+        # Near-integers with any fractional part are rejected (audit python-02,
+        # invariant R2). Go no longer applies a 1e-9 tolerance.
+        if value == int(value):
             return []
     return [_make_error(path, f"Expected int, got {type(value).__name__}")]
 

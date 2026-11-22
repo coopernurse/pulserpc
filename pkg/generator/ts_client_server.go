@@ -227,10 +227,10 @@ func readPackageJSONType(outputDir string) (string, string, error) {
 
 // resolveEffectiveModuleStyle determines the effective module style for this
 // generation run, following the precedence defined in step 5 of the plan:
-//   1. Explicit -ts-module flag (canonicalized via resolveModuleStyle).
-//   2. Detected tsconfig.json compilerOptions.module.
-//   3. Detected package.json "type".
-//   4. Default "esm-node".
+//  1. Explicit -ts-module flag (canonicalized via resolveModuleStyle).
+//  2. Detected tsconfig.json compilerOptions.module.
+//  3. Detected package.json "type".
+//  4. Default "esm-node".
 //
 // The -ts-no-detect flag disables steps 2 and 3 entirely.
 //
@@ -2134,10 +2134,17 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("        const data = JSON.parse(body);\n")
 	sb.WriteString("        // M7: a batch is an array of requests. Notifications (no id) make\n")
 	sb.WriteString("        // Server.call return null and are dropped from the response array.\n")
-	sb.WriteString("        const response = Array.isArray(data)\n")
-	sb.WriteString("          ? (await Promise.all(data.map((item) => this.rpcServer.call(item))))\n")
-	sb.WriteString("              .filter((item) => item !== null && item !== undefined)\n")
-	sb.WriteString("          : await this.rpcServer.call(data);\n")
+	sb.WriteString("        // An empty batch is invalid and must return a -32600 error object,\n")
+	sb.WriteString("        // not an empty 204 response.\n")
+	sb.WriteString("        let response;\n")
+	sb.WriteString("        if (Array.isArray(data)) {\n")
+	sb.WriteString("          response = data.length === 0\n")
+	sb.WriteString("            ? { jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request - empty batch' }, id: null }\n")
+	sb.WriteString("            : (await Promise.all(data.map((item) => this.rpcServer.call(item))))\n")
+	sb.WriteString("                .filter((item) => item !== null && item !== undefined);\n")
+	sb.WriteString("        } else {\n")
+	sb.WriteString("          response = await this.rpcServer.call(data);\n")
+	sb.WriteString("        }\n")
 	sb.WriteString("        if (response === null || response === undefined ||\n")
 	sb.WriteString("            (Array.isArray(response) && response.length === 0)) {\n")
 	sb.WriteString("          res.writeHead(204);\n")

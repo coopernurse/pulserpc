@@ -120,6 +120,14 @@ def test_float_validation():
     validate_float(float("nan"))
     validate_float(float("inf"))
 
+    # bool subclasses int in Python 2, but JSON true/false are not floats.
+    for bool_value in (True, False):
+        try:
+            validate_float(bool_value)
+            assert False, "Should have raised TypeError for bool %r" % bool_value
+        except TypeError as exc:
+            assert "Expected float, got bool" in str(exc), str(exc)
+
     try:
         validate_float("string")
         assert False, "Should have raised TypeError for string"

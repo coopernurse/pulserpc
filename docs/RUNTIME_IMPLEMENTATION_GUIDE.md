@@ -814,6 +814,17 @@ Servers and clients must implement the core JSON-RPC 2.0 envelope:
 - Notifications: Requests without `id` field (no response sent)
 - Error codes: Standard JSON-RPC error codes (-32700, -32600, -32601, -32602, -32603)
 
+Clients must validate the response envelope: `jsonrpc` is `"2.0"`, the `id`
+matches the request (numeric ids are compared by value, not by a
+language-specific number type such as Gson's `Double`), exactly one of
+`result` or `error` is present, and an `error` member is an object with a
+numeric `code` and a string `message`. A null result is valid and must be
+serialized as an explicit `"result": null`.
+
+Notifications (a request without an `id`) never receive a response, not even
+an error response for malformed input. Generated adapters suppress error
+envelopes as well as success envelopes for notifications.
+
 Batch requests (an array of requests) are **optional** for generated adapters. The
 generated Go, C# and Java servers support them; generated TypeScript and Python
 servers do not. Batch support is therefore not part of the generated-server
@@ -826,6 +837,11 @@ malformed JSON body.
 - **Static typing**: If language supports static typing, use it where possible
 - **Runtime validation**: Still required even with static types (defense in depth)
 - **Type definitions**: May need to generate type definitions for static type checkers (e.g., TypeScript `.d.ts`, Java generics)
+- **Type-name resolution (all runtimes)**: a possibly-qualified reference resolves
+  as: exact key, then exact base-name key, then base-name match (e.g.
+  `Response` resolves to `inc.Response`). When several definitions share a base
+  name, the first key in sorted order wins deterministically. This applies to
+  structs and enums, including `extends` and nested field/parameter types.
 
 ### 3. Error Messages
 

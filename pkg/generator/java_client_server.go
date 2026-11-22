@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/coopernurse/pulserpc/pkg/parser"
@@ -1048,9 +1049,9 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("        Map<String, Object> response = new HashMap<>();\n")
 	sb.WriteString("        response.put(\"jsonrpc\", \"2.0\");\n")
 	sb.WriteString("        response.put(\"error\", error);\n")
-	sb.WriteString("        if (id != null) {\n")
-	sb.WriteString("            response.put(\"id\", id);\n")
-	sb.WriteString("        }\n")
+	sb.WriteString("        // Error envelopes always carry an id; it is null when the request\n")
+	sb.WriteString("        // could not be parsed (JSON-RPC 2.0 parse-error shape).\n")
+	sb.WriteString("        response.put(\"id\", id);\n")
 	sb.WriteString("        return response;\n")
 	sb.WriteString("    }\n\n")
 	sb.WriteString("    private Map<String, Object> resultEnvelope(Object result, Object id) {\n")
@@ -1075,8 +1076,20 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("    }\n\n")
 
 	// Handle JSON-RPC request
-	sb.WriteString("    @SuppressWarnings(\"unchecked\")\n")
+	sb.WriteString("    // A notification (no id) must never receive a response, including an\n")
+	sb.WriteString("    // error response. The core dispatcher returns error envelopes for every\n")
+	sb.WriteString("    // malformed-input path; this wrapper drops them for notifications so all\n")
+	sb.WriteString("    // return paths honour the JSON-RPC 2.0 rule (invariant M4).\n")
 	sb.WriteString("    private Map<String, Object> handleJsonRpcRequest(Map<String, Object> request) {\n")
+	sb.WriteString("        boolean isNotification = request.get(\"id\") == null;\n")
+	sb.WriteString("        Map<String, Object> response = handleJsonRpcRequestCore(request);\n")
+	sb.WriteString("        if (isNotification && response != null && response.containsKey(\"error\")) {\n")
+	sb.WriteString("            return null;\n")
+	sb.WriteString("        }\n")
+	sb.WriteString("        return response;\n")
+	sb.WriteString("    }\n\n")
+	sb.WriteString("    @SuppressWarnings(\"unchecked\")\n")
+	sb.WriteString("    private Map<String, Object> handleJsonRpcRequestCore(Map<String, Object> request) {\n")
 	sb.WriteString("        // Validate jsonrpc field\n")
 	sb.WriteString("        Object jsonrpc = request.get(\"jsonrpc\");\n")
 	sb.WriteString("        if (jsonrpc == null || !\"2.0\".equals(jsonrpc)) {\n")
@@ -1286,7 +1299,9 @@ func generateClientJava(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 	sb.WriteString("    private final Contract contract;\n")
 	sb.WriteString("    private ContractAuditor auditor;\n")
 	sb.WriteString("    private boolean verifyOnBootstrap;\n")
-	sb.WriteString("    private Object serverIDL;\n\n")
+	sb.WriteString("    private Object serverIDL;\n")
+	sb.WriteString("    // Unique ids let concurrent calls correlate their responses.\n")
+	sb.WriteString("    private final java.util.concurrent.atomic.AtomicInteger nextRequestId = new java.util.concurrent.atomic.AtomicInteger(0);\n\n")
 
 	// Constructor
 	sb.WriteString("    public Client(String baseUrl, JsonParser jsonParser) {\n")
@@ -1377,11 +1392,12 @@ func generateClientJava(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 	// Call method
 	sb.WriteString("    @SuppressWarnings(\"unchecked\")\n")
 	sb.WriteString("    public Map<String, Object> call(String method, Map<String, Object> params) throws Exception {\n")
+	sb.WriteString("        int requestId = nextRequestId.incrementAndGet();\n")
 	sb.WriteString("        Map<String, Object> request = Map.of(\n")
 	sb.WriteString("            \"jsonrpc\", \"2.0\",\n")
 	sb.WriteString("            \"method\", method,\n")
 	sb.WriteString("            \"params\", params,\n")
-	sb.WriteString("            \"id\", 1\n")
+	sb.WriteString("            \"id\", requestId\n")
 	sb.WriteString("        );\n\n")
 	sb.WriteString("        String requestBody = jsonParser.toJson(request);\n\n")
 	sb.WriteString("        HttpRequest httpRequest = HttpRequest.newBuilder()\n")
@@ -1395,7 +1411,7 @@ func generateClientJava(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 	sb.WriteString("        }\n\n")
 	sb.WriteString("        Map<String, Object> jsonResponse = jsonParser.fromJson(response.body(), Map.class);\n\n")
 	sb.WriteString("        // java-14: validate the full JSON-RPC envelope before reading result/error.\n")
-	sb.WriteString("        Response.validateMap(jsonResponse, 1);\n\n")
+	sb.WriteString("        Response.validateMap(jsonResponse, requestId);\n\n")
 	sb.WriteString("        if (jsonResponse.containsKey(\"error\")) {\n")
 	sb.WriteString("            Map<String, Object> error = (Map<String, Object>) jsonResponse.get(\"error\");\n")
 	sb.WriteString("            throw new RPCError(\n")
@@ -1786,6 +1802,8 @@ func generateTestServerJava(idl *parser.IDL, jsonLib string, basePackage string,
 func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, jsonLib string, basePackage string, namespaceMap map[string]*NamespaceTypes) string {
 	_ = namespaceMap
 	var sb strings.Builder
+	helpers := map[string]*parser.Struct{}
+	var factorySb strings.Builder
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n\n")
 	sb.WriteString(fmt.Sprintf("package %s;\n\n", basePackage))
@@ -1820,6 +1838,7 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 	}
 
 	sb.WriteString("public class TestClient {\n")
+	sb.WriteString("//__PULSERPC_STRUCT_FACTORIES__\n")
 	sb.WriteString("    public static void main(String[] args) throws Exception {\n")
 	switch jsonLib {
 	case "jackson":
@@ -1854,7 +1873,7 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 				if i > 0 {
 					sb.WriteString(", ")
 				}
-				writeTestParamValue(&sb, param, structMap, enumMap, basePackage, ifacePackage, jsonLib)
+				writeTestParamValue(&sb, param, structMap, enumMap, basePackage, ifacePackage, jsonLib, helpers)
 			}
 
 			sb.WriteString(");\n")
@@ -1870,12 +1889,15 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 	sb.WriteString("    }\n")
 	sb.WriteString("}\n")
 
-	return sb.String()
+	writeJavaTestStructFactories(&factorySb, helpers, structMap, enumMap, basePackage)
+	return strings.Replace(sb.String(), "//__PULSERPC_STRUCT_FACTORIES__\n", factorySb.String(), 1)
 }
 
 // writeTestParamValue generates a test parameter value
-func writeTestParamValue(sb *strings.Builder, param *parser.Parameter, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, basePackage string, currentPackage string, _ string) {
-	_ = structMap
+// writeTestParamValue generates a test parameter value. User-defined structs
+// use a generated factory that populates required fields, so the value passes
+// the server's IDL request validation (java-04).
+func writeTestParamValue(sb *strings.Builder, param *parser.Parameter, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, basePackage string, currentPackage string, _ string, helpers map[string]*parser.Struct) {
 	if param.Type.IsBuiltIn() {
 		switch param.Type.BuiltIn {
 		case "string":
@@ -1899,29 +1921,191 @@ func writeTestParamValue(sb *strings.Builder, param *parser.Parameter, structMap
 			elementType := getJavaTypeWithPackage(param.Type.Array, enumMap, basePackage, currentPackage, structMap)
 			fmt.Fprintf(sb, "java.util.Arrays.asList(/* %s values */)", elementType)
 		}
+	} else if param.Type.IsMap() {
+		sb.WriteString("java.util.Collections.emptyMap()")
 	} else if param.Type.IsUserDefined() {
-		typeName := GetBaseName(param.Type.UserDefined)
-		typeNamespace := GetNamespaceFromType(param.Type.UserDefined, "")
-		fullTypeName := typeName
-		if typeNamespace != "" {
-			fullTypeName = basePackage + "." + typeNamespace + "." + typeName
-		}
-
-		if _, isEnum := enumMap[param.Type.UserDefined]; isEnum {
-			// Find first enum value
-			enum := enumMap[param.Type.UserDefined]
-			if len(enum.Values) > 0 {
-				fmt.Fprintf(sb, "%s.%s", fullTypeName, enum.Values[0].Name)
+		fullTypeName := javaTestTypeName(param.Type.UserDefined, basePackage, structMap, enumMap)
+		if enumDef := lookupJavaEnum(param.Type.UserDefined, enumMap); enumDef != nil {
+			if len(enumDef.Values) > 0 {
+				fmt.Fprintf(sb, "%s.%s", fullTypeName, enumDef.Values[0].Name)
 			} else {
 				sb.WriteString("null")
 			}
+		} else if structDef := lookupJavaStruct(param.Type.UserDefined, structMap); structDef != nil {
+			key := javaStructHelperKey(structDef.Name)
+			ensureJavaStructHelper(key, structDef, structMap, helpers)
+			fmt.Fprintf(sb, "make%s()", key)
 		} else {
-			// It's a struct
 			fmt.Fprintf(sb, "new %s()", fullTypeName)
 		}
 	} else {
 		sb.WriteString("null")
 	}
+}
+
+// javaStructHelperKey turns a (possibly qualified) struct name into a unique
+// Java identifier suffix for the generated test-data factory.
+func javaStructHelperKey(structName string) string {
+	var b strings.Builder
+	for _, r := range structName {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return capitalizeFirst(b.String())
+}
+
+func lookupJavaStruct(ud string, structMap map[string]*parser.Struct) *parser.Struct {
+	if s := structMap[ud]; s != nil {
+		return s
+	}
+	base := GetBaseName(ud)
+	var found *parser.Struct
+	for key, s := range structMap {
+		if GetBaseName(key) == base {
+			if found != nil && found != s {
+				return nil
+			}
+			found = s
+		}
+	}
+	return found
+}
+
+func lookupJavaEnum(ud string, enumMap map[string]*parser.Enum) *parser.Enum {
+	if e := enumMap[ud]; e != nil {
+		return e
+	}
+	base := GetBaseName(ud)
+	var found *parser.Enum
+	for key, e := range enumMap {
+		if GetBaseName(key) == base {
+			if found != nil && found != e {
+				return nil
+			}
+			found = e
+		}
+	}
+	return found
+}
+
+func javaTestTypeName(ud, basePackage string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) string {
+	typeName := GetBaseName(ud)
+	ns := findTypeNamespace(ud, structMap, enumMap)
+	if ns != "" {
+		return basePackage + "." + ns + "." + typeName
+	}
+	return typeName
+}
+
+func ensureJavaStructHelper(key string, s *parser.Struct, structMap map[string]*parser.Struct, helpers map[string]*parser.Struct) {
+	if _, ok := helpers[key]; ok {
+		return
+	}
+	helpers[key] = s
+	for _, f := range allJavaStructFields(s, structMap) {
+		if f.Optional || !f.Type.IsUserDefined() {
+			continue
+		}
+		if st := lookupJavaStruct(f.Type.UserDefined, structMap); st != nil {
+			ensureJavaStructHelper(javaStructHelperKey(st.Name), st, structMap, helpers)
+		}
+	}
+}
+
+func allJavaStructFields(s *parser.Struct, structMap map[string]*parser.Struct) []*parser.Field {
+	return allJavaStructFieldsSeen(s, structMap, map[string]bool{})
+}
+
+func allJavaStructFieldsSeen(s *parser.Struct, structMap map[string]*parser.Struct, seen map[string]bool) []*parser.Field {
+	if s == nil || seen[s.Name] {
+		return nil
+	}
+	seen[s.Name] = true
+	var parentFields []*parser.Field
+	if s.Extends != "" {
+		if p := lookupJavaStruct(s.Extends, structMap); p != nil {
+			parentFields = allJavaStructFieldsSeen(p, structMap, seen)
+		}
+	}
+	byName := map[string]int{}
+	out := make([]*parser.Field, 0, len(parentFields)+len(s.Fields))
+	for _, f := range parentFields {
+		byName[f.Name] = len(out)
+		out = append(out, f)
+	}
+	for _, f := range s.Fields {
+		if i, ok := byName[f.Name]; ok {
+			out[i] = f
+		} else {
+			byName[f.Name] = len(out)
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func writeJavaTestStructFactories(sb *strings.Builder, helpers map[string]*parser.Struct, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, basePackage string) {
+	keys := make([]string, 0, len(helpers))
+	for k := range helpers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		s := helpers[key]
+		full := javaTestTypeName(s.Name, basePackage, structMap, enumMap)
+		fmt.Fprintf(sb, "    private static %s make%s() {\n", full, key)
+		fmt.Fprintf(sb, "        %s v = new %s();\n", full, full)
+		for _, f := range allJavaStructFields(s, structMap) {
+			if f.Optional {
+				continue
+			}
+			fmt.Fprintf(sb, "        v.set%s(%s);\n", capitalizeFirst(f.Name), javaTestFieldValue(f.Type, structMap, enumMap, basePackage))
+		}
+		sb.WriteString("        return v;\n")
+		sb.WriteString("    }\n\n")
+	}
+}
+
+func javaTestFieldValue(t *parser.Type, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, basePackage string) string {
+	if t == nil {
+		return "null"
+	}
+	if t.IsBuiltIn() {
+		switch t.BuiltIn {
+		case "string":
+			return "\"test\""
+		case "int":
+			return "42"
+		case "float":
+			return "3.14"
+		case "bool":
+			return "true"
+		default:
+			return "null"
+		}
+	}
+	if t.IsArray() {
+		return "java.util.Collections.emptyList()"
+	}
+	if t.IsMap() {
+		return "java.util.Collections.emptyMap()"
+	}
+	if t.IsUserDefined() {
+		if e := lookupJavaEnum(t.UserDefined, enumMap); e != nil {
+			if len(e.Values) > 0 {
+				return javaTestTypeName(t.UserDefined, basePackage, structMap, enumMap) + "." + e.Values[0].Name
+			}
+			return "null"
+		}
+		if s := lookupJavaStruct(t.UserDefined, structMap); s != nil {
+			return "make" + javaStructHelperKey(s.Name) + "()"
+		}
+	}
+	return "null"
 }
 
 // generatePomXml generates pom.xml for Maven builds
