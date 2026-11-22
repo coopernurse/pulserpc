@@ -189,5 +189,5 @@ export interface ValidationError {
 export interface ValidationResult {
   valid: boolean;
   error?: string;
-  invalidFields?: string[];
+  invalid_fields?: string[];
 }

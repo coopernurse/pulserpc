@@ -230,6 +230,25 @@ async function testJsonRpcVersionEnforced() {
   console.log("✓ testJsonRpcVersionEnforced");
 }
 
+async function testInvalidJsonRpcVersionUsesNullId() {
+  // An invalid jsonrpc version invalidates the whole request, so the error id
+  // must be null even when the caller supplied one. Notifications still get no
+  // response at all.
+  const server = new Server({ contract: makeContract(), validateRequests: false });
+  const missing = await server.call({ method: "Svc.good", params: [], id: 1 });
+  assert.strictEqual(missing.error.code, -32600);
+  assert.strictEqual(missing.id, null);
+  assert.strictEqual(missing.jsonrpc, "2.0");
+
+  const wrong = await server.call({ jsonrpc: "1.0", method: "Svc.good", params: [], id: 2 });
+  assert.strictEqual(wrong.error.code, -32600);
+  assert.strictEqual(wrong.id, null);
+
+  const notification = await server.call({ method: "Svc.good", params: [] });
+  assert.strictEqual(notification, null, "a failed notification must not emit a response");
+  console.log("✓ testInvalidJsonRpcVersionUsesNullId");
+}
+
 async function testNonObjectRequestEntry() {
   const server = new Server({ contract: makeContract(), validateRequests: false });
   for (const entry of [5, "x", null, []]) {
@@ -272,6 +291,7 @@ async function main() {
   await testDeclaredRpcErrorIsPreserved();
   await testIdTypes();
   await testJsonRpcVersionEnforced();
+  await testInvalidJsonRpcVersionUsesNullId();
   await testNonObjectRequestEntry();
   await testNullResultIsExplicit();
   await testIdZeroIsEchoed();

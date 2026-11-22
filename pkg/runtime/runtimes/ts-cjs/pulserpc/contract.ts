@@ -103,7 +103,7 @@ function buildValidationResult(errors: ValidationError[]): ValidationResult {
   };
   const paths = errors.map(e => e.path).filter(Boolean);
   if (paths.length > 0) {
-    result.invalidFields = paths;
+    result.invalid_fields = paths;
   }
   return result;
 }
