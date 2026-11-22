@@ -336,17 +336,16 @@ export class Client {
       throw new RPCError(-32600, "Invalid response: missing 'result' and 'error'");
     }
 
-    // Check for error response. `??` keeps a legitimate code of 0 intact.
+    // Check for error response (M25). The error object must have a numeric
+    // `code` and string `message`; malformed members fall back to the standard
+    // internal-error code/message instead of being trusted. A legitimate code
+    // of 0 is preserved.
     if (hasError) {
-      const error = response.error;
-      if (!error || typeof error !== "object") {
-        throw new RPCError(-32600, "Invalid response: malformed error object");
-      }
-      throw new RPCError(
-        error.code ?? -32603,
-        error.message || "Unknown error",
-        error.data
-      );
+      const error: any = response.error;
+      const code = error && typeof error.code === "number" ? error.code : -32603;
+      const message =
+        error && typeof error.message === "string" ? error.message : "Unknown error";
+      throw new RPCError(code, message, error && error.data);
     }
 
     // Get result

@@ -184,8 +184,10 @@ function testContractValidateRequestFailsOnWrongParamCount() {
     errors: [],
   };
   const c = new Contract(idl);
-  assert.throws(() => c.validateRequest("Calc", "add", [1]), /expects 2 param/);
-  assert.throws(() => c.validateRequest("Calc", "add", [1, 2, 3]), /expects 2 param/);
+  // The count rule is owned by checkParamCount and shared with Server, so the
+  // message states the accepted range (requiredCount-total).
+  assert.throws(() => c.validateRequest("Calc", "add", [1]), /expects 2-2 param/);
+  assert.throws(() => c.validateRequest("Calc", "add", [1, 2, 3]), /expects 2-2 param/);
   console.log("✓ testContractValidateRequestFailsOnWrongParamCount");
 }
 
@@ -213,8 +215,8 @@ function testContractValidateRequestTrailingOptionalParams() {
   const c = new Contract(idl);
   assert.doesNotThrow(() => c.validateRequest("Calc", "greet", ["Ann"]));
   assert.doesNotThrow(() => c.validateRequest("Calc", "greet", ["Ann", 2]));
-  assert.throws(() => c.validateRequest("Calc", "greet", []), /expects 2 param/);
-  assert.throws(() => c.validateRequest("Calc", "greet", ["Ann", 2, 3]), /expects 2 param/);
+  assert.throws(() => c.validateRequest("Calc", "greet", []), /expects 1-2 param/);
+  assert.throws(() => c.validateRequest("Calc", "greet", ["Ann", 2, 3]), /expects 1-2 param/);
   console.log("✓ testContractValidateRequestTrailingOptionalParams");
 }
 

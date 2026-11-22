@@ -148,6 +148,97 @@ async function testClientNamedParamsOmittedTrailingOptional() {
   console.log("✓ testClientNamedParamsOmittedTrailingOptional");
 }
 
+async function testConcurrentCallsUseUniqueIds() {
+  // R20: the id counter increments synchronously before the transport await,
+  // so Promise.all callers cannot share an id.
+  const idl = { interfaces: [], structs: [], enums: [], errors: [] };
+  const ids = [];
+  const transport = {
+    async request(req) {
+      if (req.method === "pulserpc-idl") {
+        return { jsonrpc: "2.0", result: idl, id: req.id };
+      }
+      ids.push(req.id);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return { jsonrpc: "2.0", result: req.id, id: req.id };
+    },
+    close() {},
+  };
+  const client = await Client.create(transport);
+
+  const count = 100;
+  const results = await Promise.all(
+    Array.from({ length: count }, () => client.call("Svc.req", ["x"]))
+  );
+  assert.strictEqual(ids.length, count);
+  assert.strictEqual(new Set(ids).size, count, "every concurrent call must use a unique id");
+  assert.strictEqual(new Set(results).size, count, "every response id must be distinct");
+  console.log("✓ testConcurrentCallsUseUniqueIds");
+}
+
+async function testHostileMetaFromServerIsRejected() {
+  // R28/S5: meta comes from the server's pulserpc-idl response and must not be
+  // able to pollute Object.prototype through the wire.
+  const hostile = JSON.parse(
+    '{"interfaces":[],"structs":[],"enums":[],' +
+      '"meta":{"ok":"v","__proto__":{"polluted":true},' +
+      '"constructor":{"polluted":true},"prototype":{"polluted":true}}}'
+  );
+  const transport = {
+    async request(req) {
+      return { jsonrpc: "2.0", result: hostile, id: req.id };
+    },
+    close() {},
+  };
+  const client = await Client.create(transport);
+  const meta = client.contract.meta;
+  assert.strictEqual(meta.ok, "v", "benign meta keys must survive");
+  assert.strictEqual(meta.polluted, undefined);
+  assert.strictEqual(Object.getPrototypeOf(meta), Object.prototype);
+  for (const key of ["__proto__", "constructor", "prototype"]) {
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(meta, key), false);
+  }
+  assert.strictEqual(({}).polluted, undefined, "Object.prototype must stay clean");
+  console.log("✓ testHostileMetaFromServerIsRejected");
+}
+
+async function testDivergentIdlIsIncompatible() {
+  // R31: verification diffs the local IDL against the served one.
+  const serverIDL = {
+    interfaces: [],
+    structs: [
+      {
+        name: "T",
+        fields: [
+          { name: "shared", type: { builtIn: "string" } },
+          { name: "requiredNew", type: { builtIn: "string" }, optional: false },
+        ],
+      },
+    ],
+    enums: [],
+    errors: [],
+  };
+  const transport = {
+    async request(req) {
+      return { jsonrpc: "2.0", result: serverIDL, id: req.id };
+    },
+    close() {},
+  };
+  const client = await Client.create(transport);
+  client.setLocalIDL(JSON.stringify({
+    interfaces: [],
+    structs: [{ name: "T", fields: [{ name: "shared", type: { builtIn: "string" } }] }],
+    enums: [],
+    errors: [],
+  }));
+
+  const result = await client.verifyCompatibility();
+  assert.strictEqual(result.compatible, false);
+  assert.ok(result.deltas.length > 0);
+  assert.ok(result.deltas.some((d) => d.severity === "Error"));
+  console.log("✓ testDivergentIdlIsIncompatible");
+}
+
 function testFilenameIsAvailable() {
   assert.ok(typeof __filename === "string", "__filename must be a string in CJS");
   assert.ok(__filename.endsWith("client.ts") || __filename.endsWith("client.js"),
@@ -176,6 +267,9 @@ async function main() {
   await testClientBasicRequestResponse();
   await testClientWrapsRpcError();
   await testClientNamedParamsOmittedTrailingOptional();
+  await testConcurrentCallsUseUniqueIds();
+  await testHostileMetaFromServerIsRejected();
+  await testDivergentIdlIsIncompatible();
   testFilenameIsAvailable();
   testFindIDLJsonWalksUp();
   console.log("\nAll client tests passed!");

@@ -230,6 +230,28 @@ export class Contract {
     return buildValidationResult(errors);
   }
 
+  /**
+   * Single owner of the positional parameter-count rule (M9): trailing
+   * optional parameters may be omitted, so any length between `requiredCount`
+   * and the full signature length is accepted.
+   *
+   * Exposed so `Server` can keep the rule when request validation is disabled.
+   */
+  checkParamCount(
+    ifaceName: string,
+    funcName: string,
+    paramDefs: Array<{ name: string; optional?: boolean }>,
+    givenCount: number
+  ): void {
+    const requiredCount = paramDefs.filter((p) => !p.optional).length;
+    if (givenCount < requiredCount || givenCount > paramDefs.length) {
+      throw new RPCError(
+        -32602,
+        `Function '${ifaceName}.${funcName}' expects ${requiredCount}-${paramDefs.length} param(s). ${givenCount} given.`
+      );
+    }
+  }
+
   validateRequest(ifaceName: string, funcName: string, params: any[]): void {
     const iface = this.getInterface(ifaceName);
     if (!iface) {
@@ -245,13 +267,7 @@ export class Contract {
 
     // M9: trailing optional parameters may be omitted, but required parameters
     // must be present and extra parameters are still rejected.
-    const requiredCount = paramDefs.filter((p: FieldDef) => !p.optional).length;
-    if (params.length < requiredCount || params.length > paramDefs.length) {
-      throw new RPCError(
-        -32602,
-        `Function '${ifaceName}.${funcName}' expects ${paramDefs.length} param(s) (${requiredCount} required). ${params.length} given.`
-      );
-    }
+    this.checkParamCount(ifaceName, funcName, paramDefs, params.length);
 
     const allErrors: ValidationError[] = [];
     for (let i = 0; i < params.length; i++) {

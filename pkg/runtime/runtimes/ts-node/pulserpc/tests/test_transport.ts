@@ -1,12 +1,17 @@
 /**
- * Tests for HttpTransport URL handling and error behavior
+ * Tests for HttpTransport URL handling, limits and error behavior
  *
- * Verifies that HttpTransport uses the endpoint URL verbatim and wraps
- * transport-level errors in RPCError.
+ * Covers D6/R17/R19 (30 s timeout, 10 MiB response cap), D13/R29/R30
+ * (custom headers, trailing-slash normalization) and R8 (standard codes).
  */
 
 import { strict as assert } from "assert";
-import { HttpTransport, JsonRpcRequest } from "../transport.js";
+import {
+  HttpTransport,
+  JsonRpcRequest,
+  HTTP_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+} from "../transport.js";
 import { RPCError } from "../rpc.js";
 
 function recordingFetch(): { urls: string[]; fn: typeof fetch } {
@@ -26,23 +31,118 @@ function recordingFetch(): { urls: string[]; fn: typeof fetch } {
 
 const req: JsonRpcRequest = { jsonrpc: "2.0", method: "Foo.bar", id: 1 };
 
-async function testUrlUsedVerbatim() {
-  const cases = [
-    "http://localhost:8080",
-    "http://localhost:8080/",
-    "http://localhost:8080/api/rpc",
+async function testBaseUrlTrailingSlashNormalized() {
+  // D13/R30: a trailing "/" is normalized away; other URLs are verbatim.
+  const cases: Array<[string, string]> = [
+    ["http://localhost:8080", "http://localhost:8080"],
+    ["http://localhost:8080/", "http://localhost:8080"],
+    ["http://localhost:8080/api/rpc", "http://localhost:8080/api/rpc"],
   ];
-  for (const url of cases) {
+  for (const [url, expected] of cases) {
     const { urls, fn } = recordingFetch();
     const transport = new HttpTransport(url, {}, fn);
     await transport.request(req);
     assert.strictEqual(
       urls[0],
-      url,
-      `expected fetch to be called with "${url}", got "${urls[0]}"`
+      expected,
+      `expected fetch to be called with "${expected}", got "${urls[0]}"`
     );
   }
-  console.log("✓ testUrlUsedVerbatim");
+  console.log("✓ testBaseUrlTrailingSlashNormalized");
+}
+
+async function testCustomHeadersAreSent() {
+  // R29: caller-supplied headers must reach fetch alongside Content-Type.
+  let init: any = null;
+  const fn = (async (_input: any, options: any) => {
+    init = options;
+    const body = JSON.stringify({ jsonrpc: "2.0", result: "ok", id: 1 });
+    return { ok: true, status: 200, statusText: "OK", text: async () => body } as Response;
+  }) as unknown as typeof fetch;
+
+  const transport = new HttpTransport("http://localhost:8080", { "X-Auth": "token-1" }, fn);
+  await transport.request(req);
+
+  assert.strictEqual(init.method, "POST");
+  assert.strictEqual(init.headers["Content-Type"], "application/json");
+  assert.strictEqual(init.headers["X-Auth"], "token-1");
+  assert.ok(init.signal, "requests must carry an AbortSignal (R19)");
+  console.log("✓ testCustomHeadersAreSent");
+}
+
+async function testDefaultLimits() {
+  assert.strictEqual(HTTP_TIMEOUT_MS, 30_000, "D6 requires a 30 s timeout");
+  assert.strictEqual(MAX_RESPONSE_BYTES, 10 * 1024 * 1024, "D5 requires a 10 MiB cap");
+  const transport = new HttpTransport("http://localhost:8080", {}, recordingFetch().fn);
+  assert.strictEqual(transport.timeoutMs, 30_000);
+  assert.strictEqual(transport.maxResponseBytes, 10 * 1024 * 1024);
+  console.log("✓ testDefaultLimits");
+}
+
+async function testRequestTimeout() {
+  // R19: an AbortController-driven timeout surfaces as a standard RPCError.
+  const hangingFetch = ((_input: any, options: any) =>
+    new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => {
+        const err: any = new Error("aborted");
+        err.name = "AbortError";
+        reject(err);
+      });
+    })) as unknown as typeof fetch;
+
+  const transport = new HttpTransport("http://localhost:8080", {}, hangingFetch, 10);
+  try {
+    await transport.request(req);
+    assert.fail("Expected timeout RPCError");
+  } catch (e: any) {
+    assert.ok(e instanceof RPCError, `expected RPCError, got ${e?.constructor?.name}`);
+    assert.strictEqual(e.code, -32603);
+    assert.match(e.message, /timed out after 10 ms/);
+  }
+  console.log("✓ testRequestTimeout");
+}
+
+async function testResponseBodyCap() {
+  // R17: reject a body larger than maxResponseBytes, whether declared or read.
+  const cases: Array<[string, any]> = [
+    [
+      "content-length",
+      {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: (name: string) => (name.toLowerCase() === "content-length" ? "17" : null) },
+        text: async () => "small",
+      },
+    ],
+    [
+      "actual bytes",
+      {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: async () => "0123456789abcdefg",
+      },
+    ],
+  ];
+
+  for (const [label, response] of cases) {
+    const transport = new HttpTransport(
+      "http://localhost:8080",
+      {},
+      (async () => response) as unknown as typeof fetch
+    );
+    transport.maxResponseBytes = 16;
+    try {
+      await transport.request(req);
+      assert.fail(`Expected response-cap RPCError for ${label}`);
+    } catch (e: any) {
+      assert.ok(e instanceof RPCError, `expected RPCError for ${label}`);
+      assert.strictEqual(e.code, -32603, `${label} must use a standard code`);
+      assert.match(e.message, /Response body too large/, `${label} message: ${e.message}`);
+    }
+  }
+  console.log("✓ testResponseBodyCap");
 }
 
 async function testHttpErrorWrapsRPCError() {
@@ -117,7 +217,11 @@ async function testNotificationEmptyBodyIsNotAnError() {
 }
 
 (async () => {
-  await testUrlUsedVerbatim();
+  await testBaseUrlTrailingSlashNormalized();
+  await testCustomHeadersAreSent();
+  await testDefaultLimits();
+  await testRequestTimeout();
+  await testResponseBodyCap();
   await testHttpErrorWrapsRPCError();
   await testMalformedResponsesUseStandardCode();
   await testNotificationEmptyBodyIsNotAnError();

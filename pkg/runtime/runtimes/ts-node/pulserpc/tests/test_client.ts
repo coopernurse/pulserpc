@@ -140,6 +140,69 @@ async function testRequestValidation() {
   console.log("✓ testRequestValidation");
 }
 
+async function testConcurrentCallsUseUniqueIds() {
+  // R20: the id counter increments synchronously before the transport await,
+  // so concurrent calls cannot share an id.
+  const { client } = await createClient(false);
+  const ids: Array<string | number | null | undefined> = [];
+  (client.transport as StubTransport).template = async (req: JsonRpcRequest) => {
+    ids.push(req.id);
+    // Yield so every call is genuinely in flight together.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { jsonrpc: "2.0" as const, result: req.id as any, id: req.id };
+  };
+
+  const count = 100;
+  const results = await Promise.all(
+    Array.from({ length: count }, () => client.call("Svc.req", ["x"]))
+  );
+
+  assert.strictEqual(ids.length, count);
+  assert.strictEqual(new Set(ids).size, count, "every concurrent call must use a unique id");
+  assert.strictEqual(new Set(results).size, count, "every response id must be distinct");
+  console.log("✓ testConcurrentCallsUseUniqueIds");
+}
+
+async function testHostileMetaFromServerIsRejected() {
+  // R28/S5: meta comes from the server's pulserpc-idl response and must not be
+  // able to pollute Object.prototype through the wire.
+  const hostile = JSON.parse(
+    '{"interfaces":[],"structs":[],"enums":[],' +
+      '"meta":{"ok":"v","__proto__":{"polluted":true},' +
+      '"constructor":{"polluted":true},"prototype":{"polluted":true}}}'
+  );
+  const transport = new StubTransport(hostile);
+  const client = await Client.create(transport);
+
+  const meta = (client.contract as any).meta;
+  assert.strictEqual(meta.ok, "v", "benign meta keys must survive");
+  assert.strictEqual(meta.polluted, undefined);
+  assert.strictEqual(Object.getPrototypeOf(meta), Object.prototype);
+  for (const key of ["__proto__", "constructor", "prototype"]) {
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(meta, key), false);
+  }
+  assert.strictEqual(({} as any).polluted, undefined, "Object.prototype must stay clean");
+  console.log("✓ testHostileMetaFromServerIsRejected");
+}
+
+async function testMalformedErrorEnvelopeFallsBack() {
+  // M25: a non-numeric code or non-string message must not be trusted.
+  const { client } = await createClient(false);
+  (client.transport as StubTransport).template = {
+    jsonrpc: "2.0",
+    error: { code: "not-a-number", message: 42 },
+  };
+  try {
+    await client.call("Svc.req", ["x"]);
+    assert.fail("expected RPCError");
+  } catch (e: any) {
+    assert.ok(e instanceof RPCError);
+    assert.strictEqual(e.code, -32603);
+    assert.strictEqual(e.message, "Unknown error");
+  }
+  console.log("✓ testMalformedErrorEnvelopeFallsBack");
+}
+
 async function testVerifyCompatibilityUsesSeverityEnum() {
   const { client } = await createClient(false, false, { auditor: new FailFastAuditor() });
 
@@ -202,6 +265,9 @@ async function testVerifyCompatibilityUsesSeverityEnum() {
   await testErrorCodeZeroIsPreserved();
   await testNullResultValidation();
   await testRequestValidation();
+  await testConcurrentCallsUseUniqueIds();
+  await testHostileMetaFromServerIsRejected();
+  await testMalformedErrorEnvelopeFallsBack();
   await testVerifyCompatibilityUsesSeverityEnum();
   console.log("\nAll client tests passed!");
 })().catch((e) => {

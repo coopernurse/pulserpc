@@ -13,6 +13,7 @@ import { strict as assert } from "assert";
 import {
   validateString, validateInt, validateFloat, validateBool,
   validateArray, validateMap, validateEnum, validateStruct, validateType,
+  INT32_MIN, INT32_MAX,
 } from "../validation.js";
 import {
   findStruct, findEnum, getStructFields,
@@ -85,6 +86,50 @@ function test_shared_validateInt_non_finite() {
   assert.deepStrictEqual(validateType(NaN, { builtIn: "float" }, s, e), []);
   assert.deepStrictEqual(validateType(Infinity, { builtIn: "float" }, s, e), []);
   console.log("  ✓ validateType int rejects NaN/Infinity");
+}
+
+function test_shared_validateInt_signed32_range() {
+  // D1/R25: IDL int is signed 32-bit. Boundary values are accepted; anything
+  // wider (including |x| > 2^31) is rejected even though it is integral.
+  const s: StructMap = {};
+  const e: EnumMap = {};
+  for (const value of [0, 1, -1, INT32_MIN, INT32_MAX]) {
+    assert.deepStrictEqual(
+      validateType(value, { builtIn: "int" }, s, e),
+      [],
+      `expected ${value} to be a valid int`
+    );
+  }
+  for (const value of [INT32_MAX + 1, INT32_MIN - 1, 4294967296, 2 ** 53]) {
+    const errs = validateType(value, { builtIn: "int" }, s, e);
+    assert.strictEqual(errs.length, 1, `expected ${value} to be rejected`);
+    assert.match(errs[0].message, /32-bit/);
+  }
+  assert.strictEqual(validateInt(INT32_MAX + 1).length, 1);
+  console.log("  ✓ validateType int enforces signed 32-bit range");
+}
+
+function test_shared_enum_is_wire_string() {
+  // C11/R27: enums are declared string names on the wire, never ordinals.
+  const s: StructMap = {};
+  const allEnums: EnumMap = { Color: { values: [{ name: "RED" }, { name: "BLUE" }] } };
+  const type = { userDefined: "Color" };
+  assert.deepStrictEqual(validateType("RED", type, s, allEnums), []);
+  assert.deepStrictEqual(validateType("BLUE", type, s, allEnums), []);
+  assert.strictEqual(validateType(0, type, s, allEnums).length, 1, "ordinals are not valid");
+  assert.strictEqual(validateType("red", type, s, allEnums).length, 1, "names are case-sensitive");
+  console.log("  ✓ validateType enum is a wire string");
+}
+
+function test_shared_float_is_double() {
+  // R26: float is IEEE-754 double; large and fractional values are accepted.
+  const s: StructMap = {};
+  const e: EnumMap = {};
+  for (const value of [0, 1.5, -1.5, Number.MAX_VALUE, Number.MIN_VALUE]) {
+    assert.deepStrictEqual(validateType(value, { builtIn: "float" }, s, e), []);
+  }
+  assert.strictEqual(validateType("1.5", { builtIn: "float" }, s, e).length, 1);
+  console.log("  ✓ validateType float is a double");
 }
 
 // ── Structs ─────────────────────────────────────────────
@@ -277,6 +322,9 @@ run("test_shared_validateType_array", test_shared_validateType_array);
 run("test_shared_validateType_map", test_shared_validateType_map);
 run("test_shared_validateType_optional_null", test_shared_validateType_optional_null);
 run("test_shared_validateInt_non_finite", test_shared_validateInt_non_finite);
+run("test_shared_validateInt_signed32_range", test_shared_validateInt_signed32_range);
+run("test_shared_enum_is_wire_string", test_shared_enum_is_wire_string);
+run("test_shared_float_is_double", test_shared_float_is_double);
 run("test_shared_validateStruct_extends", test_shared_validateStruct_extends);
 run("test_shared_validateStruct_override", test_shared_validateStruct_override);
 run("test_shared_getStructFields", test_shared_getStructFields);

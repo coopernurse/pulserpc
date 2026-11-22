@@ -23,6 +23,14 @@ export function validateString(value: any, path: string = ""): ValidationError[]
   return [];
 }
 
+/**
+ * IDL `int` is a signed 32-bit integer (D1/R25). TypeScript numbers are
+ * IEEE-754 doubles, so the validator must enforce the range explicitly;
+ * generated native types may be wider than the wire range.
+ */
+export const INT32_MIN = -2147483648;
+export const INT32_MAX = 2147483647;
+
 export function validateInt(value: any, path: string = ""): ValidationError[] {
   if (typeof value !== "number") {
     return [makeError(path, `Expected number for int, got ${typeof value}`)];
@@ -33,13 +41,13 @@ export function validateInt(value: any, path: string = ""): ValidationError[] {
   if (!Number.isFinite(value)) {
     return [makeError(path, `Expected integer, got infinity`)];
   }
-  if (Number.isInteger(value)) {
-    return [];
+  if (!Number.isInteger(value)) {
+    return [makeError(path, `Expected integer, got number with fractional component: ${value}`)];
   }
-  if (value === Math.floor(value)) {
-    return [];
+  if (value < INT32_MIN || value > INT32_MAX) {
+    return [makeError(path, `Expected signed 32-bit integer, got out-of-range value: ${value}`)];
   }
-  return [makeError(path, `Expected integer, got number with fractional component: ${value}`)];
+  return [];
 }
 
 export function validateFloat(value: any, path: string = ""): ValidationError[] {

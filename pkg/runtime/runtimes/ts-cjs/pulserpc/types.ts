@@ -94,7 +94,7 @@ function baseTypeName(name: string): string {
 }
 
 interface BaseNameIndex<T> {
-  /** First definition for each base name, in the map's key order. */
+  /** First definition for each base name, in sorted key order. */
   byBase: Map<string, T>;
 }
 
