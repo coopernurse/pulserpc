@@ -216,5 +216,106 @@ namespace PulseRPC.Tests
             var ex = Assert.Throws<RPCError>(() => client.Call("Calc.nullReturn"));
             Assert.Contains("invalid response", ex.Message);
         }
+
+        // canonical envelope conformance (M5/M27/D2)
+        [Fact]
+        public void Call_WrongJsonRpcVersion_Throws()
+        {
+            var transport = new FakeTransport((method, @params, id) =>
+            {
+                if (method == "pulserpc-idl") return FakeTransport.Result(id, TestIDL.Build());
+                var response = FakeTransport.Result(id, 8);
+                response["jsonrpc"] = "1.0";
+                return response;
+            });
+
+            var client = new Client(transport);
+            Assert.Throws<InvalidOperationException>(() => client.Call("Calc.add", new object[] { 5, 3 }));
+        }
+
+        [Fact]
+        public void Call_ResponseWithNeitherResultNorError_Throws()
+        {
+            var transport = new FakeTransport((method, @params, id) =>
+                method == "pulserpc-idl"
+                    ? FakeTransport.Result(id, TestIDL.Build())
+                    : new Dictionary<string, object?> { ["jsonrpc"] = "2.0", ["id"] = id });
+
+            var client = new Client(transport);
+            var ex = Assert.Throws<InvalidOperationException>(() => client.Call("Calc.add", new object[] { 5, 3 }));
+            Assert.Contains("exactly one", ex.Message);
+        }
+
+        [Fact]
+        public void Call_MalformedErrorCodeAndMessage_FallsBackSafely()
+        {
+            var transport = new FakeTransport((method, @params, id) =>
+            {
+                if (method == "pulserpc-idl") return FakeTransport.Result(id, TestIDL.Build());
+                return new Dictionary<string, object?>
+                {
+                    ["jsonrpc"] = "2.0",
+                    ["id"] = id,
+                    ["error"] = new Dictionary<string, object?>
+                    {
+                        ["code"] = "not-a-number",
+                        ["message"] = 42
+                    }
+                };
+            });
+
+            var client = new Client(transport);
+            var ex = Assert.Throws<RPCError>(() => client.Call("Calc.add", new object[] { 5, 3 }));
+            Assert.Equal(-32603, ex.Code);
+            Assert.Equal("42", ex.Message);
+        }
+
+        [Fact]
+        public void ValidateEnvelope_NumericIdComparedByValue()
+        {
+            // M24: an int request id and a numerically equal double response id
+            // must be treated as the same id.
+            var response = new Dictionary<string, object?>
+            {
+                ["jsonrpc"] = "2.0",
+                ["id"] = 1.0d,
+                ["result"] = "ok"
+            };
+            Client.ValidateEnvelope(response, 1, "conformance");
+        }
+
+        [Fact]
+        public void Call_ValidateResponse_NullForOptionalReturn_Accepted()
+        {
+            var optionalIdl = new Dictionary<string, object>
+            {
+                ["interfaces"] = new List<object>
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["name"] = "Calc",
+                        ["methods"] = new List<object>
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["name"] = "opt",
+                                ["parameters"] = new List<object>(),
+                                ["returnType"] = new Dictionary<string, object> { ["builtIn"] = "int" },
+                                ["returnOptional"] = true
+                            }
+                        }
+                    }
+                },
+                ["structs"] = new List<object>(),
+                ["enums"] = new List<object>()
+            };
+            var transport = new FakeTransport((method, @params, id) =>
+                method == "pulserpc-idl"
+                    ? FakeTransport.Result(id, optionalIdl)
+                    : FakeTransport.Result(id, null));
+
+            var client = new Client(transport, validateResponse: true);
+            Assert.Null(client.Call("Calc.opt"));
+        }
     }
 }

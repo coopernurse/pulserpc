@@ -262,7 +262,110 @@ function testFindIDLJsonWalksUp() {
   console.log("✓ testFindIDLJsonWalksUp");
 }
 
+// --- canonical client-envelope conformance cases (M5/M14/M24/M27/D2) --------
+
+function envelopeIDL() {
+  return {
+    interfaces: [{
+      name: "Svc",
+      methods: [
+        { name: "req", parameters: [], returnType: { builtIn: "string" } },
+        { name: "opt", parameters: [], returnType: { builtIn: "string" }, returnOptional: true },
+      ],
+    }],
+    structs: [],
+    enums: [],
+    errors: [],
+  };
+}
+
+/** Serves the IDL on bootstrap, then returns a templated call response. */
+class ScriptedTransport {
+  constructor(template) {
+    this.template = template;
+  }
+  async request(req) {
+    if (req.method === "pulserpc-idl") {
+      return { jsonrpc: "2.0", result: envelopeIDL(), id: req.id };
+    }
+    return typeof this.template === "function"
+      ? this.template(req)
+      : { ...this.template, id: req.id };
+  }
+  close() {}
+}
+
+async function scriptedClient(template, validateResponse = false) {
+  return Client.create(new ScriptedTransport(template), false, validateResponse);
+}
+
+async function expectCallToThrow(client, method, pattern) {
+  try {
+    await client.call(method, []);
+    assert.fail(`expected client.call to throw matching ${pattern}`);
+  } catch (e) {
+    assert.ok(pattern.test(e.message), `unexpected error: ${e.message}`);
+  }
+}
+
+async function testClientEnvelopeConformance() {
+  // M5: wrong jsonrpc version rejected.
+  await expectCallToThrow(
+    await scriptedClient({ jsonrpc: "1.0", result: "ok" }),
+    "Svc.req", /jsonrpc/
+  );
+  // M5: id mismatch rejected.
+  await expectCallToThrow(
+    await scriptedClient((req) => ({ jsonrpc: "2.0", result: "ok", id: Number(req.id) + 100 })),
+    "Svc.req", /mismatched id/
+  );
+  // M5: both result and error rejected.
+  await expectCallToThrow(
+    await scriptedClient({ jsonrpc: "2.0", result: "ok", error: { code: -32603, message: "x" } }),
+    "Svc.req", /both result and error/
+  );
+  // M5: neither result nor error rejected.
+  await expectCallToThrow(
+    await scriptedClient({ jsonrpc: "2.0" }),
+    "Svc.req", /neither result nor error/
+  );
+  // M27/D2: a non-numeric code and a non-string message must not be trusted.
+  const malformed = await scriptedClient({
+    jsonrpc: "2.0", error: { code: "not-a-number", message: 42 }
+  });
+  try {
+    await malformed.call("Svc.req", []);
+    assert.fail("expected RPCError");
+  } catch (e) {
+    assert.ok(e instanceof RPCError, "expected RPCError");
+    assert.strictEqual(e.code, -32603);
+    assert.strictEqual(e.message, "Unknown error");
+  }
+  // M24: numeric ids are compared by value.
+  const numeric = await scriptedClient((req) => ({
+    jsonrpc: "2.0", result: "ok", id: parseFloat(String(req.id)) + 0.0
+  }));
+  assert.strictEqual(await numeric.call("Svc.req", []), "ok");
+  console.log("✓ testClientEnvelopeConformance");
+}
+
+async function testClientNullResultConformance() {
+  // M14: null for a required return is rejected, null for optional accepted.
+  const required = await scriptedClient({ jsonrpc: "2.0", result: null }, true);
+  try {
+    await required.call("Svc.req", []);
+    assert.fail("expected required-return null to be rejected");
+  } catch (e) {
+    assert.ok(/Response validation failed/.test(e.message), `unexpected error: ${e.message}`);
+  }
+  const optional = await scriptedClient({ jsonrpc: "2.0", result: null }, true);
+  assert.strictEqual(await optional.call("Svc.opt", []), null);
+  console.log("✓ testClientNullResultConformance");
+}
+
 async function main() {
+  await testClientEnvelopeConformance();
+  await testClientNullResultConformance();
   await testClientConstructsWithInProcTransport();
   await testClientBasicRequestResponse();
   await testClientWrapsRpcError();
