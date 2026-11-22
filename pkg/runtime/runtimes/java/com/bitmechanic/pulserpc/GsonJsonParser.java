@@ -1,6 +1,7 @@
 package com.bitmechanic.pulserpc;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import java.lang.reflect.Type;
 
@@ -12,10 +13,15 @@ public class GsonJsonParser implements JsonParser {
     private final Gson gson;
 
     /**
-     * Create a new GsonJsonParser with default Gson instance
+     * Create a new GsonJsonParser with default Gson instance.
+     *
+     * Nulls are serialized so JSON-RPC envelopes keep an explicit
+     * `"result": null` (and struct optional fields keep their keys). This
+     * matches Jackson and the other runtimes; Gson's default drops null map
+     * values, which produces an invalid response envelope for a null result.
      */
     public GsonJsonParser() {
-        this.gson = new Gson();
+        this.gson = new GsonBuilder().serializeNulls().create();
     }
 
     /**

@@ -60,6 +60,22 @@ public class Response {
     }
 
     /**
+     * Compare a request id with the id echoed in a response. JSON parsers
+     * disagree on the Java type of JSON numbers (Gson yields Double while
+     * Jackson yields Integer), so numeric ids must be compared by value
+     * (matching the Go runtime's idsEqual policy).
+     */
+    private static boolean idsMatch(Object expected, Object actual) {
+        if (expected == null || actual == null) {
+            return expected == null && actual == null;
+        }
+        if (expected instanceof Number && actual instanceof Number) {
+            return ((Number) expected).doubleValue() == ((Number) actual).doubleValue();
+        }
+        return expected.equals(actual);
+    }
+
+    /**
      * Validate the JSON-RPC 2.0 response envelope (java-14): the version must be
      * "2.0", the id must match the request, and exactly one of result/error must
      * be present. Throws RPCError(-32600) on a malformed envelope.
@@ -68,7 +84,7 @@ public class Response {
         if (!"2.0".equals(jsonrpc)) {
             throw new RPCError(-32600, "Invalid response: jsonrpc must be '2.0'");
         }
-        if (expectedId != null && !expectedId.equals(id)) {
+        if (expectedId != null && !idsMatch(expectedId, id)) {
             throw new RPCError(-32600, "Invalid response: id mismatch (expected " + expectedId + ", got " + id + ")");
         }
         if (hasResult() == hasError()) {
@@ -87,7 +103,7 @@ public class Response {
         // Mirror typed validate(): when an id is expected, a missing id is a
         // mismatch too. The old responseId != null guard let an envelope with
         // no "id" key slip through validation (java-audit low finding).
-        if (expectedId != null && !expectedId.equals(responseId)) {
+        if (expectedId != null && !idsMatch(expectedId, responseId)) {
             throw new RPCError(-32600, "Invalid response: id mismatch (expected " + expectedId + ", got " + responseId + ")");
         }
         boolean hasResult = envelope.containsKey("result");

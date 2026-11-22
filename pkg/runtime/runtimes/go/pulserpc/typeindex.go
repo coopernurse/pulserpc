@@ -1,19 +1,24 @@
 package pulserpc
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // baseDefinition records the definition for a base name and whether that base
-// name is shared by more than one key. An ambiguous base name must not resolve
-// to an arbitrary definition; exact key lookups still win.
+// name is shared by more than one key. Resolution is deterministic: when a
+// base name is ambiguous the first key in sorted order wins, matching the
+// Python, Java and TypeScript runtimes (invariant R6). The ambiguous flag is
+// retained for diagnostics.
 type baseDefinition[T any] struct {
 	def       T
 	ambiguous bool
 }
 
 // definitionIndex resolves possibly-qualified type names in O(1) using a
-// base-name index built once when a Contract is constructed. It preserves the
-// original resolution rules: an exact key wins, then an exact base-name key,
-// then a key whose base name matches (nil when that base name is ambiguous).
+// base-name index built once when a Contract is constructed. Resolution order:
+// an exact key wins, then an exact base-name key, then the first sorted key
+// whose base name matches.
 type definitionIndex[T any] struct {
 	defs   map[string]T
 	byBase map[string]baseDefinition[T]
@@ -24,15 +29,20 @@ func newDefinitionIndex[T any](defs map[string]T) *definitionIndex[T] {
 		defs:   defs,
 		byBase: make(map[string]baseDefinition[T], len(defs)),
 	}
-	for key, def := range defs {
+	keys := make([]string, 0, len(defs))
+	for key := range defs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
 		base := typeBaseName(key)
 		entry, exists := idx.byBase[base]
 		if !exists {
-			idx.byBase[base] = baseDefinition[T]{def: def}
+			idx.byBase[base] = baseDefinition[T]{def: defs[key]}
 			continue
 		}
-		// More than one key shares this base name. Keep the ambiguity flag;
-		// callers must fail closed instead of picking an arbitrary entry.
+		// More than one key shares this base name. Keep the first (sorted)
+		// definition for deterministic resolution and flag the ambiguity.
 		entry.ambiguous = true
 		idx.byBase[base] = entry
 	}
@@ -46,7 +56,8 @@ func typeBaseName(name string) string {
 	return name
 }
 
-// resolve returns the definition for name using only O(1) map lookups.
+// resolve returns the definition for name using only O(1) map lookups after the
+// index is built.
 func (idx *definitionIndex[T]) resolve(name string) T {
 	var zero T
 	if idx == nil {
@@ -60,7 +71,7 @@ func (idx *definitionIndex[T]) resolve(name string) T {
 		return def
 	}
 	entry, ok := idx.byBase[base]
-	if !ok || entry.ambiguous {
+	if !ok {
 		return zero
 	}
 	return entry.def

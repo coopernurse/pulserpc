@@ -22,7 +22,7 @@ func contractWithStructNames(names []string) *Contract {
 }
 
 // audit-go-2: the contract-owned index must preserve exact-match-wins and
-// ambiguity-to-nil semantics for both structs and enums.
+// deterministic first-sorted resolution for ambiguous base names (invariant R6).
 func TestContractFindUsesIndexSemantics(t *testing.T) {
 	c := NewContract(map[string]interface{}{
 		"structs": []interface{}{
@@ -43,8 +43,8 @@ func TestContractFindUsesIndexSemantics(t *testing.T) {
 	if def := c.FindStruct("x.Exact"); def == nil {
 		t.Error("FindStruct should resolve a qualified name by exact base-name key")
 	}
-	if def := c.FindStruct("x.Status"); def != nil {
-		t.Errorf("FindStruct resolved an ambiguous base name: %#v", def)
+	if def := c.FindStruct("x.Status"); def == nil || def["name"] != "a.Status" {
+		t.Errorf("FindStruct should deterministically resolve an ambiguous base name to the first sorted key (a.Status), got %#v", def)
 	}
 
 	if def := c.FindEnum("a.Mode"); def == nil {
@@ -53,8 +53,8 @@ func TestContractFindUsesIndexSemantics(t *testing.T) {
 	if def := c.FindEnum("x.Unique"); def == nil {
 		t.Error("FindEnum should resolve a qualified name by base name")
 	}
-	if def := c.FindEnum("x.Mode"); def != nil {
-		t.Errorf("FindEnum resolved an ambiguous base name: %#v", def)
+	if def := c.FindEnum("x.Mode"); def == nil || def["name"] != "a.Mode" {
+		t.Errorf("FindEnum should deterministically resolve an ambiguous base name to the first sorted key (a.Mode), got %#v", def)
 	}
 }
 

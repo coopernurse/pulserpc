@@ -472,7 +472,7 @@ namespace PulseRPC
             return new RPCError(code, message!, data);
         }
 
-        private static void ValidateEnvelope(Dictionary<string, object?> response, object expectedId, string operation)
+        internal static void ValidateEnvelope(Dictionary<string, object?> response, object expectedId, string operation)
         {
             if (!response.TryGetValue("jsonrpc", out var jsonrpc) || jsonrpc?.ToString() != "2.0")
             {

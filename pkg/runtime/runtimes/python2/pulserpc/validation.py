@@ -37,7 +37,13 @@ def validate_int(value):
 
 
 def validate_float(value):
-    """Validate that value is a float or int"""
+    """Validate that value is a float or int.
+
+    Booleans are rejected even though ``bool`` subclasses ``int`` in Python 2,
+    matching Python 3 and the other runtimes (invariant R2).
+    """
+    if isinstance(value, bool):
+        raise TypeError("Expected float, got bool")
     if not isinstance(value, _int_types + (float,)):
         raise TypeError("Expected float, got %s" % type(value).__name__)
 

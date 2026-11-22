@@ -56,11 +56,15 @@ func numericID(value interface{}) (float64, bool) {
 	}
 }
 
-// validateEnvelope enforces the response-envelope rules that are the client's
-// responsibility: a matching id and exactly one of result or error.
+// validateEnvelope enforces the JSON-RPC 2.0 response-envelope rules that are
+// the client's responsibility: a "2.0" version, a matching id, exactly one of
+// result or error, and a well-formed error object.
 func validateEnvelope(response map[string]interface{}, sentID interface{}) error {
 	if response == nil {
 		return fmt.Errorf("empty response")
+	}
+	if version, ok := response["jsonrpc"]; !ok || version != "2.0" {
+		return fmt.Errorf("invalid response: jsonrpc version must be '2.0'")
 	}
 	if sentID != nil {
 		if received, ok := response["id"]; !ok || !idsEqual(sentID, received) {
@@ -68,14 +72,34 @@ func validateEnvelope(response map[string]interface{}, sentID interface{}) error
 		}
 	}
 	_, hasResult := response["result"]
-	_, hasError := response["error"]
+	errValue, hasError := response["error"]
 	if hasResult && hasError {
 		return fmt.Errorf("invalid response: both result and error are present")
 	}
 	if !hasResult && !hasError {
 		return fmt.Errorf("invalid response: neither result nor error is present")
 	}
+	if hasError {
+		errObj, ok := errValue.(map[string]interface{})
+		if !ok || errObj == nil {
+			return fmt.Errorf("invalid response: error must be an object")
+		}
+		switch errObj["code"].(type) {
+		case float64, int, int64, json.Number:
+		default:
+			return fmt.Errorf("invalid response: error.code must be a number")
+		}
+		if _, ok := errObj["message"].(string); !ok {
+			return fmt.Errorf("invalid response: error.message must be a string")
+		}
+	}
 	return nil
+}
+
+// ValidateResponseEnvelope exposes the envelope rules to generated transports,
+// which live outside this package but must enforce an identical contract.
+func ValidateResponseEnvelope(response map[string]interface{}, sentID interface{}) error {
+	return validateEnvelope(response, sentID)
 }
 
 // HTTPTransport is an HTTP-based transport
