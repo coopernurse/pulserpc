@@ -2395,6 +2395,10 @@ func writeTestMethodImplTs(sb *strings.Builder, iface *parser.Interface, method 
 		// echo the whole Person back so optional built-ins round-trip
 		sb.WriteString("    // echo the whole Person back so optional built-ins round-trip\n")
 		sb.WriteString("    return p;\n")
+	case "pick":
+		// return the enum argument unchanged so its wire string round-trips
+		sb.WriteString("    // return the enum argument unchanged so its wire string round-trips\n")
+		sb.WriteString("    return op;\n")
 	default:
 		// Default implementation: return appropriate type based on return type
 		writeDefaultTestReturnTs(sb, method.ReturnType, structMap, enumMap)

@@ -548,6 +548,37 @@ else
 fi
 record_result "A.echoOptional with omitted built-ins" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
 
+# A.pick - enums must serialize as their declared wire strings on responses
+# (R27/C11). The handler returns its enum argument unchanged, so the result
+# must be exactly the JSON string "add" / "multiply".
+do_request POST '{"jsonrpc":"2.0","method":"A.pick","params":["add"],"id":1}'
+probe_ok=1
+probe_detail=""
+if [ "$REQUEST_STATUS" != "200" ]; then
+    probe_ok=0; probe_detail="${probe_detail}expected HTTP 200, got $REQUEST_STATUS; "
+elif [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0; probe_detail="${probe_detail}response is not a JSON object; "
+else
+    [ "$(json_type error)" = "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}unexpected error object; "; }
+    [ "$(json_type result)" = "str" ] || { probe_ok=0; probe_detail="${probe_detail}result is not a str (got $(json_type result)); "; }
+    [ "$(json_get result)" = "add" ] || { probe_ok=0; probe_detail="${probe_detail}result was $(json_get result), expected add; "; }
+fi
+record_result "A.pick('add') serializes enum as declared wire string" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
+do_request POST '{"jsonrpc":"2.0","method":"A.pick","params":["multiply"],"id":1}'
+probe_ok=1
+probe_detail=""
+if [ "$REQUEST_STATUS" != "200" ]; then
+    probe_ok=0; probe_detail="${probe_detail}expected HTTP 200, got $REQUEST_STATUS; "
+elif [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0; probe_detail="${probe_detail}response is not a JSON object; "
+else
+    [ "$(json_type error)" = "__MISSING__" ] || { probe_ok=0; probe_detail="${probe_detail}unexpected error object; "; }
+    [ "$(json_type result)" = "str" ] || { probe_ok=0; probe_detail="${probe_detail}result is not a str (got $(json_type result)); "; }
+    [ "$(json_get result)" = "multiply" ] || { probe_ok=0; probe_detail="${probe_detail}result was $(json_get result), expected multiply; "; }
+fi
+record_result "A.pick('multiply') serializes enum as declared wire string" "$probe_ok" "${probe_detail}Response: $REQUEST_BODY"
+
 echo ""
 
 # ============================================================================
@@ -634,6 +665,7 @@ record_result "Invalid params list well-formed param[index] selectors" "$probe_o
 # Invalid enum values
 test_validation_error "A.calc" "[[33,22],\"subtract\"]" "A.calc with invalid enum value" "-32602"
 test_validation_error "A.calc" "[[33,22],\"ADD\"]" "A.calc with wrong case enum" "-32602"
+test_validation_error "A.pick" "[\"subtract\"]" "A.pick with invalid enum value" "-32602"
 
 # Missing jsonrpc field
 do_request POST '{"method":"A.add","params":[5,3],"id":1}'

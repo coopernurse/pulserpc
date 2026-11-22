@@ -2227,6 +2227,10 @@ func writeMethodImplementationCs(sb *strings.Builder, iface *parser.Interface, m
 			// echo the whole Person back so optional built-ins round-trip
 			sb.WriteString("        return p;\n")
 			return
+		case "pick":
+			// return the enum argument unchanged so its wire string round-trips
+			sb.WriteString("        return op;\n")
+			return
 		}
 	case "B":
 		switch methodName {
