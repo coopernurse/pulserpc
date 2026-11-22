@@ -106,7 +106,8 @@ func (p *JavaClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	namespaceMap := GroupTypesByNamespace(idl)
 
 	// Generate separate files for each type with proper package structure
-	for namespace, types := range namespaceMap {
+	for _, namespace := range sortedJavaNamespaceNames(namespaceMap) {
+		types := namespaceMap[namespace]
 		if namespace == "" {
 			continue // Skip types without namespace (shouldn't happen with required namespaces)
 		}
@@ -373,12 +374,7 @@ func generateStructFile(structDef *parser.Struct, packageName string, structMap 
 	}
 
 	// Write imports
-	for imp := range imports {
-		sb.WriteString(fmt.Sprintf("import %s;\n", imp))
-	}
-	if len(imports) > 0 {
-		sb.WriteString("\n")
-	}
+	writeSortedImports(&sb, imports)
 
 	// Generate class declaration
 	if structDef.Extends != "" {
@@ -401,7 +397,7 @@ func generateStructFile(structDef *parser.Struct, packageName string, structMap 
 
 	// Generate fields
 	for _, field := range structDef.Fields {
-		fieldType := getJavaTypeWithPackage(field.Type, enumMap, basePackage, packageName, structMap)
+		fieldType := getJavaTypeWithPackageOptional(field.Type, field.Optional, enumMap, basePackage, packageName, structMap)
 		fieldName := toCamelCase(field.Name)
 
 		// Add JSON annotation based on library
@@ -417,7 +413,7 @@ func generateStructFile(structDef *parser.Struct, packageName string, structMap 
 
 	// Generate getters and setters
 	for _, field := range structDef.Fields {
-		fieldType := getJavaTypeWithPackage(field.Type, enumMap, basePackage, packageName, structMap)
+		fieldType := getJavaTypeWithPackageOptional(field.Type, field.Optional, enumMap, basePackage, packageName, structMap)
 		fieldName := toCamelCase(field.Name)
 		capitalizedName := capitalizeFirst(fieldName)
 
@@ -460,12 +456,7 @@ func generateInterfaceFile(iface *parser.Interface, packageName string, structMa
 	}
 
 	// Write imports
-	for imp := range imports {
-		sb.WriteString(fmt.Sprintf("import %s;\n", imp))
-	}
-	if len(imports) > 0 {
-		sb.WriteString("\n")
-	}
+	writeSortedImports(&sb, imports)
 
 	// Generate interface declaration
 	fmt.Fprintf(&sb, "public interface %s {\n", interfaceName)
@@ -474,7 +465,7 @@ func generateInterfaceFile(iface *parser.Interface, packageName string, structMa
 	for _, method := range iface.Methods {
 		returnType := "void"
 		if method.ReturnType != nil {
-			returnType = getJavaTypeWithPackage(method.ReturnType, enumMap, basePackage, packageName, structMap)
+			returnType = getJavaTypeWithPackageOptional(method.ReturnType, method.ReturnOptional, enumMap, basePackage, packageName, structMap)
 		}
 
 		fmt.Fprintf(&sb, "    public %s %s(", returnType, method.Name)
@@ -532,7 +523,7 @@ func generateInterfaceClient(iface *parser.Interface, packageName string, enumMa
 	for _, method := range iface.Methods {
 		returnType := "void"
 		if method.ReturnType != nil {
-			returnType = getJavaTypeWithPackage(method.ReturnType, enumMap, basePackage, packageName, structMap)
+			returnType = getJavaTypeWithPackageOptional(method.ReturnType, method.ReturnOptional, enumMap, basePackage, packageName, structMap)
 		}
 
 		fmt.Fprintf(&sb, "    @Override\n")
@@ -611,23 +602,76 @@ func generateInterfaceClient(iface *parser.Interface, packageName string, enumMa
 
 // Helper functions for type handling
 
+// sortedImportPaths returns import statements in deterministic order. Maps are
+// iterated in random order in Go, so every map-derived output must be sorted to
+// keep generation byte-deterministic (invariant C1/D12).
+func sortedImportPaths(imports map[string]bool) []string {
+	paths := make([]string, 0, len(imports))
+	for imp := range imports {
+		paths = append(paths, imp)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func writeSortedImports(sb *strings.Builder, imports map[string]bool) {
+	paths := sortedImportPaths(imports)
+	for _, imp := range paths {
+		fmt.Fprintf(sb, "import %s;\n", imp)
+	}
+	if len(paths) > 0 {
+		sb.WriteString("\n")
+	}
+}
+
+// sortedJavaNamespaceNames returns the namespace keys of a grouped type map in
+// deterministic order.
+func sortedJavaNamespaceNames(namespaceMap map[string]*NamespaceTypes) []string {
+	names := make([]string, 0, len(namespaceMap))
+	for namespace := range namespaceMap {
+		names = append(names, namespace)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // findTypeNamespace looks up a type by base name in structMap and enumMap
 // to find which namespace it belongs to. This handles cross-namespace references
 // where types are stored with simple names (e.g., "Category" instead of "common.Category").
+//
+// Resolution is exact key first, then a base-name match over sorted keys so an
+// ambiguous base name cannot make generated imports vary between runs (D16).
 func findTypeNamespace(typeName string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) string {
+	if s := structMap[typeName]; s != nil {
+		return GetNamespaceFromType(typeName, s.Namespace)
+	}
+	if e := enumMap[typeName]; e != nil {
+		return GetNamespaceFromType(typeName, e.Namespace)
+	}
+
 	baseName := GetBaseName(typeName)
 
-	// First check structMap by qualified name
-	for fullName, s := range structMap {
+	// First check structMap by qualified name, in sorted key order.
+	structKeys := make([]string, 0, len(structMap))
+	for fullName := range structMap {
+		structKeys = append(structKeys, fullName)
+	}
+	sort.Strings(structKeys)
+	for _, fullName := range structKeys {
 		if GetBaseName(fullName) == baseName {
-			return GetNamespaceFromType(fullName, s.Namespace)
+			return GetNamespaceFromType(fullName, structMap[fullName].Namespace)
 		}
 	}
 
-	// Then check enumMap by qualified name
-	for fullName, e := range enumMap {
+	// Then check enumMap by qualified name, in sorted key order.
+	enumKeys := make([]string, 0, len(enumMap))
+	for fullName := range enumMap {
+		enumKeys = append(enumKeys, fullName)
+	}
+	sort.Strings(enumKeys)
+	for _, fullName := range enumKeys {
 		if GetBaseName(fullName) == baseName {
-			return GetNamespaceFromType(fullName, e.Namespace)
+			return GetNamespaceFromType(fullName, enumMap[fullName].Namespace)
 		}
 	}
 
@@ -676,6 +720,24 @@ func getJavaTypeWithPackage(t *parser.Type, enumMap map[string]*parser.Enum, bas
 		return typeName
 	}
 	return "Object"
+}
+
+// getJavaTypeWithPackageOptional maps a field or return type to a Java type.
+// Built-in scalars are boxed when the declaration is optional so that absence
+// can be represented as null (invariant C10/D7). Required scalars stay
+// primitive.
+func getJavaTypeWithPackageOptional(t *parser.Type, optional bool, enumMap map[string]*parser.Enum, basePackage string, currentPackage string, structMap map[string]*parser.Struct) string {
+	if optional && t.IsBuiltIn() {
+		switch t.BuiltIn {
+		case "int":
+			return "Integer"
+		case "float":
+			return "Double"
+		case "bool":
+			return "Boolean"
+		}
+	}
+	return getJavaTypeWithPackage(t, enumMap, basePackage, currentPackage, structMap)
 }
 
 // getJavaTypeWithPackageForGeneric returns Java type name for use in generics (uses boxed types for primitives)
@@ -929,12 +991,7 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 			imports[ifacePackage+"."+ifaceName] = true
 		}
 	}
-	for imp := range imports {
-		sb.WriteString(fmt.Sprintf("import %s;\n", imp))
-	}
-	if len(imports) > 0 {
-		sb.WriteString("\n")
-	}
+	writeSortedImports(&sb, imports)
 
 	sb.WriteString("public class Server {\n")
 	sb.WriteString("    // Embedded IDL JSON for pulserpc-idl RPC method\n")
@@ -982,11 +1039,22 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("    private void handleRequest(HttpExchange exchange) throws IOException {\n")
 	sb.WriteString("        try {\n")
 	sb.WriteString("            if (!\"POST\".equals(exchange.getRequestMethod())) {\n")
-	sb.WriteString("                sendError(exchange, -32600, \"Invalid Request - only POST allowed\");\n")
+	sb.WriteString("                // Invariant R22/D3: non-POST requests get HTTP 405 and a\n")
+	sb.WriteString("                // JSON-RPC error body with id:null.\n")
+	sb.WriteString("                sendError(exchange, 405, -32600, \"Invalid Request - only POST allowed\");\n")
 	sb.WriteString("                return;\n")
 	sb.WriteString("            }\n\n")
-	sb.WriteString("            // Read request body\n")
-	sb.WriteString("            String requestBody = new String(exchange.getRequestBody().readAllBytes());\n\n")
+	sb.WriteString("            // Invariant R16/D5: reject oversized bodies before reading them.\n")
+	sb.WriteString("            byte[] requestBytes;\n")
+	sb.WriteString("            try {\n")
+	sb.WriteString("                String declaredLength = exchange.getRequestHeaders().getFirst(\"Content-Length\");\n")
+	sb.WriteString("                HttpLimits.checkDeclaredLength(declaredLength, HttpLimits.MAX_REQUEST_BODY, \"Request body\");\n")
+	sb.WriteString("                requestBytes = HttpLimits.readBounded(exchange.getRequestBody(), HttpLimits.MAX_REQUEST_BODY, \"Request body\");\n")
+	sb.WriteString("            } catch (IOException bodyTooLarge) {\n")
+	sb.WriteString("                sendError(exchange, 200, -32600, \"Request body too large\");\n")
+	sb.WriteString("                return;\n")
+	sb.WriteString("            }\n")
+	sb.WriteString("            String requestBody = new String(requestBytes);\n\n")
 	sb.WriteString("            // Parse JSON-RPC request - malformed JSON must return -32700\n")
 	sb.WriteString("            Object parsed;\n")
 	sb.WriteString("            try {\n")
@@ -1009,8 +1077,14 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("                os.write(responseBody.getBytes());\n")
 	sb.WriteString("            }\n")
 	sb.WriteString("        } catch (Exception e) {\n")
-	sb.WriteString("            sendError(exchange, -32603, \"Internal error: \" + e.getMessage());\n")
+	sb.WriteString("            // Invariant R15/D4: log implementation details server-side only.\n")
+	sb.WriteString("            logInternalError(\"request dispatch\", e);\n")
+	sb.WriteString("            sendError(exchange, 200, -32603, \"Internal error\");\n")
 	sb.WriteString("        }\n")
+	sb.WriteString("    }\n\n")
+	sb.WriteString("    private void logInternalError(String where, Throwable error) {\n")
+	sb.WriteString("        System.err.println(\"Internal error in \" + where + \": \" + error.getClass().getName() + \": \" + error.getMessage());\n")
+	sb.WriteString("        error.printStackTrace(System.err);\n")
 	sb.WriteString("    }\n\n")
 	sb.WriteString("    @SuppressWarnings(\"unchecked\")\n")
 	sb.WriteString("    private Object handleRequestObject(Object parsed) {\n")
@@ -1018,6 +1092,10 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("            List<?> batch = (List<?>) parsed;\n")
 	sb.WriteString("            if (batch.isEmpty()) {\n")
 	sb.WriteString("                return errorEnvelope(-32600, \"Invalid Request - empty batch\", null, null);\n")
+	sb.WriteString("            }\n")
+	sb.WriteString("            // Invariant R18/D5: bound the number of batch entries.\n")
+	sb.WriteString("            if (batch.size() > HttpLimits.MAX_BATCH_SIZE) {\n")
+	sb.WriteString("                return errorEnvelope(-32600, \"Batch exceeds maximum size\", null, null);\n")
 	sb.WriteString("            }\n")
 	sb.WriteString("            List<Object> responses = new ArrayList<>();\n")
 	sb.WriteString("            for (Object item : batch) {\n")
@@ -1066,10 +1144,13 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 
 	// Error response helper
 	sb.WriteString("    private void sendError(HttpExchange exchange, int code, String message) throws IOException {\n")
+	sb.WriteString("        sendError(exchange, 200, code, message);\n")
+	sb.WriteString("    }\n\n")
+	sb.WriteString("    private void sendError(HttpExchange exchange, int status, int code, String message) throws IOException {\n")
 	sb.WriteString("        Map<String, Object> error = errorEnvelope(code, message, null, null);\n")
 	sb.WriteString("        String errorBody = jsonParser.toJson(error);\n")
 	sb.WriteString("        exchange.getResponseHeaders().set(\"Content-Type\", \"application/json\");\n")
-	sb.WriteString("        exchange.sendResponseHeaders(200, errorBody.getBytes().length);\n")
+	sb.WriteString("        exchange.sendResponseHeaders(status, errorBody.getBytes().length);\n")
 	sb.WriteString("        try (OutputStream os = exchange.getResponseBody()) {\n")
 	sb.WriteString("            os.write(errorBody.getBytes());\n")
 	sb.WriteString("        }\n")
@@ -1090,18 +1171,21 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("    }\n\n")
 	sb.WriteString("    @SuppressWarnings(\"unchecked\")\n")
 	sb.WriteString("    private Map<String, Object> handleJsonRpcRequestCore(Map<String, Object> request) {\n")
+	sb.WriteString("        // Invariant R24/D2: id must be a string, number, or null.\n")
+	sb.WriteString("        Object id = request.get(\"id\");\n")
+	sb.WriteString("        if (id != null && !(id instanceof String) && !(id instanceof Number)) {\n")
+	sb.WriteString("            return errorEnvelope(-32600, \"Invalid Request - id must be a string, number, or null\", null, null);\n")
+	sb.WriteString("        }\n\n")
 	sb.WriteString("        // Validate jsonrpc field\n")
 	sb.WriteString("        Object jsonrpc = request.get(\"jsonrpc\");\n")
 	sb.WriteString("        if (jsonrpc == null || !\"2.0\".equals(jsonrpc)) {\n")
-	sb.WriteString("            Object id = request.get(\"id\");\n")
 	sb.WriteString("            return errorEnvelope(-32600, \"Invalid Request - jsonrpc must be '2.0'\", null, id);\n")
 	sb.WriteString("        }\n\n")
 	sb.WriteString("        Object methodObj = request.get(\"method\");\n")
 	sb.WriteString("        if (!(methodObj instanceof String) || ((String) methodObj).isEmpty()) {\n")
-	sb.WriteString("            return errorEnvelope(-32600, \"Invalid Request - method must be a non-empty string\", null, request.get(\"id\"));\n")
+	sb.WriteString("            return errorEnvelope(-32600, \"Invalid Request - method must be a non-empty string\", null, id);\n")
 	sb.WriteString("        }\n")
 	sb.WriteString("        String method = (String) methodObj;\n")
-	sb.WriteString("        Object id = request.get(\"id\");\n")
 	sb.WriteString("        boolean isNotification = id == null;\n")
 	sb.WriteString("        Object params = request.get(\"params\");\n\n")
 	sb.WriteString("        if (\"pulserpc-idl\".equals(method)) {\n")
@@ -1113,7 +1197,8 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("                }\n")
 	sb.WriteString("                return resultEnvelope(idlDoc, id);\n")
 	sb.WriteString("            } catch (Exception e) {\n")
-	sb.WriteString("                return errorEnvelope(-32603, \"Failed to load IDL: \" + e.getMessage(), null, id);\n")
+	sb.WriteString("                logInternalError(\"pulserpc-idl\", e);\n")
+	sb.WriteString("                return errorEnvelope(-32603, \"Internal error\", null, id);\n")
 	sb.WriteString("            }\n")
 	sb.WriteString("        }\n\n")
 	sb.WriteString("        // Parse method name: interface.method\n")
@@ -1202,7 +1287,8 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("                        }\n")
 	sb.WriteString("                        contract.validateResponse(idlIfaceName, methodName, plainResult);\n")
 	sb.WriteString("                    } catch (Exception ex) {\n")
-	sb.WriteString("                        return errorEnvelope(-32603, \"Internal error: response validation failed: \" + ex.getMessage(), null, id);\n")
+	sb.WriteString("                        logInternalError(\"response validation for \" + method, ex);\n")
+	sb.WriteString("                        return errorEnvelope(-32603, \"Internal error\", null, id);\n")
 	sb.WriteString("                    }\n")
 	sb.WriteString("                }\n")
 	sb.WriteString("            }\n\n")
@@ -1218,23 +1304,15 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("                RPCError rpcErr = (RPCError) cause;\n")
 	sb.WriteString("                return errorEnvelope(rpcErr.getCode(), rpcErr.getMessage(), rpcErr.getData(), id);\n")
 	sb.WriteString("            } else {\n")
-	sb.WriteString("                // Print stack trace for unexpected exceptions\n")
-	sb.WriteString("                System.err.println(\"Exception in method \" + method + \":\");\n")
-	sb.WriteString("                if (cause != null) {\n")
-	sb.WriteString("                    cause.printStackTrace();\n")
-	sb.WriteString("                } else {\n")
-	sb.WriteString("                    ite.printStackTrace();\n")
-	sb.WriteString("                }\n")
-	sb.WriteString("                return errorEnvelope(-32603, \"Internal error: \" + (cause != null ? cause.getMessage() : ite.getMessage()), null, id);\n")
+	sb.WriteString("                logInternalError(\"method \" + method, cause != null ? cause : ite);\n")
+	sb.WriteString("                return errorEnvelope(-32603, \"Internal error\", null, id);\n")
 	sb.WriteString("            }\n")
 	sb.WriteString("        } catch (RPCError rpcErr) {\n")
 	sb.WriteString("            // RPCError is expected and can be thrown by implementations\n")
 	sb.WriteString("            return errorEnvelope(rpcErr.getCode(), rpcErr.getMessage(), rpcErr.getData(), id);\n")
 	sb.WriteString("        } catch (Exception e) {\n")
-	sb.WriteString("            // Print stack trace for unexpected exceptions\n")
-	sb.WriteString("            System.err.println(\"Exception in method \" + method + \":\");\n")
-	sb.WriteString("            e.printStackTrace();\n")
-	sb.WriteString("            return errorEnvelope(-32603, \"Internal error: \" + e.getMessage(), null, id);\n")
+	sb.WriteString("            logInternalError(\"method \" + method, e);\n")
+	sb.WriteString("            return errorEnvelope(-32603, \"Internal error\", null, id);\n")
 	sb.WriteString("        }\n")
 	sb.WriteString("    }\n\n")
 
@@ -1305,8 +1383,16 @@ func generateClientJava(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 
 	// Constructor
 	sb.WriteString("    public Client(String baseUrl, JsonParser jsonParser) {\n")
-	sb.WriteString("        this.httpClient = HttpClient.newHttpClient();\n")
-	sb.WriteString("        this.baseUrl = baseUrl;\n")
+	sb.WriteString("        // Invariant R19/D6: bound connect and request time.\n")
+	sb.WriteString("        this.httpClient = HttpClient.newBuilder()\n")
+	sb.WriteString("            .connectTimeout(java.time.Duration.ofSeconds(10))\n")
+	sb.WriteString("            .build();\n")
+	sb.WriteString("        // Invariant R30/D13: normalize a trailing slash on the base URL.\n")
+	sb.WriteString("        String normalizedBaseUrl = baseUrl;\n")
+	sb.WriteString("        while (normalizedBaseUrl.endsWith(\"/\")) {\n")
+	sb.WriteString("            normalizedBaseUrl = normalizedBaseUrl.substring(0, normalizedBaseUrl.length() - 1);\n")
+	sb.WriteString("        }\n")
+	sb.WriteString("        this.baseUrl = normalizedBaseUrl;\n")
 	sb.WriteString("        this.jsonParser = jsonParser;\n")
 	sb.WriteString("        this.allStructs = new HashMap<>();\n")
 	sb.WriteString("        this.allEnums = new HashMap<>();\n")
@@ -1314,7 +1400,7 @@ func generateClientJava(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 	sb.WriteString("        this.contract = new Contract(jsonParser.fromJson(IDL_JSON, Object.class));\n\n")
 
 	// Collect all structs and enums from namespace IDL classes
-	for namespace := range namespaceMap {
+	for _, namespace := range sortedJavaNamespaceNames(namespaceMap) {
 		if namespace != "" {
 			nsPackage := basePackage + "." + namespace
 			sb.WriteString(fmt.Sprintf("        this.allStructs.putAll(%s.%sIdl.ALL_STRUCTS);\n", nsPackage, namespace))
@@ -1404,12 +1490,22 @@ func generateClientJava(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 	sb.WriteString("            .uri(URI.create(baseUrl))\n")
 	sb.WriteString("            .header(\"Content-Type\", \"application/json\")\n")
 	sb.WriteString("            .POST(HttpRequest.BodyPublishers.ofString(requestBody))\n")
+	sb.WriteString("            .timeout(HttpLimits.REQUEST_TIMEOUT)\n")
 	sb.WriteString("            .build();\n\n")
-	sb.WriteString("        HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());\n\n")
+	sb.WriteString("        HttpResponse<java.io.InputStream> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());\n\n")
 	sb.WriteString("        if (response.statusCode() != 200) {\n")
 	sb.WriteString("            throw new RuntimeException(\"HTTP error: \" + response.statusCode());\n")
 	sb.WriteString("        }\n\n")
-	sb.WriteString("        Map<String, Object> jsonResponse = jsonParser.fromJson(response.body(), Map.class);\n\n")
+	sb.WriteString("        // Invariant R17/D5: bound the response body before reading it.\n")
+	sb.WriteString("        long declaredLength = response.headers().firstValueAsLong(\"Content-Length\").orElse(-1L);\n")
+	sb.WriteString("        if (declaredLength > HttpLimits.MAX_RESPONSE_BODY) {\n")
+	sb.WriteString("            throw new RuntimeException(\"Response body exceeds maximum size of \" + HttpLimits.MAX_RESPONSE_BODY + \" bytes\");\n")
+	sb.WriteString("        }\n")
+	sb.WriteString("        String responseBody;\n")
+	sb.WriteString("        try (java.io.InputStream body = response.body()) {\n")
+	sb.WriteString("            responseBody = new String(HttpLimits.readBounded(body, HttpLimits.MAX_RESPONSE_BODY, \"Response body\"));\n")
+	sb.WriteString("        }\n\n")
+	sb.WriteString("        Map<String, Object> jsonResponse = jsonParser.fromJson(responseBody, Map.class);\n\n")
 	sb.WriteString("        // java-14: validate the full JSON-RPC envelope before reading result/error.\n")
 	sb.WriteString("        Response.validateMap(jsonResponse, requestId);\n\n")
 	sb.WriteString("        if (jsonResponse.containsKey(\"error\")) {\n")
@@ -1579,12 +1675,7 @@ func generateTestInterfaceImplFile(iface *parser.Interface, packageName string, 
 		}
 	}
 
-	for imp := range imports {
-		sb.WriteString(fmt.Sprintf("import %s;\n", imp))
-	}
-	if len(imports) > 0 {
-		sb.WriteString("\n")
-	}
+	writeSortedImports(&sb, imports)
 
 	implName := interfaceName + "Impl"
 	if interfacePackage != packageName {
@@ -1597,7 +1688,7 @@ func generateTestInterfaceImplFile(iface *parser.Interface, packageName string, 
 	for _, method := range iface.Methods {
 		returnType := "void"
 		if method.ReturnType != nil {
-			returnType = getJavaTypeWithPackage(method.ReturnType, enumMap, basePackage, packageName, structMap)
+			returnType = getJavaTypeWithPackageOptional(method.ReturnType, method.ReturnOptional, enumMap, basePackage, packageName, structMap)
 		}
 
 		fmt.Fprintf(&sb, "    @Override\n")
@@ -1746,12 +1837,7 @@ func generateTestServerJava(idl *parser.IDL, jsonLib string, basePackage string,
 		implName := GetBaseName(iface.Name) + "Impl"
 		imports[ifacePackage+"."+implName] = true
 	}
-	for imp := range imports {
-		sb.WriteString(fmt.Sprintf("import %s;\n", imp))
-	}
-	if len(imports) > 0 {
-		sb.WriteString("\n")
-	}
+	writeSortedImports(&sb, imports)
 
 	sb.WriteString("public class TestServer extends Server {\n")
 	sb.WriteString("    public TestServer(int port, JsonParser jsonParser) throws Exception {\n")
@@ -1830,12 +1916,7 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 		clientName := GetBaseName(iface.Name) + "Client"
 		imports[ifacePackage+"."+clientName] = true
 	}
-	for imp := range imports {
-		sb.WriteString(fmt.Sprintf("import %s;\n", imp))
-	}
-	if len(imports) > 0 {
-		sb.WriteString("\n")
-	}
+	writeSortedImports(&sb, imports)
 
 	sb.WriteString("public class TestClient {\n")
 	sb.WriteString("//__PULSERPC_STRUCT_FACTORIES__\n")
