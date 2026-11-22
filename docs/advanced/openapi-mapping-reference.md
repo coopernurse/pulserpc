@@ -615,7 +615,7 @@ Warning: circular reference detected at #/components/schemas/Node/next (breaking
 
 ## Examples
 
-See the [OpenAPI Examples](../../examples/openapi/) directory for complete working examples:
+See the [OpenAPI Examples](https://github.com/coopernurse/pulserpc/tree/main/examples/openapi) directory for complete working examples:
 
 - `petstore.yaml` - Standard Petstore OpenAPI 3.0 spec
 - `petstore.pulse` - Generated Pulse IDL

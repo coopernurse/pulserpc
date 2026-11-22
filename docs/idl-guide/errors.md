@@ -239,7 +239,7 @@ Error declarations generate language-specific constructs:
 | Java | Exception classes with error codes |
 | C# | Exception classes with error codes |
 
-See the [Language Reference](../languages/) for details on error handling in each language.
+See the [Language Reference](../languages/go/reference.html) for details on error handling in each language.
 
 ## Next Steps
 
