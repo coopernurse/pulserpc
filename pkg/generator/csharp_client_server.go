@@ -1463,6 +1463,14 @@ func writeMethodLookupAndInvokeCs(sb *strings.Builder, idl *parser.IDL, structMa
 	sb.WriteString("        }\n")
 	sb.WriteString("        catch (Exception e)\n")
 	sb.WriteString("        {\n")
+	// Reflection wraps handler exceptions in TargetInvocationException, so an
+	// RPCError raised by a handler would otherwise be misreported as -32603.
+	sb.WriteString("            var rpcErr = e as RPCError ?? (e as System.Reflection.TargetInvocationException)?.InnerException as RPCError;\n")
+	sb.WriteString("            if (rpcErr != null)\n")
+	sb.WriteString("            {\n")
+	sb.WriteString("                _logger?.LogWarning(\"RPCError from {InterfaceName}.{MethodName}: {Code} - {Message}\", interfaceName, methodName, rpcErr.Code, rpcErr.Message);\n")
+	sb.WriteString("                return ErrorResponse(requestId, rpcErr.Code, rpcErr.Message, rpcErr.Data);\n")
+	sb.WriteString("            }\n")
 	sb.WriteString("            _logger?.LogError(e, \"Exception invoking {InterfaceName}.{MethodName}\", interfaceName, methodName);\n")
 	sb.WriteString("            // D4/R15: exception text and stack traces never reach the wire.\n")
 	sb.WriteString("            return ErrorResponse(requestId, -32603, \"Internal error\");\n")

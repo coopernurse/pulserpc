@@ -134,7 +134,6 @@ class Contract(object):
         invalid_fields = []
         for i, param_value in enumerate(params):
             param_def = param_defs[i]
-            param_name = param_def["name"]
             param_type = param_def["type"]
             is_optional = param_def.get("optional", False)
 
@@ -143,9 +142,8 @@ class Contract(object):
                     param_value, param_type, self.structs, self.enums, is_optional
                 )
             except (TypeError, ValueError) as e:
-                invalid_fields.append(
-                    {"field": "param[%d].%s" % (i, param_name), "message": str(e)}
-                )
+                # Canonical M13 shape: invalid_fields is a list of path strings.
+                invalid_fields.append("param[%d]" % i)
 
         if invalid_fields:
             message = "Function '%s.%s' invalid params" % (iface_name, func_name)
@@ -174,9 +172,7 @@ class Contract(object):
                     "Function '%s.%s' invalid response: '%s'. Expected None"
                     % (iface_name, func_name, result)
                 )
-                raise _validation_error(
-                    -32603, message, [{"field": "result", "message": message}]
-                )
+                raise _validation_error(-32603, message, ["result"])
             return
 
         is_optional = func.get("returnOptional", False)
@@ -184,6 +180,4 @@ class Contract(object):
             validate_type(result, return_type, self.structs, self.enums, is_optional)
         except (TypeError, ValueError) as e:
             message = "Function '%s.%s' invalid response" % (iface_name, func_name)
-            raise _validation_error(
-                -32603, message, [{"field": "result", "message": str(e)}]
-            )
+            raise _validation_error(-32603, message, ["result"])

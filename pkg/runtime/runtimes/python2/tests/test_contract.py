@@ -45,8 +45,7 @@ def test_validate_request_errors_are_rpc_errors():
     )
     fields = err.data.get("invalid_fields")
     assert isinstance(fields, list) and len(fields) == 1
-    assert fields[0].get("field") == "param[0].a"
-    assert "Expected int" in fields[0].get("message", "")
+    assert fields[0] == "param[0]"
     print("  PASS: validate_request error codes and data")
 
 
@@ -69,7 +68,7 @@ def test_validate_response_success_and_errors():
     )
     fields = err.data.get("invalid_fields")
     assert isinstance(fields, list) and len(fields) == 1
-    assert fields[0].get("field") == "result"
+    assert fields[0] == "result"
 
     err = assert_rpc_error(
         -32603, contract.validate_response, "CalcService", "ping", "unexpected"
