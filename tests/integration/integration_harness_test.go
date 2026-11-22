@@ -166,6 +166,7 @@ func TestLimitsHarnessAgainstFakeServer(t *testing.T) {
 		dataStyle bool
 		// uncapped models a runtime that has not implemented the caps yet.
 		uncapped       bool
+		wantFailure    bool
 		wantOutput     []string
 		unwantedOutput []string
 	}{
@@ -181,10 +182,11 @@ func TestLimitsHarnessAgainstFakeServer(t *testing.T) {
 			unwantedOutput: []string{"✗ FAIL", "SKIP"},
 		},
 		{
-			name:           "uncapped runtimes skip instead of failing",
+			name:           "uncapped runtimes fail instead of skipping",
 			uncapped:       true,
-			wantOutput:     []string{"SKIP", "All limit tests passed"},
-			unwantedOutput: []string{"✗ FAIL"},
+			wantFailure:    true,
+			wantOutput:     []string{"✗ FAIL"},
+			unwantedOutput: []string{"SKIP", "All limit tests passed"},
 		},
 	}
 
@@ -196,7 +198,11 @@ func TestLimitsHarnessAgainstFakeServer(t *testing.T) {
 
 			cmd := exec.Command(bash, filepath.Join("test_limits.sh"), server.URL)
 			out, err := cmd.CombinedOutput()
-			if err != nil {
+			if tc.wantFailure {
+				if err == nil {
+					t.Errorf("test_limits.sh unexpectedly passed for an uncapped server:\n%s", out)
+				}
+			} else if err != nil {
 				t.Fatalf("test_limits.sh failed: %v\n%s", err, out)
 			}
 			for _, want := range tc.wantOutput {
@@ -234,8 +240,13 @@ func limitHarnessServer(dataStyle, uncapped bool) http.Handler {
 
 		var batch []json.RawMessage
 		if err := json.Unmarshal(body, &batch); err == nil {
-			if uncapped {
-				fmt.Fprint(w, `[{"jsonrpc":"2.0","result":0,"id":1}]`)
+			if uncapped || len(batch) <= 100 {
+				responses := make([]string, 0, len(batch))
+				for i := 0; i < len(batch); i++ {
+					responses = append(responses,
+						fmt.Sprintf(`{"jsonrpc":"2.0","result":0,"id":%d}`, i+1))
+				}
+				fmt.Fprint(w, "["+strings.Join(responses, ",")+"]")
 				return
 			}
 			if len(batch) > 100 {
