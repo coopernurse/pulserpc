@@ -589,7 +589,7 @@ func generateInterfaceClient(iface *parser.Interface, packageName string, enumMa
 		sb.WriteString("            if (e instanceof RPCError) {\n")
 		sb.WriteString("                throw (RPCError) e;\n")
 		sb.WriteString("            }\n")
-		sb.WriteString("            throw new RPCError(-32603, \"Internal error\", e.getMessage());\n")
+		sb.WriteString("            throw new RPCError(-32603, \"Internal error\", null);\n")
 		sb.WriteString("        }\n")
 		sb.WriteString("    }\n\n")
 	}
