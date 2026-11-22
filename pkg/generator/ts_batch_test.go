@@ -75,4 +75,15 @@ func TestGeneratedTsCjsServerHandlesBatches(t *testing.T) {
 			t.Errorf("generated CJS test server missing batch handling %q", want)
 		}
 	}
+
+	// An empty batch must produce a JSON-RPC error object, not a 204.
+	for _, want := range []string{
+		"data.length === 0",
+		"Invalid Request - empty batch",
+		"code: -32600",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated CJS test server missing empty-batch handling %q", want)
+		}
+	}
 }

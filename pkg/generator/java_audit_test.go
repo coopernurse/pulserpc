@@ -35,9 +35,33 @@ func TestGeneratedJavaServerAndClientAuditFixes(t *testing.T) {
 			"boolean isNotification = id == null;",
 			"if (isNotification) {\n                return null;\n            }",
 			"exchange.sendResponseHeaders(200, -1);",
+			// The wrapper suppresses error envelopes for notifications too.
+			"private Map<String, Object> handleJsonRpcRequest(Map<String, Object> request) {",
+			"private Map<String, Object> handleJsonRpcRequestCore(Map<String, Object> request) {",
+			"if (isNotification && response != null && response.containsKey(\"error\")) {",
 		} {
 			if !strings.Contains(server, fragment) {
 				t.Errorf("generated Java server missing notification handling: %q", fragment)
+			}
+		}
+	})
+
+	t.Run("java-02_error_envelope_has_id", func(t *testing.T) {
+		// Parse errors must carry id:null, and all error envelopes include id.
+		if !strings.Contains(server, "response.put(\"id\", id);") {
+			t.Errorf("generated Java errorEnvelope does not always include an id")
+		}
+	})
+
+	t.Run("java-14_unique_request_ids", func(t *testing.T) {
+		for _, fragment := range []string{
+			"private final java.util.concurrent.atomic.AtomicInteger nextRequestId",
+			"int requestId = nextRequestId.incrementAndGet();",
+			"\"id\", requestId",
+			"Response.validateMap(jsonResponse, requestId);",
+		} {
+			if !strings.Contains(client, fragment) {
+				t.Errorf("generated Java client missing unique request-id code: %q", fragment)
 			}
 		}
 	})
@@ -78,7 +102,7 @@ func TestGeneratedJavaServerAndClientAuditFixes(t *testing.T) {
 	})
 
 	t.Run("java-14_envelope_validation", func(t *testing.T) {
-		if !strings.Contains(client, "Response.validateMap(jsonResponse, 1);") {
+		if !strings.Contains(client, "Response.validateMap(jsonResponse, requestId);") {
 			t.Errorf("generated Java client does not validate the response envelope")
 		}
 	})

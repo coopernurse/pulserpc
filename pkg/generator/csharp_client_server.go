@@ -988,7 +988,20 @@ func writePulseRPCServerCs(sb *strings.Builder, idl *parser.IDL, structMap map[s
 
 // writeHandleSingleRequestCs generates the HandleSingleRequest method
 func writeHandleSingleRequestCs(sb *strings.Builder, idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
+	sb.WriteString("    // A notification (no id) must never receive a response, including an\n")
+	sb.WriteString("    // error response. HandleSingleRequestCore returns error envelopes for all\n")
+	sb.WriteString("    // malformed-input paths; this wrapper drops them for notifications.\n")
 	sb.WriteString("    private async Task<Dictionary<string, object?>?> HandleSingleRequest(Dictionary<string, object?> requestJson)\n")
+	sb.WriteString("    {\n")
+	sb.WriteString("        bool isNotification = !requestJson.ContainsKey(\"id\");\n")
+	sb.WriteString("        var response = await HandleSingleRequestCore(requestJson);\n")
+	sb.WriteString("        if (isNotification && response != null && response.ContainsKey(\"error\"))\n")
+	sb.WriteString("        {\n")
+	sb.WriteString("            return null;\n")
+	sb.WriteString("        }\n")
+	sb.WriteString("        return response;\n")
+	sb.WriteString("    }\n\n")
+	sb.WriteString("    private async Task<Dictionary<string, object?>?> HandleSingleRequestCore(Dictionary<string, object?> requestJson)\n")
 	sb.WriteString("    {\n")
 	sb.WriteString("        // Validate JSON-RPC 2.0 structure\n")
 	sb.WriteString("        if (!requestJson.TryGetValue(\"jsonrpc\", out var jsonrpcObj))\n")

@@ -1194,15 +1194,8 @@ func writeHTTPTransportGo(sb *strings.Builder) {
 	sb.WriteString("		return nil, fmt.Errorf(\"failed to decode response: %w\", err)\n")
 	sb.WriteString("	}\n\n")
 
-	sb.WriteString("	if id != nil {\n")
-	sb.WriteString("		if received, ok := response[\"id\"]; !ok || fmt.Sprintf(\"%v\", received) != fmt.Sprintf(\"%v\", id) {\n")
-	sb.WriteString("			return nil, fmt.Errorf(\"response id %v does not match request id %v\", received, id)\n")
-	sb.WriteString("		}\n")
-	sb.WriteString("	}\n")
-	sb.WriteString("	if _, hasResult := response[\"result\"]; hasResult {\n")
-	sb.WriteString("		if _, hasError := response[\"error\"]; hasError {\n")
-	sb.WriteString("			return nil, fmt.Errorf(\"invalid response: both result and error are present\")\n")
-	sb.WriteString("		}\n")
+	sb.WriteString("	if err := pulserpc.ValidateResponseEnvelope(response, id); err != nil {\n")
+	sb.WriteString("		return nil, err\n")
 	sb.WriteString("	}\n\n")
 
 	sb.WriteString("	if errObj, ok := response[\"error\"].(map[string]interface{}); ok {\n")

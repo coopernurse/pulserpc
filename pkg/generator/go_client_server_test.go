@@ -86,8 +86,7 @@ func TestGoGeneratedTransportNotificationAndIDs(t *testing.T) {
 		"t.call(method, params, nil)",
 		"if id != nil {\n\t\trequest[\"id\"] = id\n\t}",
 		"atomic.AddUint64(&t.requestID, 1)",
-		"response id %v does not match request id %v",
-		"both result and error are present",
+		"pulserpc.ValidateResponseEnvelope(response, id)",
 	} {
 		if !strings.Contains(transportCode, marker) {
 			t.Errorf("generated transport is missing %q", marker)
