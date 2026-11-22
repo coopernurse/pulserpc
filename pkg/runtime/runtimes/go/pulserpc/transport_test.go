@@ -24,6 +24,35 @@ func TestRuntimeHTTPTransportTimeoutAndTrailingSlash(t *testing.T) {
 	}
 }
 
+// D6: a slow server must produce a timeout error when the transport's
+// injectable http.Client is given a short timeout. The Client field is
+// injectable, so this proves the timeout is actually enforced on requests
+// rather than merely present as a default constant.
+func TestRuntimeHTTPTransportTimesOutSlowServer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"ok"}`))
+	}))
+	defer server.Close()
+
+	transport := NewHTTPTransport(server.URL, nil)
+	// The default is 30 s (asserted above); inject a short one for this test.
+	transport.Client = &http.Client{Timeout: 50 * time.Millisecond}
+
+	_, err := transport.RequestWithID("Svc.ping", []interface{}{}, 1)
+	if err == nil {
+		t.Fatal("expected a timeout error from a server that sleeps past the client timeout")
+	}
+	if !strings.Contains(err.Error(), "request failed") {
+		t.Errorf("error = %v, want a wrapped request failure", err)
+	}
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "timeout") && !strings.Contains(lower, "deadline exceeded") {
+		t.Errorf("error = %v, want a timeout/deadline exceeded error", err)
+	}
+}
+
 // R29: custom headers supplied to the runtime transport are sent with every
 // request.
 func TestRuntimeHTTPTransportSendsCustomHeaders(t *testing.T) {
