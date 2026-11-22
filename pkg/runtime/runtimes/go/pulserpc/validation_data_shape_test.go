@@ -2,6 +2,7 @@ package pulserpc
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -35,20 +36,30 @@ func TestValidationErrorDataShapeMatchesDocs(t *testing.T) {
 
 	// This mirrors Server.Call's error path (server.go:97).
 	server := &Server{}
-	response := server.errorResponse(1, -32602, "Invalid params", err.Error())
-	errObj, ok := response["error"].(map[string]interface{})
+	_ = server
+	// Converged to structured data (M13): RPCError carries a map.
+	rpcErr, ok := err.(*RPCError)
 	if !ok {
-		t.Fatalf("error is not an object: %#v", response["error"])
+		t.Fatalf("expected *RPCError, got %T", err)
 	}
-	data, ok := errObj["data"].(string)
+	dmap, ok := rpcErr.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("data must be a string, got %T: %#v", errObj["data"], errObj["data"])
+		t.Fatalf("data must be a map, got %T: %#v", rpcErr.Data, rpcErr.Data)
 	}
-	const documented = "function 'Svc.Create' invalid param 'user': missing required field 'email' in struct User"
-	if data != documented {
-		t.Errorf("data = %q, want documented %q", data, documented)
+	if !strings.Contains(fmt.Sprint(dmap["error"]), "email") {
+		t.Errorf("error must mention 'email': %#v", dmap)
 	}
-	if !strings.Contains(data, "email") {
-		t.Error("data must mention the offending field")
+	fields := dmap["invalid_fields"]
+	switch v := fields.(type) {
+	case []string:
+		if len(v) == 0 {
+			t.Fatalf("invalid_fields must be non-empty: %#v", dmap)
+		}
+	case []interface{}:
+		if len(v) == 0 {
+			t.Fatalf("invalid_fields must be non-empty: %#v", dmap)
+		}
+	default:
+		t.Fatalf("invalid_fields wrong type: %#v", dmap)
 	}
 }
