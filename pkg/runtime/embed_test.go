@@ -2,10 +2,35 @@ package runtime
 
 import (
 	"bytes"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
 )
+
+// TestEmbedPathsUseForwardSlashes verifies that runtime files can be loaded
+// from the embedded filesystem on every host OS. embed.FS paths always use
+// forward slashes; filepath.Join produces backslashes on Windows, which causes
+// ReadFile to fail with "file does not exist". This test would fail on Windows
+// if embed.go used filepath.Join to build embed paths.
+func TestEmbedPathsUseForwardSlashes(t *testing.T) {
+	for _, lang := range ListRuntimes() {
+		files, err := GetRuntimeFiles(lang)
+		if err != nil {
+			t.Errorf("GetRuntimeFiles(%q) failed: %v (embed paths must use forward slashes, not filepath.Join's %q separator)", lang, err, string(filepath.Separator))
+			continue
+		}
+		if len(files) == 0 {
+			t.Errorf("GetRuntimeFiles(%q) returned no files", lang)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		// On Windows the separator is a backslash; the test above failing would
+		// be the signal. This branch documents the intent for maintainers.
+		t.Log("running on Windows: embed path separator regression is active")
+	}
+}
 
 // TestGetRuntimeFilesForStyle covers the matrix required by step 3.6 of the
 // plan: legacy behaviour, CJS, and unknown-style errors.

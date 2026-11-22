@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -109,8 +110,9 @@ func (s *Server) handleCSS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read from embedded files
-	filePath := filepath.Join("dist", "css", path)
+	// embed.FS paths always use forward slashes regardless of the host OS.
+	// filepath.Join emits backslashes on Windows, which embed.FS rejects.
+	filePath := path.Join("dist", "css", path)
 	data, err := WebUIFiles.ReadFile(filePath)
 	if err != nil {
 		http.NotFound(w, r)
