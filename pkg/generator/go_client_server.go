@@ -1746,6 +1746,9 @@ func writeTestMethodImplGo(sb *strings.Builder, iface *parser.Interface, method 
 	case "echooptional":
 		// echo the whole Person back so optional built-ins round-trip
 		sb.WriteString("	return p, nil\n")
+	case "pick":
+		// return the enum argument unchanged so its wire string round-trips
+		sb.WriteString("	return op, nil\n")
 	default:
 		// Default implementation
 		if method.ReturnType != nil {

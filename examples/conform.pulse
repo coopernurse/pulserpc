@@ -88,6 +88,9 @@ interface A {
   // echoes p unchanged, to test optional built-in null round-tripping
   echoOptional(p Person) Person
 
+  // returns its enum argument unchanged, to test enum wire strings on responses
+  pick(op inc.MathOp) inc.MathOp
+
   // find an item by id, can return null
   findItem(id string) RepeatResponse [optional] raises(NotFoundError)
 }

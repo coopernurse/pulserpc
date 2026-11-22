@@ -77,6 +77,9 @@ class AImpl(object):
         # Echo the whole Person back so optional built-ins round-trip.
         return person
 
+    def pick(self, ctx, op):
+        return op
+
     def findItem(self, ctx, item_id):
         return None
 

@@ -1802,6 +1802,9 @@ func writeTestMethodBody(sb *strings.Builder, iface *parser.Interface, method *p
 			// echo the whole Person back so optional built-ins round-trip
 			sb.WriteString("        return p;\n")
 			return
+		case "pick":
+			sb.WriteString("        return op;\n")
+			return
 		}
 	case "B":
 		switch methodName {
