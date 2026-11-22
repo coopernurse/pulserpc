@@ -14,6 +14,26 @@ violation or divergence.
 **Canonical runtime contract:** `docs/RUNTIME_IMPLEMENTATION_GUIDE.md`.
 Seven runtimes: go, java, python, python2, ts-node, ts-cjs, csharp.
 
+**Status updates (post-remediation):** Several `[V]` markers above are stale.
+The authoritative deltas are in
+[invariants-additional.md](invariants-additional.md#status-updates-to-the-original-catalog).
+In this branch specifically:
+
+- G11 — error codes may be negative; `docs/idl-guide/syntax.md` documents the
+  reserved ranges.
+- G17 — `extends` targets are validated against struct types.
+- G20/G21/G22 — checksum format is 43-character unpadded base64url; Go sets
+  `idl.Checksum`; the golden test reads `examples/book.pulse`.
+- G23/G25 — duplicate members and namespace-less non-empty imports are
+  rejected.
+- G29/G30/G32 — trailing import comments work, imports de-duplicate by resolved
+  path, and root/import namespace collisions are rejected.
+- G35 — the checksum includes parameter position (D9), so the old
+  "parameter order is invariant" expectation is intentionally superseded.
+- S1 — playground file reads are contained to the session directory.
+- R2/R5/R6/R11/M4 and M2/M5/M6/M9/M10/M14/M15/M17 — earlier audit fixes remain
+  in place.
+
 ---
 
 ## Part 1 — Grammar / IDL invariants

@@ -23,6 +23,16 @@ These are no longer `[V]`; the catalog text is stale.
 - G21/G22 — Go sets `idl.Checksum`; `TestChecksumBookPulse` reads the file.
 - G23 — duplicate enum values/fields/params/methods are rejected.
 - G25 — imported files with declarations must declare a namespace.
+- G29 — imports with a trailing `//` comment are removed and parsed
+  (`TestImportWithTrailingComment`).
+- G30 — imports are de-duplicated by resolved absolute path
+  (`TestImportDedupByResolvedPath`).
+- G32 — a root/import namespace collision is rejected, naming both files
+  (`TestRootImportNamespaceCollision`).
+- G35 — the checksum includes each parameter's declaration position
+  (`TestChecksumParameterPositionSensitive`); this is the D9 breaking change.
+- S1 — playground file access is contained to the session directory
+  (`resolveSessionFile`; `TestGetFileRejectsTraversal`).
 - R1 — ts-cjs exports the full validation/type surface.
 - R2/R5/R6 — scalar sets, Java overrides, and type resolution aligned.
 - R11/M4 — generated Java/C# servers suppress notification errors.
@@ -42,19 +52,19 @@ These are no longer `[V]`; the catalog text is stale.
 - **G28 [H][U] Parameters are positional and order-significant.**
   `ParameterDef` captures source order (`parser.go:105-110`). Runtimes and
   generated clients dispatch positionally.
-- **G29 [H][V][U] Imports are preprocessed by regex, not the grammar.**
-  Extraction uses `(?m)^\s*import\s+"([^"]+)"` while removal requires the line
-  to end after the closing quote (`parser.go:369,385`). An import with a
-  trailing comment is resolved but not removed, so parsing fails. Verified.
-- **G30 [H][U] Import de-duplication is by literal path string.** Two strings
-  that resolve to the same file (`inc.pulse` and `./inc.pulse`) are parsed
-  twice and rejected as a duplicate namespace (`parser.go:371-380,475-480`).
-  Verified.
+- **G29 [H][U] Imports are preprocessed by regex, not the grammar.** Both the
+  extraction and removal patterns accept trailing whitespace and an optional
+  `//` comment, so `import "inc.pulse" // note` parses. (Resolved;
+  `TestImportWithTrailingComment`.)
+- **G30 [H][U] Import de-duplication is by resolved absolute path.** The first
+  literal spelling is retained for diagnostics, but `inc.pulse` and
+  `./inc.pulse` resolve to one import and do not raise a duplicate-namespace
+  error. (Resolved; `TestImportDedupByResolvedPath`.)
 - **G31 [H][U] Import paths resolve relative to the importing file's
-  directory; absolute paths are accepted** (`parser.go:414-418`).
-- **G32 [H][V][U] The root namespace is not compared with imported
-  namespaces.** `namespaceMap` only tracks imports (`parser.go:411,475-480`),
-  so a root file and an import may declare the same namespace. Verified.
+  directory; absolute paths are accepted** (`parser.go`; absolute-path test).
+- **G32 [H][U] The root namespace is compared with imported namespaces.** A
+  collision is rejected with an error naming both files. (Resolved;
+  `TestRootImportNamespaceCollision`.)
 - **G33 [H][U] Import prefixing is asymmetric.** Imported declarations are
   renamed `Namespace.Type`; their field/parameter/`extends` references are left
   unqualified. Root declarations are not prefixed (`parser.go:650-680`).
@@ -62,10 +72,11 @@ These are no longer `[V]`; the catalog text is stale.
   includes field/return optionality, enum values, raises, and resolved type
   names (`checksum.go:147-187`). Verified: changing an error message does not
   change the checksum.
-- **G35 [H][V][U] The checksum is insensitive to parameter order.** `writeMethod`
-  sorts parameters by name and emits no positional index
-  (`checksum.go:119-127`), so `m(x int, y string)` and `m(y string, x int)`
-  hash identically even though they are different APIs. Verified.
+- **G35 [H][U] The checksum includes parameter position.** `writeMethod` sorts
+  parameters by name for deterministic output but emits the original declaration
+  index (`param:<index>:<name>:<type>`), so `m(x int, y string)` and
+  `m(y string, x int)` hash differently (D9). (Resolved;
+  `TestChecksumParameterPositionSensitive`.)
 - **G36 [H][U] Error codes are decimal, optionally negative.** `IntLiteral` is
   `-?[0-9]+` (`parser.go:20,155`); no `+`, underscores, or hex.
 - **G37 [H][U] At most one namespace per file; the declaration may appear
@@ -212,11 +223,11 @@ These are no longer `[V]`; the catalog text is stale.
 
 ## Part 8 — New security / limit invariants
 
-- **S1 [V][U] Playground file download cannot escape the session directory.**
-  The handler passes the raw URL suffix (`webui/server.go:296-330`) and
-  `Manager.GetFile` does `filepath.Join(session.Dir, filename)` with no
-  containment check (`playground/files.go:21`). Depends on `ServeMux` path
-  cleaning; the library API itself is unsafe.
+- **S1 [H][U] Playground file download cannot escape the session directory.**
+  `resolveSessionFile` rejects absolute paths, Windows volume paths, and any
+  cleaned `..` segment; both `GetFile` and `CreateZip` use it. (Resolved;
+  `TestGetFileRejectsTraversal`.) The D14 decision is documented in the runtime
+  guide.
 - **S2 [H][U] `embed.FS` paths use forward slashes on every OS**
   (`runtime/embed.go`, `webui/server.go`).
 - **S3 [H][U] ZIP entry names use forward slashes and are session-relative**
