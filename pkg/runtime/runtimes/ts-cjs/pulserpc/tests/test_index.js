@@ -18,6 +18,8 @@ const {
   findEnum,
   getStructFields,
   extractChecksum,
+  INT32_MIN,
+  INT32_MAX,
   RPCError,
   Contract,
   Server,
@@ -46,6 +48,14 @@ function main() {
   for (const [name, ctor] of Object.entries({ RPCError, Contract, Server, Client, HttpTransport })) {
     assert.strictEqual(typeof ctor, "function", `${name} must be exported from index`);
   }
+
+  // R25 divergence ts-node/ts-cjs: the int32 bounds must be re-exported so
+  // generated code and callers see the same wire range as the ts-node runtime.
+  assert.strictEqual(INT32_MIN, -2147483648, "INT32_MIN must be exported from index");
+  assert.strictEqual(INT32_MAX, 2147483647, "INT32_MAX must be exported from index");
+  assert.strictEqual(validateInt(INT32_MIN).length, 0);
+  assert.strictEqual(validateInt(INT32_MAX).length, 0);
+  assert.strictEqual(validateInt(INT32_MAX + 1).length, 1);
 
   // Actually call validators through the index, not just check their presence.
   assert.deepStrictEqual(validateInt(42), []);

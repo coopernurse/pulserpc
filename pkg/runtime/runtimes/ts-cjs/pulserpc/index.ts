@@ -33,6 +33,8 @@ export {
   validateMap,
   validateEnum,
   validateStruct,
+  INT32_MIN,
+  INT32_MAX,
 } from "./validation";
 export { diffIDL, classifySeverity } from "./diff";
 export {

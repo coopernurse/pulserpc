@@ -237,6 +237,53 @@ func TestGeneratedTsTestServerBatchAndParseShapes(t *testing.T) {
 	}
 }
 
+// M6/M26/R15: only a JSON.parse failure may be reported as -32700. Dispatch or
+// serialization failures are internal errors (-32603) with the fixed message,
+// logged server-side, so the generated adapter cannot mislabel them as parse
+// errors or leak exception detail.
+func TestGeneratedTsTestServerNarrowsParseErrorToJsonParse(t *testing.T) {
+	idl := parseTestIDL(t, "namespace test\ninterface Svc { Ping() string }\n")
+	code := generateTestServerTs(idl, nil, nil, nil, "", nil, "test", "")
+
+	parseAt := strings.Index(code, "data = JSON.parse(body)")
+	firstCatch := strings.Index(code, "} catch (err: any) {")
+	parseError := strings.Index(code, "code: -32700")
+	dispatch := strings.Index(code, "this.rpcServer.call")
+	internalError := strings.Index(code, "code: -32603")
+
+	for name, idx := range map[string]int{
+		"JSON.parse(body)": parseAt,
+		"first catch":      firstCatch,
+		"-32700 handler":   parseError,
+		"dispatch":         dispatch,
+		"-32603 handler":   internalError,
+	} {
+		if idx < 0 {
+			t.Fatalf("generated adapter is missing %q\n%s", name, code)
+		}
+	}
+	if !(parseAt < firstCatch && firstCatch < parseError && parseError < dispatch) {
+		t.Errorf("-32700 handler must sit between JSON.parse and dispatch; order was parse=%d catch=%d parseErr=%d dispatch=%d",
+			parseAt, firstCatch, parseError, dispatch)
+	}
+	if internalError < dispatch {
+		t.Errorf("-32603 handler must follow dispatch; order was dispatch=%d internalErr=%d", dispatch, internalError)
+	}
+	for _, want := range []string{
+		"let data: any;",
+		"message: 'Internal error'",
+		"console.error('Internal error:', err);",
+		"const payload = JSON.stringify(response);",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated adapter missing %q", want)
+		}
+	}
+	if strings.Contains(code, "`Internal error: ${") {
+		t.Error("internal errors must not echo the exception to the client")
+	}
+}
+
 // C4/C5/D8: idl.json carries rootNamespace and checksum and is served by the
 // runtime as an object (the generated server passes contract.idlParsed).
 func TestTsIdlJsonCarriesRootNamespaceAndChecksum(t *testing.T) {

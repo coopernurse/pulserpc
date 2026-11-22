@@ -14,17 +14,68 @@ import {
 } from "../transport.js";
 import { RPCError } from "../rpc.js";
 
+/**
+ * Fake response body stream. Counts reads and records cancellation so tests can
+ * assert the transport stops pulling bytes at the cap (R17).
+ */
+function fakeBody(
+  chunks: Uint8Array[],
+  onCancel?: () => void,
+  readCount?: { reads: number }
+): ReadableStream<Uint8Array> {
+  let index = 0;
+  return {
+    getReader() {
+      return {
+        read: async () => {
+          if (readCount) {
+            readCount.reads += 1;
+          }
+          if (index >= chunks.length) {
+            return { done: true, value: undefined };
+          }
+          const value = chunks[index++];
+          return { done: false, value };
+        },
+        cancel: async () => {
+          onCancel?.();
+        },
+        releaseLock: () => {
+          // no-op
+        },
+      };
+    },
+    cancel: async () => {
+      onCancel?.();
+    },
+  } as unknown as ReadableStream<Uint8Array>;
+}
+
+/** Build a 200 response whose body streams `body` in two chunks. */
+function chunkedResponse(
+  body: string,
+  extra: Record<string, unknown> = {},
+  onCancel?: () => void
+): Response {
+  const bytes = new TextEncoder().encode(body);
+  const mid = Math.ceil(bytes.length / 2);
+  const chunks = bytes.length === 0 ? [] : [bytes.slice(0, mid), bytes.slice(mid)];
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    headers: { get: () => null },
+    body: fakeBody(chunks, onCancel),
+    text: async () => body,
+    ...extra,
+  } as unknown as Response;
+}
+
 function recordingFetch(): { urls: string[]; fn: typeof fetch } {
   const urls: string[] = [];
   const fn = (async (input: any) => {
     urls.push(String(input));
-    const body = JSON.stringify({ jsonrpc: "2.0", result: "ok", id: 1 });
-    return {
-      ok: true,
-      status: 200,
-      statusText: "OK",
-      text: async () => body,
-    } as Response;
+    return chunkedResponse(JSON.stringify({ jsonrpc: "2.0", result: "ok", id: 1 }));
   }) as unknown as typeof fetch;
   return { urls, fn };
 }
@@ -56,8 +107,7 @@ async function testCustomHeadersAreSent() {
   let init: any = null;
   const fn = (async (_input: any, options: any) => {
     init = options;
-    const body = JSON.stringify({ jsonrpc: "2.0", result: "ok", id: 1 });
-    return { ok: true, status: 200, statusText: "OK", text: async () => body } as Response;
+    return chunkedResponse(JSON.stringify({ jsonrpc: "2.0", result: "ok", id: 1 }));
   }) as unknown as typeof fetch;
 
   const transport = new HttpTransport("http://localhost:8080", { "X-Auth": "token-1" }, fn);
@@ -104,29 +154,30 @@ async function testRequestTimeout() {
 
 async function testResponseBodyCap() {
   // R17: reject a body larger than maxResponseBytes, whether declared or read.
-  const cases: Array<[string, any]> = [
+  // Both paths must release the body instead of leaving it unread.
+  const cases: Array<[string, (onCancel: () => void) => any]> = [
     [
       "content-length",
-      {
+      (onCancel) => ({
         ok: true,
         status: 200,
         statusText: "OK",
         headers: { get: (name: string) => (name.toLowerCase() === "content-length" ? "17" : null) },
+        body: fakeBody([new TextEncoder().encode("small")], onCancel),
         text: async () => "small",
-      },
+      }),
     ],
     [
       "actual bytes",
-      {
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        text: async () => "0123456789abcdefg",
-      },
+      (onCancel) => chunkedResponse("0123456789abcdefg", {}, onCancel),
     ],
   ];
 
-  for (const [label, response] of cases) {
+  for (const [label, makeResponse] of cases) {
+    let cancelled = false;
+    const response = makeResponse(() => {
+      cancelled = true;
+    });
     const transport = new HttpTransport(
       "http://localhost:8080",
       {},
@@ -141,8 +192,77 @@ async function testResponseBodyCap() {
       assert.strictEqual(e.code, -32603, `${label} must use a standard code`);
       assert.match(e.message, /Response body too large/, `${label} message: ${e.message}`);
     }
+    assert.ok(cancelled, `${label}: the response body must be cancelled (R17)`);
   }
   console.log("✓ testResponseBodyCap");
+}
+
+async function testOversizeBodyStopsReading() {
+  // R17: the cap must bound memory. Reading must stop at the chunk that crosses
+  // the limit instead of draining the whole body first.
+  const readCount = { reads: 0 };
+  let cancelled = false;
+  const chunk = new Uint8Array(8).fill(65); // 8 bytes per read
+  const response = {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    headers: { get: () => null },
+    body: fakeBody([chunk, chunk, chunk, chunk, chunk], () => {
+      cancelled = true;
+    }, readCount),
+  } as unknown as Response;
+
+  const transport = new HttpTransport(
+    "http://localhost:8080",
+    {},
+    (async () => response) as unknown as typeof fetch
+  );
+  transport.maxResponseBytes = 10;
+
+  try {
+    await transport.request(req);
+    assert.fail("Expected response-cap RPCError");
+  } catch (e: any) {
+    assert.ok(e instanceof RPCError);
+    assert.strictEqual(e.code, -32603);
+    assert.match(e.message, /Response body too large/);
+  }
+  assert.strictEqual(
+    readCount.reads,
+    2,
+    `reader must stop at the chunk crossing the cap, read ${readCount.reads} chunks`
+  );
+  assert.ok(cancelled, "the stream must be cancelled when the cap is crossed");
+  console.log("✓ testOversizeBodyStopsReading");
+}
+
+async function testNonOkResponseCancelsBody() {
+  // R17: a throw that skips the body must still release the stream.
+  let cancelled = false;
+  const failingFetch = (async () => ({
+    ok: false,
+    status: 503,
+    statusText: "Service Unavailable",
+    headers: { get: () => null },
+    body: fakeBody([new TextEncoder().encode("{}")], () => {
+      cancelled = true;
+    }),
+    text: async () => "{}",
+  })) as unknown as typeof fetch;
+  const transport = new HttpTransport("http://localhost:8080", {}, failingFetch);
+  try {
+    await transport.request(req);
+    assert.fail("Expected RPCError to be thrown");
+  } catch (e: any) {
+    assert.ok(e instanceof RPCError, `Expected RPCError, got ${e?.constructor?.name}`);
+    // R8: transport failures use a standard JSON-RPC code, never -32000.
+    assert.strictEqual(e.code, -32603);
+    assert.ok(e.message.includes("503"), `Expected message to include status code, got: ${e.message}`);
+    assert.deepStrictEqual(e.data, { status: 503 });
+  }
+  assert.ok(cancelled, "non-OK responses must cancel the unread body");
+  console.log("✓ testNonOkResponseCancelsBody");
 }
 
 async function testHttpErrorWrapsRPCError() {
@@ -150,6 +270,8 @@ async function testHttpErrorWrapsRPCError() {
     ok: false,
     status: 503,
     statusText: "Service Unavailable",
+    headers: { get: () => null },
+    body: fakeBody([new TextEncoder().encode("{}")]),
     text: async () => "{}",
   })) as unknown as typeof fetch;
   const transport = new HttpTransport("http://localhost:8080", {}, failingFetch);
@@ -222,6 +344,8 @@ async function testNotificationEmptyBodyIsNotAnError() {
   await testDefaultLimits();
   await testRequestTimeout();
   await testResponseBodyCap();
+  await testOversizeBodyStopsReading();
+  await testNonOkResponseCancelsBody();
   await testHttpErrorWrapsRPCError();
   await testMalformedResponsesUseStandardCode();
   await testNotificationEmptyBodyIsNotAnError();

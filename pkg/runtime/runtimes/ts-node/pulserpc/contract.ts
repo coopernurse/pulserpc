@@ -268,9 +268,7 @@ export class Contract {
    * optional parameters may be omitted, so any length between `requiredCount`
    * and the full signature length is accepted.
    *
-   * Exposed so Server.positionalToNamedParams reuses the same rule (preserving
-   * fail-fast behaviour when request validation is disabled) instead of
-   * duplicating the range check with a divergent error message.
+   * Exposed so `Server` can keep the rule when request validation is disabled.
    */
   checkParamCount(
     ifaceName: string,

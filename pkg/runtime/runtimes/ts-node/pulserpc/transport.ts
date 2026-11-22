@@ -48,6 +48,106 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+/** Decode previously collected UTF-8 chunks without assuming a Node-only global. */
+function decodeUtf8(chunks: Uint8Array[], total: number): string {
+  if (total === 0) {
+    return "";
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(merged).toString("utf8");
+  }
+  return new TextDecoder().decode(merged);
+}
+
+/**
+ * Release a response body that is not going to be read.
+ *
+ * Any throw path that skips the body (non-OK status, declared-length over the
+ * cap) must cancel the stream first so the socket is not kept alive and the
+ * producer is not allowed to keep buffering (R17).
+ */
+async function discardResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The body may already be consumed or locked; nothing left to release.
+  }
+}
+
+/**
+ * Read a response body while enforcing a hard byte cap (D5/R17).
+ *
+ * Reading via `response.text()` first would buffer an arbitrarily large body
+ * before the cap could be applied, so the stream is consumed chunk by chunk and
+ * cancelled as soon as the running total exceeds `maxBytes`. If no readable
+ * `body` is present (204 responses, environments without streams, or test
+ * doubles) the cap is still checked after `text()`.
+ */
+async function readBodyWithCap(response: Response, maxBytes: number): Promise<string> {
+  const body = response.body as ReadableStream<Uint8Array> | null | undefined;
+  if (!body || typeof (body as any).getReader !== "function") {
+    const text = await response.text();
+    const actual = byteLength(text);
+    if (actual > maxBytes) {
+      throw new RPCError(
+        RPCErrorCode.InternalError,
+        `Response body too large: ${actual} bytes exceeds limit of ${maxBytes}`
+      );
+    }
+    return text;
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let overflow = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value || value.byteLength === 0) {
+        continue;
+      }
+      total += value.byteLength;
+      if (total > maxBytes) {
+        overflow = true;
+        break;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    if (overflow) {
+      // Stop pulling bytes and release the underlying stream as soon as the
+      // cap is crossed instead of draining a hostile body into memory (R17).
+      try {
+        await reader.cancel();
+      } catch {
+        // Stream already closed by the peer.
+      }
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // Reader already released.
+    }
+  }
+  if (overflow) {
+    throw new RPCError(
+      RPCErrorCode.InternalError,
+      `Response body too large: ${total} bytes exceeds limit of ${maxBytes}`
+    );
+  }
+  return decodeUtf8(chunks, total);
+}
+
 /**
  * Normalize a base URL by dropping a single trailing slash (D13/R30). An
  * endpoint path such as `/api/rpc` is otherwise used verbatim.
@@ -119,6 +219,7 @@ export class HttpTransport extends Transport {
       });
 
       if (!response.ok) {
+        await discardResponseBody(response);
         throw new RPCError(
           RPCErrorCode.InternalError,
           `HTTP ${response.status}: ${response.statusText}`,
@@ -129,13 +230,14 @@ export class HttpTransport extends Transport {
       // Reject a declared oversized body before reading it (R17).
       const declared = Number(response.headers?.get?.("content-length"));
       if (Number.isFinite(declared) && declared > this.maxResponseBytes) {
+        await discardResponseBody(response);
         throw new RPCError(
           RPCErrorCode.InternalError,
           `Response body too large: ${declared} bytes exceeds limit of ${this.maxResponseBytes}`
         );
       }
 
-      const text = await response.text();
+      const text = await readBodyWithCap(response, this.maxResponseBytes);
       if (!text) {
         // A notification (no `id`) is answered with 204/No Content. There is no
         // response document to parse, so return a neutral envelope rather than
@@ -147,16 +249,6 @@ export class HttpTransport extends Transport {
           return { jsonrpc: "2.0", id: req.id ?? null };
         }
         throw new RPCError(RPCErrorCode.InternalError, "Empty response body");
-      }
-
-      // Enforce the cap on the actual bytes too: Content-Length may be absent
-      // or understated (R17).
-      const actual = byteLength(text);
-      if (actual > this.maxResponseBytes) {
-        throw new RPCError(
-          RPCErrorCode.InternalError,
-          `Response body too large: ${actual} bytes exceeds limit of ${this.maxResponseBytes}`
-        );
       }
 
       try {
