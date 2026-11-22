@@ -411,8 +411,8 @@ test_validation_error "A.add" "[\"five\",3]" "A.add with string instead of int" 
 test_validation_error "A.sqrt" "[\"not-a-number\"]" "A.sqrt with string instead of float" "-32602"
 
 # Structured validation data (conformance): error.data must be an object with
-# invalid_fields listing the offending parameter path. Locks in the shape that
-# Python/TS already emit; Go/Java/C# currently emit a plain string (FAIL).
+# invalid_fields listing the offending parameter path. All seven runtimes emit
+# this canonical structured shape.
 do_request POST '{"jsonrpc":"2.0","method":"A.add","params":["five",3],"id":99}'
 probe_ok=1
 probe_detail=""

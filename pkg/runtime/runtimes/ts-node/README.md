@@ -70,7 +70,7 @@ All validation functions return `ValidationError[]`. Each error has `{ path: str
 |-------|------|-------------|
 | `valid` | `boolean` | `true` if the value is valid |
 | `error` | `string \| undefined` | Human-readable error summary |
-| `invalidFields` | `string[] \| undefined` | Path selectors for each invalid field |
+| `invalid_fields` | `string[] \| undefined` | Path selectors for each invalid field |
 
 ### Type Helper Functions
 
