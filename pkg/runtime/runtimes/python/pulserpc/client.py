@@ -1,6 +1,7 @@
 """Client class for making JSON-RPC 2.0 requests"""
 
 import json
+import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from .transport import Transport
@@ -87,6 +88,10 @@ class Client:
         self.validate_request = validate_request
         self.validate_response = validate_response
         self._request_id = 0
+        # A Client may be shared by threads; the id increment is read-modify-
+        # write, so it must be atomic or two in-flight calls can reuse an id
+        # and confuse response matching (R20).
+        self._request_id_lock = threading.Lock()
         self.contract: Optional[Contract] = None
         self._options = options or {}
         self._auditor: Optional[ContractAuditor] = self._options.get('auditor')
@@ -178,8 +183,9 @@ class Client:
                 raise ValueError(f"Request validation failed: {e}") from e
 
         # Generate request ID
-        self._request_id += 1
-        req_id = self._request_id if expect_response else None
+        with self._request_id_lock:
+            self._request_id += 1
+            req_id = self._request_id if expect_response else None
 
         # Build request
         req: Dict[str, Any] = {

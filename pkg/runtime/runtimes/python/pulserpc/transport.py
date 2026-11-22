@@ -7,6 +7,11 @@ import urllib.request
 import urllib.error
 
 
+# Defaults shared by every generated/runtime HTTP client (D5/D6, R17/R19).
+DEFAULT_TIMEOUT = 30
+MAX_RESPONSE_BODY_SIZE = 10 * 1024 * 1024  # 10 MiB
+
+
 class Transport(ABC):
     """Abstract base class for RPC transports"""
 
@@ -30,17 +35,24 @@ class Transport(ABC):
 class HttpTransport(Transport):
     """HTTP transport implementation using urllib"""
 
-    def __init__(self, url: str, timeout: int = 30, headers: Dict[str, str] = None):
+    def __init__(self, url: str, timeout: int = DEFAULT_TIMEOUT,
+                 headers: Dict[str, str] = None,
+                 max_response_size: int = MAX_RESPONSE_BODY_SIZE):
         """Initialize HTTP transport
 
         Args:
-            url: RPC endpoint URL
-            timeout: Request timeout in seconds (default: 30)
-            headers: Optional HTTP headers to include with requests
+            url: RPC endpoint URL.  A single trailing ``/`` is normalized away
+                so ``http://host/api/`` and ``http://host/api`` address the
+                same endpoint (R30).
+            timeout: Request timeout in seconds (default: 30, R19)
+            headers: Optional HTTP headers to include with requests (R29)
+            max_response_size: Maximum response body size in bytes (default:
+                10 MiB, R17)
         """
-        self.url = url
+        self.url = url.rstrip('/') if url else url
         self.timeout = timeout
         self.headers = headers or {}
+        self.max_response_size = max_response_size
 
     def request(self, req: Dict[str, Any]) -> Dict[str, Any]:
         """Send request via HTTP POST
@@ -71,7 +83,15 @@ class HttpTransport(Transport):
 
         # Send request and get response
         with urllib.request.urlopen(http_req, timeout=self.timeout) as response:
-            response_body = response.read().decode('utf-8')
+            # Read at most one byte past the cap so an oversized response is
+            # detected without buffering the whole body in memory (R17).
+            raw_body = response.read(self.max_response_size + 1)
+            if len(raw_body) > self.max_response_size:
+                raise ValueError(
+                    "Response body exceeds maximum size of "
+                    f"{self.max_response_size} bytes"
+                )
+            response_body = raw_body.decode('utf-8')
 
             # Handle empty response (notification)
             if not response_body:

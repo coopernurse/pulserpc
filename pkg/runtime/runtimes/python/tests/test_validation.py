@@ -69,6 +69,28 @@ class TestBuiltInTypes:
             errs = validate_int(value)
             assert len(errs) == 1
             assert "Expected int" in errs[0].message
+
+    def test_validate_int_accepts_signed_32_bit_boundaries(self):
+        # D1/R25: IDL int is signed 32-bit; the boundaries are inclusive.
+        assert validate_int(-2147483648) == []
+        assert validate_int(2147483647) == []
+        assert validate_int(-2147483648.0) == []
+        assert validate_int(2147483647.0) == []
+
+    def test_validate_int_rejects_out_of_range_values(self):
+        # Python integers are arbitrary precision, so the range must be
+        # enforced by validation rather than by the native type.
+        for value in (2147483648, -2147483649, 2 ** 63, -(2 ** 63)):
+            errs = validate_int(value)
+            assert len(errs) == 1
+            assert "Expected int" in errs[0].message
+            assert "signed 32-bit" in errs[0].message
+
+        # Integral floats outside the range are rejected as well.
+        for value in (2147483648.0, -2147483649.0):
+            errs = validate_int(value)
+            assert len(errs) == 1
+            assert "signed 32-bit" in errs[0].message
     
     def test_validate_float_success(self):
         validate_float(3.14)
