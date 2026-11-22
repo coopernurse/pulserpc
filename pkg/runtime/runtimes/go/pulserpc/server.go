@@ -75,9 +75,12 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 		return s.errorResponse(nil, -32600, "Invalid Request", "Request must be an object")
 	}
 
-	// Check JSON-RPC version
+	// Check JSON-RPC version. A request with an invalid (or missing) version is
+	// not a valid JSON-RPC 2.0 request, so its id cannot be trusted: reply with
+	// a null id rather than echoing the caller-supplied one. respondError still
+	// keeps notifications silent.
 	if request["jsonrpc"] != "2.0" {
-		return s.respondError(isNotification, reqID, -32600, "Invalid Request", "jsonrpc version must be '2.0'")
+		return s.respondError(isNotification, nil, -32600, "Invalid Request", "jsonrpc version must be '2.0'")
 	}
 
 	// Check for method
