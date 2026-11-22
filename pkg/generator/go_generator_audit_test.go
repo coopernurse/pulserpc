@@ -38,7 +38,8 @@ struct Item { name string }
 `)
 	dir := t.TempDir()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	if err := writeIDLJSONGo(idl, dir, fs); err != nil {
+	idlJSON, err := writeIDLJSONGo(idl, dir, fs)
+	if err != nil {
 		t.Fatalf("writeIDLJSONGo: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "idl.json"))
@@ -54,7 +55,7 @@ struct Item { name string }
 		t.Fatal("idl.json has no checksum")
 	}
 
-	code := generateServerGo(idl, nil, nil, "test", map[string]*NamespaceTypes{}, "pulserpc", "example.com/rpc")
+	code := generateServerGo(idl, idlJSON, nil, nil, "test", map[string]*NamespaceTypes{}, "pulserpc", "example.com/rpc")
 	embedded := embeddedIDLJSON(t, code)
 	var fromConst map[string]interface{}
 	if err := json.Unmarshal([]byte(embedded), &fromConst); err != nil {
@@ -75,11 +76,13 @@ func TestGoGeneratedIDLEndpointServesObject(t *testing.T) {
 	idl := parseTestIDL(t, `namespace test
 interface Svc { Ping() string }
 `)
-	// Mirror the real Generate order: idl.json is written before server.go.
-	if err := writeIDLJSONGo(idl, t.TempDir(), flag.NewFlagSet("test", flag.ContinueOnError)); err != nil {
+	// Mirror the real Generate order: idl.json is written before server.go and
+	// its bytes are reused for IDL_JSON.
+	idlJSON, err := writeIDLJSONGo(idl, t.TempDir(), flag.NewFlagSet("test", flag.ContinueOnError))
+	if err != nil {
 		t.Fatalf("writeIDLJSONGo: %v", err)
 	}
-	serverCode := generateServerGo(idl, nil, nil, "test", map[string]*NamespaceTypes{}, "pulserpc", "example.com/rpc")
+	serverCode := generateServerGo(idl, idlJSON, nil, nil, "test", map[string]*NamespaceTypes{}, "pulserpc", "example.com/rpc")
 	testServerCode := generateTestServerGo(idl, nil, nil, "pulserpc", "example.com/rpc", map[string]*NamespaceTypes{}, "")
 
 	if !strings.Contains(testServerCode, "w.Write([]byte(IDL_JSON))") {

@@ -1,8 +1,10 @@
 package pulserpc
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"testing"
 )
@@ -22,9 +24,12 @@ const testContractIDL = `{
 			{"name":"null_return","parameters":[],"returnType":{"builtIn":"string"}},
 			{"name":"panics","parameters":[],"returnType":{"builtIn":"string"}},
 			{"name":"fails","parameters":[],"returnType":{"builtIn":"string"}},
+			{"name":"leaks","parameters":[],"returnType":{"builtIn":"string"}},
+			{"name":"bad_enum","parameters":[],"returnType":{"userDefined":"E"}},
 			{"name":"nothing","parameters":[],"returnType":{"builtIn":"void"}}
 		]
-	}]
+	}],
+	"enums": [{"name":"E","values":[{"name":"ok"}]}]
 }`
 
 type testHandler struct{}
@@ -34,7 +39,15 @@ func (testHandler) Echo(value string) string { return value }
 func (testHandler) NullReturn() interface{}  { return nil }
 func (testHandler) Panics() string           { panic("handler exploded") }
 func (testHandler) Fails() (string, error)   { return "", errors.New("secret-token-abc123") }
+func (testHandler) Leaks() (string, error)   { return "", secretError{"secret-token-abc123"} }
+func (testHandler) BadEnum() string          { return "secret-token-abc123" }
 func (testHandler) Nothing() error           { return nil }
+
+// secretError is a handler error whose text carries a sentinel value. Only its
+// type may appear in logs.
+type secretError struct{ msg string }
+
+func (e secretError) Error() string { return e.msg }
 
 func newTestServer(t *testing.T, validateRequests, validateResponses bool) *Server {
 	t.Helper()
@@ -186,6 +199,43 @@ func TestHandlerPanicDetailIsNotReturnedToClient(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "handler exploded") {
 		t.Errorf("panic detail leaked into the serialized error response: %s", encoded)
+	}
+}
+
+// go-03: unexpected handler and response-validation errors are logged by type
+// only. Their text may contain secrets or PII and must never be persisted to
+// logs, matching the panic path. Declared RPCError messages are unaffected.
+func TestUnexpectedErrorsAreLoggedWithoutDetail(t *testing.T) {
+	server := newTestServer(t, true, true)
+
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	handlerErr := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.leaks", "params": []interface{}{}, "id": 1,
+	})
+	if code := errorCode(t, handlerErr); code != -32603 {
+		t.Fatalf("handler error code = %d, want -32603", code)
+	}
+
+	validationErr := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.bad_enum", "params": []interface{}{}, "id": 2,
+	})
+	if code := errorCode(t, validationErr); code != -32603 {
+		t.Fatalf("response validation code = %d, want -32603", code)
+	}
+
+	logged := logs.String()
+	if strings.Contains(logged, "secret-token-abc123") {
+		t.Errorf("log output leaked the error text: %s", logged)
+	}
+	if !strings.Contains(logged, "pulserpc.secretError") {
+		t.Errorf("handler error was not logged by type (%%T): %s", logged)
+	}
+	if !strings.Contains(logged, "response validation failed") {
+		t.Errorf("response validation failure was not logged: %s", logged)
 	}
 }
 

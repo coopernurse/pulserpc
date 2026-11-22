@@ -11,6 +11,82 @@ import (
 	"github.com/coopernurse/pulserpc/pkg/parser"
 )
 
+// marshalTestIDLJSON returns the shared idl.json bytes for a parsed IDL, in
+// the same shape the generator passes to both writers.
+func marshalTestIDLJSON(t *testing.T, idl *parser.IDL) []byte {
+	t.Helper()
+	data, err := marshalIDLMetadataGo(idl)
+	if err != nil {
+		t.Fatalf("marshalIDLMetadataGo: %v", err)
+	}
+	return data
+}
+
+// go-02/R19: the generated HTTP server sets read/write/idle timeouts and a
+// header size cap so slow or header-flooding clients cannot pin a connection.
+func TestGoGeneratedServerSetsTimeouts(t *testing.T) {
+	idl := parseTestIDL(t, "namespace test\ninterface Svc { Ping() string }\n")
+	code := generateServerGo(idl, marshalTestIDLJSON(t, idl), nil, nil, "test", map[string]*NamespaceTypes{}, "pulserpc", "example.com/rpc")
+
+	for _, marker := range []string{
+		"ReadHeaderTimeout: 10 * time.Second",
+		"ReadTimeout:       30 * time.Second",
+		"WriteTimeout:      30 * time.Second",
+		"IdleTimeout:       60 * time.Second",
+		"MaxHeaderBytes:    1 << 20",
+	} {
+		if !strings.Contains(code, marker) {
+			t.Errorf("generated server is missing %q", marker)
+		}
+	}
+	if !strings.Contains(code, "\t\"time\"\n") {
+		t.Error("generated server does not import time for the http.Server timeouts")
+	}
+}
+
+// go-04/R17: namespace lookup keeps D16 determinism without sorting or
+// allocating the key set on a miss.
+func TestGoNamespaceLookupIsDeterministicAndAllocationFree(t *testing.T) {
+	structMap := map[string]*parser.Struct{
+		"z.Widget": {Name: "z.Widget", Namespace: "z"},
+		"a.Widget": {Name: "a.Widget", Namespace: "a"},
+		"m.Widget": {Name: "m.Widget", Namespace: "m"},
+		"b.Gadget": {Name: "b.Gadget", Namespace: "b"},
+	}
+	enumMap := map[string]*parser.Enum{
+		"z.Color": {Name: "z.Color", Namespace: "z"},
+		"b.Color": {Name: "b.Color", Namespace: "b"},
+	}
+
+	for i := 0; i < 100; i++ {
+		if got := findNamespaceForType("Widget", structMap, enumMap); got != "a" {
+			t.Fatalf("duplicate struct base name resolved to %q, want the sorted-first namespace a", got)
+		}
+		if got := findNamespaceForType("Color", structMap, enumMap); got != "b" {
+			t.Fatalf("enum base name resolved to %q, want the sorted-first namespace b", got)
+		}
+		// Structs win over enums when both declare the base name.
+		if got := findNamespaceForType("Gadget", structMap, map[string]*parser.Enum{"a.Gadget": {Name: "a.Gadget", Namespace: "a"}}); got != "b" {
+			t.Fatalf("struct/enum conflict resolved to %q, want struct namespace b", got)
+		}
+		// Qualified names resolve directly and unknown names miss.
+		if got := findNamespaceForType("q.Widget", structMap, enumMap); got != "q" {
+			t.Fatalf("qualified name resolved to %q, want q", got)
+		}
+		if got := findNamespaceForType("Missing", structMap, enumMap); got != "" {
+			t.Fatalf("unknown name resolved to %q, want empty", got)
+		}
+	}
+
+	// The miss path must not allocate: the old implementation built and sorted
+	// a key slice on every lookup.
+	if allocs := testing.AllocsPerRun(100, func() {
+		findNamespaceForType("Missing", structMap, enumMap)
+	}); allocs != 0 {
+		t.Errorf("namespace miss allocated %v times per run, want 0", allocs)
+	}
+}
+
 // C2/C4/C5: idl.json and the embedded IDL_JSON must carry the same schema and
 // the same checksum, including rootNamespace.
 func TestGoIDLJSONSchemaAndChecksumAgree(t *testing.T) {
@@ -20,21 +96,31 @@ struct Item { name string }
 enum Status { active inactive }
 `)
 	dir := t.TempDir()
-	if err := writeIDLJSONGo(idl, dir, flag.NewFlagSet("test", flag.ContinueOnError)); err != nil {
+	idlJSON, err := writeIDLJSONGo(idl, dir, flag.NewFlagSet("test", flag.ContinueOnError))
+	if err != nil {
 		t.Fatalf("writeIDLJSONGo: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "idl.json"))
 	if err != nil {
 		t.Fatalf("read idl.json: %v", err)
 	}
+	if string(data) != string(idlJSON) {
+		t.Fatalf("idl.json differs from the bytes returned by writeIDLJSONGo")
+	}
 	var fromFile map[string]interface{}
 	if err := json.Unmarshal(data, &fromFile); err != nil {
 		t.Fatalf("unmarshal idl.json: %v", err)
 	}
 
-	serverCode := generateServerGo(idl, nil, nil, "test", map[string]*NamespaceTypes{}, "pulserpc", "example.com/rpc")
+	serverCode := generateServerGo(idl, idlJSON, nil, nil, "test", map[string]*NamespaceTypes{}, "pulserpc", "example.com/rpc")
+	embedded := embeddedIDLJSON(t, serverCode)
+	// go-05: the IDL is marshalled once; IDL_JSON must be byte-identical to
+	// idl.json rather than a second marshalling of the same struct.
+	if embedded != string(data) {
+		t.Errorf("IDL_JSON is not byte-identical to idl.json:\n--- idl.json ---\n%s\n--- IDL_JSON ---\n%s", data, embedded)
+	}
 	var fromConst map[string]interface{}
-	if err := json.Unmarshal([]byte(embeddedIDLJSON(t, serverCode)), &fromConst); err != nil {
+	if err := json.Unmarshal([]byte(embedded), &fromConst); err != nil {
 		t.Fatalf("unmarshal IDL_JSON: %v", err)
 	}
 
@@ -70,10 +156,13 @@ func TestGoGeneratedServerLimitsAndErrorShape(t *testing.T) {
 	for _, marker := range []string{
 		"const maxRequestBodySize = 1 << 20",
 		"const maxBatchSize = 100",
+		"const maxBatchResponseSize = 10 * 1024 * 1024",
 		"http.MaxBytesReader(w, r.Body, maxRequestBodySize)",
 		"\"Request body too large\"",
 		"len(requests) > maxBatchSize",
 		"\"Batch exceeds maximum size\"",
+		"len(payload) > maxBatchResponseSize",
+		"\"Batch response too large\"",
 		"len(requests) == 0",
 		"errorResponse(nil, -32600, \"Invalid Request\", nil)",
 		"\"Invalid Request - only POST allowed\"",
@@ -91,7 +180,7 @@ func TestGoGeneratedServerLimitsAndErrorShape(t *testing.T) {
 	// The generated integration test server must reuse the adapter so batches
 	// and the other limit/error behavior are exercised end to end.
 	idl := parseTestIDL(t, "namespace test\ninterface Svc { Ping() string }\n")
-	serverCode := generateServerGo(idl, nil, nil, "test", map[string]*NamespaceTypes{}, "pulserpc", "example.com/rpc")
+	serverCode := generateServerGo(idl, marshalTestIDLJSON(t, idl), nil, nil, "test", map[string]*NamespaceTypes{}, "pulserpc", "example.com/rpc")
 	if !strings.Contains(serverCode, "func (s *PulseRPCServer) ServeHTTP(") {
 		t.Error("generated server does not expose ServeHTTP for adapters/tests")
 	}

@@ -104,6 +104,25 @@ func ValidateResponseEnvelope(response map[string]interface{}, sentID interface{
 	return validateEnvelope(response, sentID)
 }
 
+// maxResponseSize is the maximum number of bytes read from an HTTP response
+// body. It mirrors the generated transport so a malicious or misbehaving
+// server cannot make the client allocate an unbounded amount of memory (R17).
+const maxResponseSize = 10 * 1024 * 1024 // 10 MiB
+
+// readCappedBody reads at most limit bytes from body. It reads one byte past
+// the limit so an oversized body is reported as an error instead of being
+// silently truncated into an invalid JSON payload.
+func readCappedBody(body io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("response exceeds %d bytes", limit)
+	}
+	return data, nil
+}
+
 // HTTPTransport is an HTTP-based transport
 type HTTPTransport struct {
 	BaseURL string
@@ -165,8 +184,9 @@ func (t *HTTPTransport) RequestWithID(method string, params interface{}, id inte
 	}
 	defer resp.Body.Close()
 
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
+	// Read response body, capped so an oversized response is rejected rather
+	// than buffered in full (R17).
+	respBody, err := readCappedBody(resp.Body, maxResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}

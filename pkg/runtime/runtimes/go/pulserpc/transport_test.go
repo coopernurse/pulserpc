@@ -1,8 +1,10 @@
 package pulserpc
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -43,5 +45,42 @@ func TestRuntimeHTTPTransportSendsCustomHeaders(t *testing.T) {
 	}
 	if gotHeader != "secret" {
 		t.Errorf("X-Api-Key = %q, want secret", gotHeader)
+	}
+}
+
+// R17: response bodies are bounded so a hostile server cannot make the client
+// buffer an unbounded payload.
+func TestRuntimeHTTPTransportRejectsOversizedResponse(t *testing.T) {
+	oversized := bytes.Repeat([]byte("a"), maxResponseSize+1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(oversized)
+	}))
+	defer server.Close()
+
+	transport := NewHTTPTransport(server.URL, nil)
+	_, err := transport.RequestWithID("Svc.ping", []interface{}{}, 1)
+	if err == nil {
+		t.Fatal("expected an error for a response larger than maxResponseSize")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %v, want a size-limit error", err)
+	}
+}
+
+// The bounded reader rejects oversized input instead of truncating it.
+func TestReadCappedBody(t *testing.T) {
+	if _, err := readCappedBody(strings.NewReader("123456789"), 8); err == nil {
+		t.Error("readCappedBody accepted a body one byte over the limit")
+	} else if !strings.Contains(err.Error(), "exceeds 8 bytes") {
+		t.Errorf("error = %v, want a limit of 8 bytes", err)
+	}
+
+	data, err := readCappedBody(strings.NewReader("12345678"), 8)
+	if err != nil {
+		t.Fatalf("readCappedBody rejected a body at the limit: %v", err)
+	}
+	if string(data) != "12345678" {
+		t.Errorf("data = %q, want 12345678", data)
 	}
 }

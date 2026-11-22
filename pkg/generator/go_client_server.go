@@ -45,17 +45,36 @@ func (p *GoClientServer) RegisterFlags(fs *flag.FlagSet) {
 	}
 }
 
-// writeIDLJSONGo writes the IDL metadata as JSON to idl.json
+// writeIDLJSONGo writes the IDL metadata as JSON to idl.json and returns the
+// exact bytes that were written so the caller can embed them in server.go.
 //
 // IDL Placement Note:
 // This function intentionally writes idl.json directly to outputDir (the root -dir),
 // NOT to a namespace subdirectory. The idl.json file is consumed by the runtime
 // Contract class at startup, and it must be accessible as {root}/idl.json regardless
 // of which namespace mode is active.
-func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
+func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) ([]byte, error) {
+	idlJSON, err := marshalIDLMetadataGo(idl)
+	if err != nil {
+		return nil, err
+	}
+
+	idlPath := filepath.Join(outputDir, "idl.json")
+	if err := os.WriteFile(idlPath, idlJSON, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write idl.json: %w", err)
+	}
+	PrintFileCreated(idlPath, fs)
+	return idlJSON, nil
+}
+
+// marshalIDLMetadataGo computes the checksum, persists it on the IDL, and
+// marshals the shared IDL schema exactly once. Every consumer (idl.json and the
+// embedded IDL_JSON constant) must use the returned bytes so the two forms stay
+// byte-identical (C2/D8).
+func marshalIDLMetadataGo(idl *parser.IDL) ([]byte, error) {
 	checksum, err := parser.ComputeChecksum(idl)
 	if err != nil {
-		return fmt.Errorf("failed to compute checksum: %w", err)
+		return nil, fmt.Errorf("failed to compute checksum: %w", err)
 	}
 
 	// core-14: persist the checksum on the IDL itself so every serialized form
@@ -64,15 +83,9 @@ func writeIDLJSONGo(idl *parser.IDL, outputDir string, fs *flag.FlagSet) error {
 
 	idlJSON, err := json.MarshalIndent(idlMetadataGo(idl), "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal IDL output to JSON: %w", err)
+		return nil, fmt.Errorf("failed to marshal IDL output to JSON: %w", err)
 	}
-
-	idlPath := filepath.Join(outputDir, "idl.json")
-	if err := os.WriteFile(idlPath, idlJSON, 0644); err != nil {
-		return fmt.Errorf("failed to write idl.json: %w", err)
-	}
-	PrintFileCreated(idlPath, fs)
-	return nil
+	return idlJSON, nil
 }
 
 // idlMetadataGo builds the D8 IDL JSON schema shared by idl.json and the
@@ -228,11 +241,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	namespaceMap := GroupTypesByNamespace(idl)
 
 	// D12: iterate namespaces in sorted order so generation is byte-deterministic.
-	namespaceNames := make([]string, 0, len(namespaceMap))
-	for ns := range namespaceMap {
-		namespaceNames = append(namespaceNames, ns)
-	}
-	sort.Strings(namespaceNames)
+	namespaceNames := CollectSortedNamespaces(namespaceMap)
 
 	// Get the primary namespace for package name
 	// Prefer the namespace that has interfaces (the main IDL file)
@@ -266,8 +275,10 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		return fmt.Errorf("failed to copy runtime files: %w", err)
 	}
 
-	// Write idl.json to output directory
-	if err := writeIDLJSONGo(idl, outputDir, fs); err != nil {
+	// Write idl.json to output directory and reuse the exact same bytes for the
+	// embedded IDL_JSON constant instead of marshalling the IDL twice.
+	idlJSON, err := writeIDLJSONGo(idl, outputDir, fs)
+	if err != nil {
 		return fmt.Errorf("failed to write idl.json: %w", err)
 	}
 
@@ -292,7 +303,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 	}
 
 	// Generate server.go in the primary namespace directory
-	serverCode := generateServerGo(idl, structMap, enumMap, primaryNs, namespaceMap, runtimeImportPath, packageImportPath)
+	serverCode := generateServerGo(idl, idlJSON, structMap, enumMap, primaryNs, namespaceMap, runtimeImportPath, packageImportPath)
 	serverDir := filepath.Join(outputDir, primaryNs)
 	if err := os.MkdirAll(serverDir, 0755); err != nil {
 		return fmt.Errorf("failed to create server directory: %w", err)
@@ -650,9 +661,12 @@ func findReferencedNamespacesInType(t *parser.Type, structMap map[string]*parser
 
 // findNamespaceForType finds which namespace a type belongs to.
 //
-// D16: resolution order is exact key, exact base-name key, then the first key
-// in sorted order sharing the base name. Map iteration order is never used, so
-// generation is deterministic when duplicate base names exist.
+// D16: resolution order is exact key, exact base-name key, then the
+// lexicographically smallest key sharing the base name. Map iteration order is
+// never used, so generation is deterministic when duplicate base names exist.
+// The scan is a single O(N) pass that remembers only the smallest matching key:
+// the previous implementation allocated and sorted the whole key set on every
+// miss, which is wasteful because only the first match is ever used.
 func findNamespaceForType(typeName string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) string {
 	// Check if type is already qualified
 	if strings.Contains(typeName, ".") {
@@ -660,48 +674,45 @@ func findNamespaceForType(typeName string, structMap map[string]*parser.Struct, 
 		return parts[0]
 	}
 
-	// Check struct map for namespace info. The structMap keys are full type
-	// names with namespace.
-	for _, fullName := range sortedTypeKeys(structMap) {
-		if GetBaseName(fullName) == typeName {
-			if strings.Contains(fullName, ".") {
-				parts := strings.Split(fullName, ".")
-				return parts[0]
-			}
-		}
+	// Struct keys take precedence over enum keys. The structMap keys are full
+	// type names with namespace.
+	if ns, ok := namespaceForMatchingKey(typeName, structMap); ok {
+		return ns
 	}
-
-	// Check enum map
-	for _, fullName := range sortedEnumKeys(enumMap) {
-		if GetBaseName(fullName) == typeName {
-			if strings.Contains(fullName, ".") {
-				parts := strings.Split(fullName, ".")
-				return parts[0]
-			}
-		}
+	if ns, ok := namespaceForMatchingKey(typeName, enumMap); ok {
+		return ns
 	}
 
 	return ""
 }
 
-// sortedTypeKeys returns struct map keys in ascending order.
-func sortedTypeKeys(structMap map[string]*parser.Struct) []string {
-	keys := make([]string, 0, len(structMap))
-	for key := range structMap {
-		keys = append(keys, key)
+// namespaceForMatchingKey returns the namespace of the lexicographically
+// smallest qualified key in defs whose base name equals typeName. The second
+// result reports whether a matching qualified key exists. Unqualified keys are
+// skipped, matching the previous sorted-scan behavior.
+//
+// This is the single generic replacement for the former per-type
+// sortedTypeKeys/sortedEnumKeys helpers: it keeps deterministic ordering
+// without allocating a slice or sorting a map-derived key set, and it does not
+// allocate at all (no strings.Split) so lookups stay cheap on the miss path.
+func namespaceForMatchingKey[T any](typeName string, defs map[string]T) (string, bool) {
+	smallest := ""
+	found := false
+	for key := range defs {
+		dot := strings.LastIndexByte(key, '.')
+		if dot < 0 || key[dot+1:] != typeName {
+			continue
+		}
+		if found && key >= smallest {
+			continue
+		}
+		smallest = key
+		found = true
 	}
-	sort.Strings(keys)
-	return keys
-}
-
-// sortedEnumKeys returns enum map keys in ascending order.
-func sortedEnumKeys(enumMap map[string]*parser.Enum) []string {
-	keys := make([]string, 0, len(enumMap))
-	for key := range enumMap {
-		keys = append(keys, key)
+	if !found {
+		return "", false
 	}
-	sort.Strings(keys)
-	return keys
+	return smallest[:strings.IndexByte(smallest, '.')], true
 }
 
 // generateNamespaceGo generates a Go file for a single namespace
@@ -812,8 +823,10 @@ func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*par
 	}
 }
 
-// generateServerGo generates the server.go file with HTTP server and interface stubs
-func generateServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, primaryNs string, namespaceMap map[string]*NamespaceTypes, runtimeImportPath string, packageImportPath string) string {
+// generateServerGo generates the server.go file with HTTP server and interface stubs.
+// idlJSON is the already-marshalled IDL metadata (the exact bytes written to
+// idl.json); it is embedded verbatim so the IDL is serialized only once.
+func generateServerGo(idl *parser.IDL, idlJSON []byte, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, primaryNs string, namespaceMap map[string]*NamespaceTypes, runtimeImportPath string, packageImportPath string) string {
 	_ = namespaceMap // reserved for future use
 	var sb strings.Builder
 
@@ -844,6 +857,7 @@ func generateServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	sb.WriteString("	\"fmt\"\n")
 	sb.WriteString("	\"io\"\n")
 	sb.WriteString("	\"net/http\"\n")
+	sb.WriteString("	\"time\"\n")
 
 	// Import the shared pulserpc runtime
 	sb.WriteString(fmt.Sprintf("	\"%s\"\n", runtimeImportPath))
@@ -860,10 +874,9 @@ func generateServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 
 	sb.WriteString(")\n\n")
 
-	// Embed IDL JSON directly in server.go for pulserpc-idl RPC method. Use the
-	// same normalized schema as idl.json (D8) so both forms always agree.
-	idlJSON, err := json.MarshalIndent(idlMetadataGo(idl), "", "  ")
-	if err == nil {
+	// Embed IDL JSON directly in server.go for pulserpc-idl RPC method. These
+	// are the exact bytes written to idl.json (D8), so both forms always agree.
+	if len(idlJSON) > 0 {
 		sb.WriteString("// IDL_JSON contains the IDL definition used to generate this code\n")
 		sb.WriteString("const IDL_JSON = ")
 		sb.WriteString(escapeGoString(string(idlJSON)))
@@ -969,6 +982,12 @@ func writePulseRPCServerGo(sb *strings.Builder) {
 	sb.WriteString("	s.server = &http.Server{\n")
 	sb.WriteString("		Addr:    addr,\n")
 	sb.WriteString("		Handler: mux,\n")
+	sb.WriteString("		// D6/R19: bound slow, idle, and header-flooding clients.\n")
+	sb.WriteString("		ReadHeaderTimeout: 10 * time.Second,\n")
+	sb.WriteString("		ReadTimeout:       30 * time.Second,\n")
+	sb.WriteString("		WriteTimeout:      30 * time.Second,\n")
+	sb.WriteString("		IdleTimeout:       60 * time.Second,\n")
+	sb.WriteString("		MaxHeaderBytes:    1 << 20, // 1 MiB\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("	fmt.Printf(\"PulseRPC server listening on http://%s\\n\", addr)\n")
 	sb.WriteString("	return s.server.ListenAndServe()\n")
@@ -987,7 +1006,8 @@ func writePulseRPCServerGo(sb *strings.Builder) {
 func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
 	sb.WriteString("// D5: request and batch limits enforced by the generated adapter.\n")
 	sb.WriteString("const maxRequestBodySize = 1 << 20 // 1 MiB\n")
-	sb.WriteString("const maxBatchSize = 100\n\n")
+	sb.WriteString("const maxBatchSize = 100\n")
+	sb.WriteString("const maxBatchResponseSize = 10 * 1024 * 1024 // 10 MiB\n\n")
 
 	sb.WriteString("// handleRequest handles HTTP requests by delegating to pulserpc.Server.Call()\n")
 	sb.WriteString("func (s *PulseRPCServer) handleRequest(w http.ResponseWriter, r *http.Request) {\n")
@@ -1045,8 +1065,19 @@ func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
 	sb.WriteString("			w.WriteHeader(http.StatusNoContent)\n")
 	sb.WriteString("			return\n")
 	sb.WriteString("		}\n")
+	sb.WriteString("		// Batch responses concatenate up to maxBatchSize member results, so\n")
+	sb.WriteString("		// the serialized array needs its own size bound.\n")
+	sb.WriteString("		payload, err := json.Marshal(responses)\n")
+	sb.WriteString("		if err != nil {\n")
+	sb.WriteString("			s.sendErrorResponse(w, nil, -32603, \"Internal error\", nil)\n")
+	sb.WriteString("			return\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("		if len(payload) > maxBatchResponseSize {\n")
+	sb.WriteString("			s.sendErrorResponse(w, nil, -32600, \"Batch response too large\", nil)\n")
+	sb.WriteString("			return\n")
+	sb.WriteString("		}\n")
 	sb.WriteString("		w.Header().Set(\"Content-Type\", \"application/json\")\n")
-	sb.WriteString("		json.NewEncoder(w).Encode(responses)\n")
+	sb.WriteString("		w.Write(payload)\n")
 	sb.WriteString("		return\n")
 	sb.WriteString("	}\n\n")
 

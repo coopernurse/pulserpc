@@ -156,10 +156,11 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 		if rpcErr, ok := err.(*RPCError); ok {
 			return s.respondError(isNotification, reqID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
 		}
-		// D4/R15: never leak handler error text to the client. Log it
-		// server-side for diagnostics and return a fixed generic message with
-		// no data member.
-		log.Printf("pulserpc: handler error for %s: %v", method, err)
+		// D4/R15: never leak handler error text to the client. Log only the
+		// error type server-side: the message itself may persist secrets or
+		// PII straight to logs. Return a fixed generic message with no data
+		// member.
+		log.Printf("pulserpc: handler error for %s: type %T", method, err)
 		return s.respondError(isNotification, reqID, -32603, internalErrorMessage, nil)
 	}
 
@@ -167,7 +168,9 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 	// nil results: a null result is invalid for a required return type.
 	if s.validateResponses && s.contract != nil {
 		if err := s.contract.ValidateResponse(ifaceName, funcName, result); err != nil {
-			log.Printf("pulserpc: response validation failed for %s: %v", method, err)
+			// Only the error type is logged: validation messages can include
+			// rejected values, which may be secrets or PII.
+			log.Printf("pulserpc: response validation failed for %s: type %T", method, err)
 			return s.respondError(isNotification, reqID, -32603, internalErrorMessage, nil)
 		}
 	}
