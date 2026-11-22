@@ -86,7 +86,7 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 	// Check for method
 	method, ok := request["method"].(string)
 	if !ok || method == "" {
-		return s.respondError(isNotification, reqID, -32600, "Invalid Request", "Method must be a string")
+		return s.respondError(isNotification, nil, -32600, "Invalid Request", "Method must be a string")
 	}
 
 	// Handle pulserpc-idl request

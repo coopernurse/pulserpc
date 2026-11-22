@@ -61,7 +61,7 @@ public class Server {
         // Check for method
         Object methodObj = request.get("method");
         if (!(methodObj instanceof String) || ((String) methodObj).isEmpty()) {
-            return isNotification ? null : errorResponse(reqId, -32600, "Invalid Request", "Method must be a string");
+            return isNotification ? null : errorResponse(null, -32600, "Invalid Request", "Method must be a string");
         }
         String method = (String) methodObj;
 
