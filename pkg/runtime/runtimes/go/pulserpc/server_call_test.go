@@ -90,6 +90,34 @@ func TestNotificationErrorsAreSuppressed(t *testing.T) {
 	}
 }
 
+// A request missing jsonrpc is invalid: reply with -32600 and a null id, never
+// echoing the caller-supplied id. Notifications stay silent via respondError.
+func TestInvalidJSONRPCVersionUsesNullID(t *testing.T) {
+	server := newTestServer(t, true, true)
+	response := server.Call(map[string]interface{}{
+		"method": "A.add",
+		"params": []interface{}{5, 3},
+		"id":     1.0,
+	})
+	if response == nil {
+		t.Fatal("expected a response for a request with an id")
+	}
+	if code := errorCode(t, response); code != -32600 {
+		t.Errorf("code = %d, want -32600", code)
+	}
+	if responseID, exists := response["id"]; !exists || responseID != nil {
+		t.Errorf("response id = %#v (exists=%t), want explicit null", responseID, exists)
+	}
+
+	// The same invalid request without an id is a notification: no response.
+	if response := server.Call(map[string]interface{}{
+		"method": "A.add",
+		"params": []interface{}{5, 3},
+	}); response != nil {
+		t.Errorf("notification received a response: %#v", response)
+	}
+}
+
 // go-01: a pulserpc-idl notification must also be silent.
 func TestIDLNotificationIsSuppressed(t *testing.T) {
 	server := newTestServer(t, true, true)
