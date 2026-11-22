@@ -322,10 +322,13 @@ func generateServerPyForNamespace(nsTypes *NamespaceTypes, packageBase string) s
 		sb.WriteString("from .rpctypes import ")
 		typeNames := make([]string, 0, len(nsTypes.Structs)+len(nsTypes.Enums))
 		for _, s := range nsTypes.Structs {
-			typeNames = append(typeNames, s.Name)
+			// Imported namespaces carry qualified names (e.g. inc.Response).
+			// A from-import member must be the bare name; only the module
+			// path may be namespace-qualified.
+			typeNames = append(typeNames, GetBaseName(s.Name))
 		}
 		for _, e := range nsTypes.Enums {
-			typeNames = append(typeNames, e.Name)
+			typeNames = append(typeNames, GetBaseName(e.Name))
 		}
 		sb.WriteString(strings.Join(typeNames, ", "))
 		sb.WriteString("\n")
@@ -1002,10 +1005,13 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 		}
 		typeNames := make([]string, 0, len(nsTypes.Structs)+len(nsTypes.Enums))
 		for _, s := range nsTypes.Structs {
-			typeNames = append(typeNames, s.Name)
+			// Imported namespaces carry qualified names (e.g. inc.Response).
+			// A from-import member must be the bare name; only the module
+			// path may be namespace-qualified.
+			typeNames = append(typeNames, GetBaseName(s.Name))
 		}
 		for _, e := range nsTypes.Enums {
-			typeNames = append(typeNames, e.Name)
+			typeNames = append(typeNames, GetBaseName(e.Name))
 		}
 		sb.WriteString(strings.Join(typeNames, ", "))
 		sb.WriteString("\n")
