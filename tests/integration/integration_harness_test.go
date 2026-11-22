@@ -348,35 +348,24 @@ func TestMakefileWiresIntegrationScripts(t *testing.T) {
 	}
 }
 
-// The cross-generator suite is gated behind PULSERPC_CROSS_GENERATOR=1, so it
-// is unreachable unless a non-default make target opts in.
-func TestCrossGeneratorMakeTargetIsOptIn(t *testing.T) {
+// The cross-generator checks run under plain `go test ./tests/integration/...`,
+// so `make test` and CI already cover them. The make target remains as a
+// convenience alias, and the obsolete opt-in gate must be gone from the tests.
+func TestCrossGeneratorRunsByDefault(t *testing.T) {
 	mk, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
 	if err != nil {
 		t.Fatalf("read Makefile: %v", err)
 	}
-	text := string(mk)
+	if !strings.Contains(string(mk), "test-cross-generator:") {
+		t.Error("Makefile is missing the test-cross-generator convenience target")
+	}
 
-	if !strings.Contains(text, "test-cross-generator:") {
-		t.Error("Makefile is missing the test-cross-generator target")
+	cg, err := os.ReadFile("cross_generator_test.go")
+	if err != nil {
+		t.Fatalf("read cross_generator_test.go: %v", err)
 	}
-	if !strings.Contains(text, "PULSERPC_CROSS_GENERATOR=1") {
-		t.Error("test-cross-generator must set PULSERPC_CROSS_GENERATOR=1")
-	}
-	// The default/CI paths must not set the gate implicitly.
-	for _, target := range []string{"test:", "quality-full:", "test-integration:", "test-all-runtimes:"} {
-		idx := strings.Index(text, "\n"+target)
-		if idx < 0 {
-			continue
-		}
-		end := strings.Index(text[idx+1:], "\n\n")
-		if end < 0 {
-			end = len(text) - idx - 1
-		}
-		block := text[idx+1 : idx+1+end]
-		if strings.Contains(block, "PULSERPC_CROSS_GENERATOR=1") {
-			t.Errorf("%s must not enable the cross-generator gate", target)
-		}
+	if strings.Contains(string(cg), "requireCrossGenerator") {
+		t.Error("cross-generator tests still use the obsolete requireCrossGenerator gate")
 	}
 }
 
