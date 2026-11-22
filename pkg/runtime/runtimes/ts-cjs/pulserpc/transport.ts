@@ -214,7 +214,7 @@ export class HttpTransport extends Transport {
         // reporting a transport failure (R11 / M4).
         if (
           response.status === 204 &&
-          !Object.prototype.hasOwnProperty.call(req, "id")
+          (!Object.prototype.hasOwnProperty.call(req, "id") || req.id === null)
         ) {
           return { jsonrpc: "2.0", id: req.id ?? null };
         }

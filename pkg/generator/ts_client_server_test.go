@@ -1095,7 +1095,7 @@ func TestTsStaticClientRPCError(t *testing.T) {
 		}
 
 		assertTsFileContains(t, outputDir, "client.ts", "import { RPCError } from './pulserpc/rpc.js'")
-		assertTsFileContains(t, outputDir, "client.ts", "throw new RPCError(_resp.error.code, _resp.error.message, _resp.error.data)")
+		assertTsFileContains(t, outputDir, "client.ts", "throw new RPCError(_err.code, _err.message, _err.data)")
 	})
 }
 
