@@ -189,10 +189,15 @@ class Server:
                 return None
             return self._error_response(req_id, code, message, data)
 
-        # Check JSON-RPC version
+        # Check JSON-RPC version.  A missing or wrong 'jsonrpc' is an Invalid
+        # Request whose id cannot be trusted, so it is reported as null on the
+        # wire (conformance).  Notifications still receive no response at all.
         if req.get('jsonrpc') != '2.0':
-            return error_response(
-                INVALID_REQUEST, "Invalid Request", "jsonrpc version must be '2.0'"
+            if is_notification:
+                return None
+            return self._error_response(
+                None, INVALID_REQUEST, "Invalid Request",
+                "jsonrpc version must be '2.0'"
             )
 
         # Check for method
