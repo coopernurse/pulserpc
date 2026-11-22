@@ -284,6 +284,45 @@ func TestGeneratedTsTestServerNarrowsParseErrorToJsonParse(t *testing.T) {
 	}
 }
 
+// R17/R19/D6: the generated client tree copies the TS runtime transport, which
+// enforces a 10 MiB response cap and a 30 s request timeout via AbortController.
+// Both module styles are checked because they pull from different runtime trees
+// (ts-node and ts-cjs).
+func TestTsGeneratedTransportHardening(t *testing.T) {
+	for _, style := range []string{"esm-node", "cjs"} {
+		t.Run(style, func(t *testing.T) {
+			dir := t.TempDir()
+			tsRunGenWithFlags(t, tsInvariantIDL(), dir, map[string]string{"ts-module": style})
+
+			files := collectTsFiles(t, dir)
+			var transport string
+			for rel, data := range files {
+				if filepath.Base(rel) == "transport.ts" {
+					transport = string(data)
+					break
+				}
+			}
+			if transport == "" {
+				t.Fatal("generated client tree has no pulserpc/transport.ts")
+			}
+
+			for _, want := range []string{
+				"HTTP_TIMEOUT_MS = 30_000",
+				"MAX_RESPONSE_BYTES = 10 * 1024 * 1024",
+				"new AbortController()",
+				"signal: controller.signal",
+				"readBodyWithCap(response, this.maxResponseBytes)",
+				"Response body too large",
+				"Request timed out after",
+			} {
+				if !strings.Contains(transport, want) {
+					t.Errorf("generated %s transport missing %q", style, want)
+				}
+			}
+		})
+	}
+}
+
 // C4/C5/D8: idl.json carries rootNamespace and checksum and is served by the
 // runtime as an object (the generated server passes contract.idlParsed).
 func TestTsIdlJsonCarriesRootNamespaceAndChecksum(t *testing.T) {

@@ -597,6 +597,40 @@ func TestCSharpGeneratedCodeUsesStringEnums(t *testing.T) {
 	}
 }
 
+// R17/R19/D6: the generated C# client tree copies the runtime Transport.cs,
+// which caps response bodies at 10 MiB and bounds both the request and connect
+// phases of every HTTP call.
+func TestCSharpGeneratedTransportHardening(t *testing.T) {
+	idl := parseTestIDL(t, "namespace test\ninterface Svc { Ping() string }\n")
+	outDir := t.TempDir()
+	runCSharpGenerate(t, idl, outDir)
+
+	tree := readTree(t, outDir)
+	var transport string
+	for rel, data := range tree {
+		if filepath.Base(rel) == "Transport.cs" {
+			transport = string(data)
+			break
+		}
+	}
+	if transport == "" {
+		t.Fatal("generated client tree has no PulseRPC/Transport.cs")
+	}
+
+	for _, want := range []string{
+		"MaxResponseBytes = 10L * 1024 * 1024",
+		"RequestTimeout = TimeSpan.FromSeconds(30)",
+		"ConnectTimeout = TimeSpan.FromSeconds(10)",
+		"Timeout = RequestTimeout",
+		"ReadLimitedAsync(responseStream, MaxResponseBytes",
+		"Response body exceeds maximum size of",
+	} {
+		if !strings.Contains(transport, want) {
+			t.Errorf("generated C# transport missing %q", want)
+		}
+	}
+}
+
 // R31: the generated client fetches pulserpc-idl and reports a failed fetch as
 // incompatible rather than diffing against itself.
 func TestCSharpGeneratedClientVerifiesAgainstFetchedIdl(t *testing.T) {

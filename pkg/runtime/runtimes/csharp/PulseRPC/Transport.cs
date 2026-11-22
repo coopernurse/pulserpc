@@ -68,6 +68,9 @@ namespace PulseRPC
         /// <summary>Request timeout applied to every client call (30 s, D6).</summary>
         public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
+        /// <summary>Connect timeout applied to the socket handler (10 s, D6).</summary>
+        public static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
+
         internal static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new System.Text.Json.JsonSerializerOptions
         {
             PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
@@ -91,7 +94,10 @@ namespace PulseRPC
         public HttpTransport(string baseUrl, Dictionary<string, string>? headers = null)
         {
             _baseUrl = baseUrl.TrimEnd('/');
-            _httpClient = new HttpClient { Timeout = RequestTimeout };
+            // D6: .NET separates the connection phase from the overall request
+            // timeout, so bound both (10 s connect, 30 s request).
+            var handler = new SocketsHttpHandler { ConnectTimeout = ConnectTimeout };
+            _httpClient = new HttpClient(handler) { Timeout = RequestTimeout };
             if (headers != null)
             {
                 foreach (var header in headers)
