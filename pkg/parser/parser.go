@@ -90,10 +90,10 @@ type InterfaceDef struct {
 // MethodDef represents a method definition
 type MethodDef struct {
 	Pos            lexer.Position
-	Name           string          `parser:"@Ident '('"`
-	Parameters     []*ParameterDef `parser:"( @@ (',' @@)* )? ')' "`
-	ReturnType     *TypeExpr       `parser:"@@"`
-	ReturnOptional bool            `parser:"( @Optional )?"`
+	Name           string              `parser:"@Ident '('"`
+	Parameters     []*ParameterDef     `parser:"( @@ (',' @@)* )? ')' "`
+	ReturnType     *TypeExpr           `parser:"@@"`
+	ReturnOptional bool                `parser:"( @Optional )?"`
 	Raises         []*RaisesIdentifier `parser:"( 'raises' '(' @@ ( ',' @@ )* ')' )?"`
 }
 
@@ -365,24 +365,45 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 	visited[absPath] = true
 	defer delete(visited, absPath)
 
-	// Pre-process: extract imports manually using regex
-	importRegex := regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
+	baseDir := filepath.Dir(absPath)
+
+	// Pre-process: extract imports manually using regex. The extraction pattern
+	// intentionally stops at the closing quote: G29 allows a trailing comment
+	// (and trailing whitespace) after the import path.
+	importRegex := regexp.MustCompile(`(?m)^[ \t]*import[ \t]+"([^"]+)"`)
 	importMatches := importRegex.FindAllStringSubmatch(input, -1)
-	importSet := make(map[string]bool) // Deduplicate imports
-	var imports []string
+
+	// G30/D10: de-duplicate by resolved absolute path, not by literal string.
+	// `inc.pulse` and `./inc.pulse` therefore count as a single import, while
+	// the first literal spelling is retained for diagnostics.
+	type importSpec struct {
+		literal  string
+		resolved string
+	}
+	var imports []importSpec
+	importSeen := make(map[string]bool)
 	for _, match := range importMatches {
-		if len(match) > 1 {
-			importPath := match[1]
-			if !importSet[importPath] {
-				importSet[importPath] = true
-				imports = append(imports, importPath)
-			}
+		if len(match) <= 1 {
+			continue
 		}
+		literal := match[1]
+		resolved := literal
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(baseDir, resolved)
+		}
+		resolved = filepath.Clean(resolved)
+		if importSeen[resolved] {
+			continue
+		}
+		importSeen[resolved] = true
+		imports = append(imports, importSpec{literal: literal, resolved: resolved})
 	}
 
-	// Remove import lines from input for parsing
-	// Match import statement with any whitespace
-	removeImportRegex := regexp.MustCompile(`(?m)^\s*import\s+"[^"]+"\s*$`)
+	// Remove import lines from input for parsing. This must consume the same
+	// shape the extraction pattern accepts, including trailing whitespace and
+	// an optional `//` comment (G29). We deliberately leave the newline behind
+	// so source positions and preceding-comment extraction are unaffected.
+	removeImportRegex := regexp.MustCompile(`(?m)^[ \t]*import[ \t]+"[^"]+"[ \t]*(?://[^\r\n]*)?[ \t]*\r?$`)
 	filteredInput := removeImportRegex.ReplaceAllString(input, "")
 
 	// Parse the file
@@ -403,19 +424,15 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 	}
 
 	// Resolve imports
-	baseDir := filepath.Dir(absPath)
 	importedIDLs := make([]struct {
 		namespace string
 		idl       *IDL
 	}, 0)
 	namespaceMap := make(map[string]string) // namespace -> file path
 
-	for _, importPath := range imports {
-		// Resolve import path relative to current file's directory
-		resolvedPath := importPath
-		if !filepath.IsAbs(importPath) {
-			resolvedPath = filepath.Join(baseDir, importPath)
-		}
+	for _, imp := range imports {
+		importPath := imp.literal
+		resolvedPath := imp.resolved
 
 		// Read and parse imported file
 		importedContent, err := os.ReadFile(resolvedPath)
@@ -438,37 +455,17 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 			}
 		}
 
-		// Get namespace from imported file
-		importedNamespace := ""
-		for _, s := range importedIDL.Structs {
-			if s.Namespace != "" {
-				importedNamespace = s.Namespace
-				break
-			}
-		}
-		if importedNamespace == "" {
-			for _, e := range importedIDL.Enums {
-				if e.Namespace != "" {
-					importedNamespace = e.Namespace
-					break
-				}
-			}
-		}
-		if importedNamespace == "" {
-			for _, i := range importedIDL.Interfaces {
-				if i.Namespace != "" {
-					importedNamespace = i.Namespace
-					break
-				}
-			}
-		}
-		if importedNamespace == "" {
-			for _, e := range importedIDL.Errors {
-				if e.Namespace != "" {
-					importedNamespace = e.Namespace
-					break
-				}
-			}
+		// Get the namespace declared by the imported file itself. Nested
+		// imports have already been merged into importedIDL; RootNamespace
+		// always describes this file, unlike scanning the first declaration.
+		importedNamespace := importedIDL.RootNamespace
+
+		// G32/D10: an imported namespace may not collide with the root file's
+		// namespace. Without this check the merged IDL contains two unrelated
+		// declaration sets under the same name and dispatch becomes ambiguous.
+		if importedNamespace != "" && namespace != "" && importedNamespace == namespace {
+			return nil, fmt.Errorf("imported namespace %s in %s collides with root namespace %s in %s",
+				importedNamespace, resolvedPath, namespace, absPath)
 		}
 
 		// Check for duplicate namespace

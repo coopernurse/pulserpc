@@ -33,15 +33,16 @@ The checksum computation SHALL exclude all whitespace and comments from the sour
 The checksum SHALL be computed from the following structural elements:
 
 - `rootNamespace`
-- Interface names (fully-qualified), methods (sorted by name), parameters (sorted by name), return type, returnOptional flag, raises list (sorted)
+- Interface names (fully-qualified), methods (sorted by name), parameters (sorted by name for determinism but carrying their original declaration position), return type, returnOptional flag, raises list (sorted)
 - Struct names (fully-qualified), extends chain, fields (sorted by name, with types and optional flag)
 - Enum names (fully-qualified), values (sorted by name)
 - Error names (fully-qualified), error codes
 
-#### Scenario: Same interface with different parameter order produces same checksum
+#### Scenario: Parameter order changes the checksum
 - **WHEN** method has parameters `(a string, b int)` in file version A
 - **AND** same method has parameters `(b int, a string)` in file version B
-- **THEN** both versions produce identical checksums
+- **THEN** the checksums are different because parameters are positional (D9).
+  (Superseded the original name-sorted behavior.)
 
 #### Scenario: Same struct with different field order produces same checksum
 - **WHEN** struct has fields `(name string, age int)` in file version A
@@ -105,7 +106,7 @@ The checksum algorithm SHALL produce identical output for the same IDL regardles
 
 4. **Type Reference Resolution**: Type references using bare names vs fully-qualified names should produce the same checksum when they refer to the same type.
 
-5. **Parameter Sort Invariance**: Permuting parameter order within a method should not change the checksum.
+5. **Parameter Position Sensitivity**: Parameter order is part of the API surface, so permuting parameters within a method changes the checksum. Parameters are still sorted by name for deterministic emission, with the original position included in each entry.
 
 6. **Field Sort Invariance**: Permuting field order within a struct should not change the checksum.
 

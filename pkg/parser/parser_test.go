@@ -991,6 +991,105 @@ struct MyResponse extends inc.Response {
 	}
 }
 
+// G29/D10: an import may be followed by whitespace and a trailing // comment.
+func TestImportWithTrailingComment(t *testing.T) {
+	cases := map[string]string{
+		"trailing comment":   `import "imported.pulse" // note`,
+		"trailing spaces":    `import "imported.pulse"   `,
+		"comment and space":  `import "imported.pulse"  // note   `,
+		"leading whitespace": `   import "imported.pulse" // note`,
+	}
+	for name, importLine := range cases {
+		t.Run(name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			createTestFile(t, tmpDir, "imported.pulse", `namespace inc
+
+struct Response {
+    value string
+}`)
+			mainFile := createTestFile(t, tmpDir, "main.pulse", importLine+`
+
+struct MainStruct {
+    response inc.Response
+}`)
+
+			idl, err := parseIDLFromFile(t, mainFile)
+			if err != nil {
+				t.Fatalf("import with %s should parse, got: %v", name, err)
+			}
+			found := false
+			for _, s := range idl.Structs {
+				if s.Name == "inc.Response" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected imported inc.Response to be present")
+			}
+		})
+	}
+}
+
+// G30/D10: imports are de-duplicated by resolved path, not literal spelling.
+func TestImportDedupByResolvedPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	createTestFile(t, tmpDir, "inc.pulse", `namespace inc
+
+struct Response {
+    value string
+}`)
+	mainFile := createTestFile(t, tmpDir, "main.pulse", `import "inc.pulse"
+import "./inc.pulse"
+
+struct MainStruct {
+    response inc.Response
+}`)
+
+	idl, err := parseIDLFromFile(t, mainFile)
+	if err != nil {
+		t.Fatalf("equivalent import paths must not raise a duplicate-namespace error, got: %v", err)
+	}
+
+	count := 0
+	for _, s := range idl.Structs {
+		if s.Name == "inc.Response" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected inc.Response exactly once, got %d", count)
+	}
+}
+
+// G32/D10: a root file may not reuse a namespace declared by an import.
+func TestRootImportNamespaceCollision(t *testing.T) {
+	tmpDir := t.TempDir()
+	createTestFile(t, tmpDir, "imported.pulse", `namespace same
+
+struct Imported {
+    value string
+}`)
+	mainFile := createTestFile(t, tmpDir, "main.pulse", `namespace same
+
+import "imported.pulse"
+
+struct Local {
+    value string
+}`)
+
+	_, err := parseIDLFromFile(t, mainFile)
+	if err == nil {
+		t.Fatal("expected an error for a root/import namespace collision")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "same") || !strings.Contains(msg, "collides") {
+		t.Errorf("expected collision error naming the namespace, got: %v", err)
+	}
+	if !strings.Contains(msg, "imported.pulse") || !strings.Contains(msg, "main.pulse") {
+		t.Errorf("expected collision error naming both files, got: %v", err)
+	}
+}
+
 // Test nested imports (A → B → C)
 func TestNestedImports(t *testing.T) {
 	tmpDir := t.TempDir()
