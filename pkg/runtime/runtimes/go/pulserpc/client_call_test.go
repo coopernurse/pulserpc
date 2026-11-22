@@ -73,10 +73,10 @@ func TestSequentialCallsUseDistinctIDs(t *testing.T) {
 		}
 	}
 
-	first, ok1 := transport.requests[0]["id"].(int)
-	second, ok2 := transport.requests[1]["id"].(int)
+	first, ok1 := transport.requests[0]["id"].(uint64)
+	second, ok2 := transport.requests[1]["id"].(uint64)
 	if !ok1 || !ok2 {
-		t.Fatalf("request ids are not ints: %#v", transport.requests)
+		t.Fatalf("request ids are not uint64: %#v", transport.requests)
 	}
 	if first == second {
 		t.Errorf("sequential calls reused id %d", first)

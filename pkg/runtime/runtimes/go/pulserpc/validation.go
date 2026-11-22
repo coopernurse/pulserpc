@@ -14,24 +14,36 @@ func ValidateString(value interface{}) error {
 	return nil
 }
 
-// ValidateInt validates that value is an int. JSON numbers decode as float64;
-// only whole numbers are accepted. The check is symmetric for positive and
-// negative values (math.Trunc rounds toward zero) so near-integers with a
-// fractional part are rejected consistently.
+// ValidateInt validates that value is an IDL int: a whole JSON number within
+// the signed 32-bit range. D1/R25: Go's native int is wider, but the wire
+// contract is [-2147483648, 2147483647] in every runtime. Fractional, NaN/Inf,
+// bool, and out-of-range values are rejected.
 func ValidateInt(value interface{}) error {
-	if _, ok := value.(int); ok {
+	switch v := value.(type) {
+	case int:
+		if int64(v) < math.MinInt32 || int64(v) > math.MaxInt32 {
+			return fmt.Errorf("expected int in signed 32-bit range, got %d", v)
+		}
 		return nil
-	}
-	if v, ok := value.(float64); ok {
+	case int64:
+		if v < math.MinInt32 || v > math.MaxInt32 {
+			return fmt.Errorf("expected int in signed 32-bit range, got %d", v)
+		}
+		return nil
+	case float64:
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return fmt.Errorf("expected int, got non-finite float %v", v)
 		}
-		if v == math.Trunc(v) {
-			return nil
+		if v != math.Trunc(v) {
+			return fmt.Errorf("expected int, got float with fractional part: %v", v)
 		}
-		return fmt.Errorf("expected int, got float with fractional part: %v", v)
+		if v < math.MinInt32 || v > math.MaxInt32 {
+			return fmt.Errorf("expected int in signed 32-bit range, got %v", v)
+		}
+		return nil
+	default:
+		return fmt.Errorf("expected int, got %T", value)
 	}
-	return fmt.Errorf("expected int, got %T", value)
 }
 
 // ValidateFloat validates that value is a float64 or int

@@ -1,6 +1,7 @@
 package pulserpc
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
@@ -46,10 +47,18 @@ func (s *Server) AddHandler(ifaceName string, handler interface{}) {
 // contained here so an HTTP handler survives them.
 func (s *Server) Call(request map[string]interface{}) (response map[string]interface{}) {
 	var reqID interface{}
-	isNotification := request != nil && request["id"] == nil
 	if request != nil {
 		reqID = request["id"]
 	}
+
+	// D2/R24: a request id must be a string, a number, or null. Booleans,
+	// objects, and arrays are invalid; reply with -32600 and a null id rather
+	// than echoing the malformed value back to the caller.
+	if request != nil && !validRequestID(reqID) {
+		return s.errorResponse(nil, -32600, "Invalid Request", "id must be a string, number, or null")
+	}
+
+	isNotification := request != nil && reqID == nil
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -57,7 +66,7 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 			// the panic value itself: it may carry secrets or internal details.
 			log.Printf("pulserpc: recovered panic of type %T while processing a request", r)
 			response = s.respondError(isNotification, reqID, -32603,
-				internalErrorMessage, internalErrorMessage)
+				internalErrorMessage, nil)
 		}
 	}()
 
@@ -147,15 +156,22 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 		if rpcErr, ok := err.(*RPCError); ok {
 			return s.respondError(isNotification, reqID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
 		}
-		return s.respondError(isNotification, reqID, -32603, "Internal error", err.Error())
+		// D4/R15: never leak handler error text to the client. Log only the
+		// error type server-side: the message itself may persist secrets or
+		// PII straight to logs. Return a fixed generic message with no data
+		// member.
+		log.Printf("pulserpc: handler error for %s: type %T", method, err)
+		return s.respondError(isNotification, reqID, -32603, internalErrorMessage, nil)
 	}
 
 	// Validate response if validation is enabled. Validation must also run for
 	// nil results: a null result is invalid for a required return type.
 	if s.validateResponses && s.contract != nil {
 		if err := s.contract.ValidateResponse(ifaceName, funcName, result); err != nil {
-			return s.respondError(isNotification, reqID, -32603, "Internal error",
-				fmt.Sprintf("Response validation failed: %s", err.Error()))
+			// Only the error type is logged: validation messages can include
+			// rejected values, which may be secrets or PII.
+			log.Printf("pulserpc: response validation failed for %s: type %T", method, err)
+			return s.respondError(isNotification, reqID, -32603, internalErrorMessage, nil)
 		}
 	}
 
@@ -178,7 +194,8 @@ func (s *Server) respondSuccess(isNotification bool, reqID interface{}, result i
 	return s.successResponse(reqID, result)
 }
 
-// errorResponse creates a JSON-RPC error response
+// errorResponse creates a JSON-RPC error response. The id is always present so
+// an unknown or invalid request id serializes as an explicit null (D2/D3).
 func (s *Server) errorResponse(reqID interface{}, code int, message string, data interface{}) map[string]interface{} {
 	errObj := map[string]interface{}{
 		"code":    code,
@@ -191,11 +208,25 @@ func (s *Server) errorResponse(reqID interface{}, code int, message string, data
 	response := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"error":   errObj,
-	}
-	if reqID != nil {
-		response["id"] = reqID
+		"id":      reqID,
 	}
 	return response
+}
+
+// validRequestID reports whether id is a legal JSON-RPC request id: string,
+// number, or null. Booleans, objects, and arrays are rejected (R24/D2).
+func validRequestID(id interface{}) bool {
+	switch id.(type) {
+	case nil, string:
+		return true
+	case bool, map[string]interface{}, []interface{}:
+		return false
+	case float64, float32, int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64, json.Number:
+		return true
+	default:
+		return false
+	}
 }
 
 // successResponse creates a JSON-RPC success response

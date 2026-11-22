@@ -1,7 +1,10 @@
 package pulserpc
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"log"
 	"strings"
 	"testing"
 )
@@ -20,9 +23,13 @@ const testContractIDL = `{
 			],"returnType":{"builtIn":"string"}},
 			{"name":"null_return","parameters":[],"returnType":{"builtIn":"string"}},
 			{"name":"panics","parameters":[],"returnType":{"builtIn":"string"}},
+			{"name":"fails","parameters":[],"returnType":{"builtIn":"string"}},
+			{"name":"leaks","parameters":[],"returnType":{"builtIn":"string"}},
+			{"name":"bad_enum","parameters":[],"returnType":{"userDefined":"E"}},
 			{"name":"nothing","parameters":[],"returnType":{"builtIn":"void"}}
 		]
-	}]
+	}],
+	"enums": [{"name":"E","values":[{"name":"ok"}]}]
 }`
 
 type testHandler struct{}
@@ -31,7 +38,16 @@ func (testHandler) Add(a, b int) int         { return a + b }
 func (testHandler) Echo(value string) string { return value }
 func (testHandler) NullReturn() interface{}  { return nil }
 func (testHandler) Panics() string           { panic("handler exploded") }
+func (testHandler) Fails() (string, error)   { return "", errors.New("secret-token-abc123") }
+func (testHandler) Leaks() (string, error)   { return "", secretError{"secret-token-abc123"} }
+func (testHandler) BadEnum() string          { return "secret-token-abc123" }
 func (testHandler) Nothing() error           { return nil }
+
+// secretError is a handler error whose text carries a sentinel value. Only its
+// type may appear in logs.
+type secretError struct{ msg string }
+
+func (e secretError) Error() string { return e.msg }
 
 func newTestServer(t *testing.T, validateRequests, validateResponses bool) *Server {
 	t.Helper()
@@ -173,8 +189,8 @@ func TestHandlerPanicDetailIsNotReturnedToClient(t *testing.T) {
 	if message, _ := errObj["message"].(string); message != internalErrorMessage {
 		t.Errorf("error message = %q, want the fixed %q", message, internalErrorMessage)
 	}
-	if data, ok := errObj["data"].(string); !ok || data != internalErrorMessage {
-		t.Errorf("error data = %#v, want the fixed generic message %q", errObj["data"], internalErrorMessage)
+	if data, exists := errObj["data"]; exists {
+		t.Errorf("error data = %#v, want no data member (D4/R15)", data)
 	}
 
 	encoded, err := json.Marshal(response)
@@ -183,6 +199,69 @@ func TestHandlerPanicDetailIsNotReturnedToClient(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "handler exploded") {
 		t.Errorf("panic detail leaked into the serialized error response: %s", encoded)
+	}
+}
+
+// go-03: unexpected handler and response-validation errors are logged by type
+// only. Their text may contain secrets or PII and must never be persisted to
+// logs, matching the panic path. Declared RPCError messages are unaffected.
+func TestUnexpectedErrorsAreLoggedWithoutDetail(t *testing.T) {
+	server := newTestServer(t, true, true)
+
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	handlerErr := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.leaks", "params": []interface{}{}, "id": 1,
+	})
+	if code := errorCode(t, handlerErr); code != -32603 {
+		t.Fatalf("handler error code = %d, want -32603", code)
+	}
+
+	validationErr := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.bad_enum", "params": []interface{}{}, "id": 2,
+	})
+	if code := errorCode(t, validationErr); code != -32603 {
+		t.Fatalf("response validation code = %d, want -32603", code)
+	}
+
+	logged := logs.String()
+	if strings.Contains(logged, "secret-token-abc123") {
+		t.Errorf("log output leaked the error text: %s", logged)
+	}
+	if !strings.Contains(logged, "pulserpc.secretError") {
+		t.Errorf("handler error was not logged by type (%%T): %s", logged)
+	}
+	if !strings.Contains(logged, "response validation failed") {
+		t.Errorf("response validation failure was not logged: %s", logged)
+	}
+}
+
+// R15/D4: a handler error must not leak into the client-visible message or
+// data; the raw error is only logged server-side.
+func TestHandlerErrorDetailIsNotReturnedToClient(t *testing.T) {
+	server := newTestServer(t, true, true)
+	response := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.fails", "params": []interface{}{}, "id": 9,
+	})
+	if code := errorCode(t, response); code != -32603 {
+		t.Errorf("handler error code = %d, want -32603", code)
+	}
+	errObj := response["error"].(map[string]interface{})
+	if message, _ := errObj["message"].(string); message != internalErrorMessage {
+		t.Errorf("error message = %q, want %q", message, internalErrorMessage)
+	}
+	if data, exists := errObj["data"]; exists {
+		t.Errorf("error data = %#v, want no data member", data)
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal error response: %v", err)
+	}
+	if strings.Contains(string(encoded), "secret-token") {
+		t.Errorf("handler error leaked into the response: %s", encoded)
 	}
 }
 
@@ -247,5 +326,136 @@ func TestBatchRequests(t *testing.T) {
 	empty := processBatch(server, []interface{}{})
 	if len(empty) != 0 {
 		t.Errorf("empty batch produced responses: %#v", empty)
+	}
+}
+
+// R24/D2: boolean, object, and array ids are rejected with -32600 and are not
+// echoed back as the response id.
+func TestInvalidRequestIDTypesAreRejected(t *testing.T) {
+	server := newTestServer(t, true, true)
+	for _, id := range []interface{}{
+		true,
+		false,
+		map[string]interface{}{"nested": 1},
+		[]interface{}{1, 2},
+	} {
+		response := server.Call(map[string]interface{}{
+			"jsonrpc": "2.0", "method": "A.add",
+			"params": []interface{}{1, 2}, "id": id,
+		})
+		if code := errorCode(t, response); code != -32600 {
+			t.Errorf("id %#v: code = %d, want -32600", id, code)
+		}
+		if responseID, exists := response["id"]; !exists || responseID != nil {
+			t.Errorf("id %#v: response id = %#v, want explicit null", id, responseID)
+		}
+	}
+}
+
+// M21: an explicit id:null is a notification and receives no response.
+func TestNullIDIsNotification(t *testing.T) {
+	server := newTestServer(t, true, true)
+	response := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.add",
+		"params": []interface{}{1, 2}, "id": nil,
+	})
+	if response != nil {
+		t.Fatalf("id:null request received a response: %#v", response)
+	}
+}
+
+// M22/M25/M27: error objects omit data when nil, carry a numeric code and
+// string message, and every response declares jsonrpc "2.0".
+func TestErrorResponseShape(t *testing.T) {
+	server := newTestServer(t, true, true)
+	response := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.fails",
+		"params": []interface{}{}, "id": 4,
+	})
+	if response["jsonrpc"] != "2.0" {
+		t.Errorf("jsonrpc = %#v, want 2.0", response["jsonrpc"])
+	}
+	if response["id"] != 4 {
+		t.Errorf("id = %#v, want 4", response["id"])
+	}
+	errObj, ok := response["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("error is not an object: %#v", response)
+	}
+	if _, ok := errObj["code"].(int); !ok {
+		t.Errorf("error.code = %#v, want a numeric value", errObj["code"])
+	}
+	if _, ok := errObj["message"].(string); !ok {
+		t.Errorf("error.message = %#v, want a string", errObj["message"])
+	}
+	if _, exists := errObj["data"]; exists {
+		t.Errorf("error.data = %#v, want it omitted when nil", errObj["data"])
+	}
+}
+
+// M23: a null result for an optional return is serialized as an explicit
+// "result": null member, not omitted.
+func TestNullResultIsExplicit(t *testing.T) {
+	server := newTestServer(t, true, true)
+	response := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.null_return",
+		"params": []interface{}{}, "id": 3,
+	})
+	// A.null_return is required, so validation rejects it. Disable response
+	// validation to exercise the success envelope itself.
+	server = newTestServer(t, false, false)
+	response = server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "A.null_return",
+		"params": []interface{}{}, "id": 3,
+	})
+	if response == nil {
+		t.Fatal("expected a response")
+	}
+	result, exists := response["result"]
+	if !exists {
+		t.Fatalf("response omits result: %#v", response)
+	}
+	if result != nil {
+		t.Errorf("result = %#v, want nil", result)
+	}
+}
+
+// M24: numeric response ids are echoed exactly and comparisons tolerate
+// integer/float representations.
+func TestNumericIDIsEchoed(t *testing.T) {
+	server := newTestServer(t, true, true)
+	for _, id := range []interface{}{7, 7.0, "abc"} {
+		response := server.Call(map[string]interface{}{
+			"jsonrpc": "2.0", "method": "A.add",
+			"params": []interface{}{1, 2}, "id": id,
+		})
+		if response["id"] != id {
+			t.Errorf("id %#v echoed as %#v", id, response["id"])
+		}
+	}
+	if !idsEqual(7, 7.0) || !idsEqual("x", "x") || idsEqual(1, 2) {
+		t.Error("idsEqual does not compare numeric ids by value")
+	}
+}
+
+// C5: the pulserpc-idl method returns the IDL as a JSON object (not a
+// double-encoded string) and follows the normal response envelope.
+func TestIDLMethodReturnsObject(t *testing.T) {
+	server := newTestServer(t, true, true)
+	response := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "pulserpc-idl", "params": []interface{}{}, "id": 1,
+	})
+	if response == nil {
+		t.Fatal("expected a response")
+	}
+	if response["jsonrpc"] != "2.0" || response["id"] != 1 {
+		t.Errorf("unexpected envelope: %#v", response)
+	}
+	result, ok := response["result"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("pulserpc-idl result is not an object: %#v", response["result"])
+	}
+	if _, ok := result["interfaces"].([]interface{}); !ok {
+		t.Errorf("IDL object has no interfaces array: %#v", result)
 	}
 }

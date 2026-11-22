@@ -140,7 +140,10 @@ func TestGoGeneratedServerBatchHandling(t *testing.T) {
 		"if resp != nil {",
 		"if len(responses) == 0 {",
 		"http.StatusNoContent",
-		"json.NewEncoder(w).Encode(responses)",
+		"payload, err := json.Marshal(responses)",
+		"len(payload) > maxBatchResponseSize",
+		"\"Batch response too large\"",
+		"w.Write(payload)",
 	} {
 		if !strings.Contains(code, marker) {
 			t.Errorf("generated batch handler is missing %q", marker)

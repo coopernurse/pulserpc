@@ -20,7 +20,16 @@ layout: default
 | `map[string]Type` | `map[string]Type` | `map[string]string{"key": "value"}` |
 | `Enum` | `EnumName` + `EnumValue_Value` | `OrderStatusPending` |
 | `Struct` | `*Struct` | `&Product{...}` |
-| `T [optional]` | `*T` (pointer) | `*string`, `*int` |
+| `T [optional]` | `*T` (pointer + `omitempty`) | `*string`, `*int` |
+
+> **`int` is signed 32-bit on the wire.** Go's native `int` may be wider, but
+> validation accepts only integral JSON numbers in
+> `[-2147483648, 2147483647]` (D1). Fractional, NaN/Inf, bool, and out-of-range
+> values are rejected with `-32602`.
+>
+> **Optional fields omit their value when nil.** Optional fields are pointers
+> tagged with `omitempty`, so a nil value is absent from the serialized struct
+> rather than encoded as `null`.
 
 ## Generated Structs
 
@@ -158,7 +167,7 @@ import (
     "checkout"
 )
 
-transport := checkout.NewHTTPTransport("http://localhost:8080")
+transport := checkout.NewHTTPTransport("http://localhost:8080", nil)
 catalog := checkout.NewCatalogServiceClient(transport)
 
 // Method calls return structs or nil
@@ -195,6 +204,52 @@ cart, err := cartService.AddToCart(&checkout.AddToCartRequest{
     Quantity:  2,
 })
 ```
+
+## IDL Metadata
+
+Generation writes `idl.json` and embeds the same document as the `IDL_JSON`
+constant in `server.go`. Both forms use one schema (D8):
+
+```json
+{
+  "rootNamespace": "checkout",
+  "checksum": "<43-char base64url SHA-256>",
+  "interfaces": [],
+  "structs": [],
+  "enums": [],
+  "errors": []
+}
+```
+
+Every top-level key is present even when its collection is empty. The checksum
+is identical in both forms and covers declaration structure, not comments or
+error-message text.
+
+## Limits and Transport Behavior
+
+Generated adapters and the runtime enforce the shared resource limits (D5/D6):
+
+| Limit | Value | Error |
+|-------|-------|-------|
+| Request body | 1 MiB | `-32600` `"Request body too large"` |
+| Response body (client read) | 10 MiB | client error |
+| Batch entries | 100 | `-32600` `"Batch exceeds maximum size"` |
+| HTTP client timeout | 30 s | transport error |
+
+Additional behavior:
+
+- Non-POST requests return HTTP **405** with a JSON-RPC `-32600` body and
+  `"id": null`.
+- Handler errors and panics return `-32603` `"Internal error"` with no `data`
+  member. Details are logged server-side only.
+- Requests with a boolean, object, or array `id` are rejected with `-32600`.
+  An explicit `"id": null` is a notification and receives no response.
+- Batch responses keep the array shape. Non-object batch entries receive their
+  own `-32600`; notification-only batches return HTTP 204 with no body.
+- `NewHTTPTransport` accepts optional custom headers and removes a trailing `/`
+  from the base URL.
+- Generation is byte-deterministic: namespaces, imports, and type lookups are
+  sorted rather than derived from Go map iteration order.
 
 ## Best Practices
 
