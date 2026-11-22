@@ -100,10 +100,12 @@ export class Server {
       );
     }
 
-    // Check JSON-RPC version
+    // Check JSON-RPC version. An invalid/unknown version makes the request
+    // envelope itself invalid, so the id cannot be trusted and must be null
+    // (notifications remain silent via `call` above).
     if (req.jsonrpc !== "2.0") {
       return this.errorResponse(
-        reqId ?? null,
+        null,
         -32600,
         "Invalid Request",
         "jsonrpc version must be '2.0'"

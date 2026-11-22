@@ -135,7 +135,7 @@ function buildValidationResult(errors: ValidationError[]): ValidationResult {
   };
   const paths = errors.map(e => e.path).filter(Boolean);
   if (paths.length > 0) {
-    result.invalidFields = paths;
+    result.invalid_fields = paths;
   }
   return result;
 }
@@ -255,7 +255,7 @@ export class Contract {
    *   // { valid: true }
    *
    *   const result = contract.validate("Person", {});
-   *   // { valid: false, error: ".username: Missing required field...", invalidFields: [".username"] }
+   *   // { valid: false, error: ".username: Missing required field...", invalid_fields: [".username"] }
    */
   validate(typeName: string, value: any): ValidationResult {
     const typeDef: TypeDef = { userDefined: typeName };
