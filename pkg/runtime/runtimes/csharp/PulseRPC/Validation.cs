@@ -6,181 +6,186 @@ using System.Linq;
 namespace PulseRPC
 {
     /// <summary>
-    /// Validation functions for PulseRPC types
+    /// Validation functions for PulseRPC types.
+    /// Accumulating variants return List&lt;ValidationError&gt; (empty == valid).
     /// </summary>
     public static class Validation
     {
-        /// <summary>
-        /// Validate that value is a string
-        /// </summary>
-        public static void ValidateString(object? value)
+        private static string TypeName(object? value) => value == null ? "null" : value.GetType().Name;
+
+        private static string JoinPath(string parent, string child)
         {
-            if (value is not string)
-            {
-                throw new ArgumentException($"Expected string, got {value?.GetType().Name ?? "null"}");
-            }
+            if (string.IsNullOrEmpty(parent)) return string.IsNullOrEmpty(child) ? "" : "." + child;
+            if (string.IsNullOrEmpty(child)) return parent;
+            return parent + "." + child;
         }
 
-        /// <summary>Minimum IDL int value (signed 32-bit, D1/R25).</summary>
-        public const long IntMin = -2147483648L;
+        public static List<ValidationError> ValidateString(object? value, string path)
+        {
+            var errs = new List<ValidationError>();
+            if (value is not string)
+                errs.Add(new ValidationError(path, $"Expected string, got {TypeName(value)}"));
+            return errs;
+        }
 
-        /// <summary>Maximum IDL int value (signed 32-bit, D1/R25).</summary>
+        public static List<ValidationError> ValidateInt(object? value, string path)
+        {
+            var errs = new List<ValidationError>();
+            if (value is int) return errs;
+            if (value is long l && l >= IntMin && l <= IntMax) return errs;
+            if (value is double d)
+            {
+                if (double.IsNaN(d) || double.IsInfinity(d)) { errs.Add(new ValidationError(path, $"Expected int, got non-finite float {d}")); return errs; }
+                if (d != Math.Floor(d)) { errs.Add(new ValidationError(path, $"Expected int, got float with fractional part: {d}")); return errs; }
+                if (d < IntMin || d > IntMax) { errs.Add(new ValidationError(path, $"Expected int in signed 32-bit range, got {d}")); return errs; }
+                return errs;
+            }
+            if (value is float f)
+            {
+                double df = f;
+                if (double.IsNaN(df) || double.IsInfinity(df)) { errs.Add(new ValidationError(path, $"Expected int, got non-finite float {df}")); return errs; }
+                if (df != Math.Floor(df)) { errs.Add(new ValidationError(path, $"Expected int, got float with fractional part: {df}")); return errs; }
+                if (df < IntMin || df > IntMax) { errs.Add(new ValidationError(path, $"Expected int in signed 32-bit range, got {df}")); return errs; }
+                return errs;
+            }
+            if (value is bool)
+            {
+                errs.Add(new ValidationError(path, "Expected int, got bool"));
+                return errs;
+            }
+            errs.Add(new ValidationError(path, $"Expected int, got {TypeName(value)}"));
+            return errs;
+        }
+
+        public const long IntMin = -2147483648L;
         public const long IntMax = 2147483647L;
 
-        /// <summary>
-        /// Validate that value is an int in the signed 32-bit range. IDL int is
-        /// [-2147483648, 2147483647] in every runtime (D1/R25).
-        /// </summary>
-        public static void ValidateInt(object? value)
+        public static List<ValidationError> ValidateFloat(object? value, string path)
         {
-            if (value is int)
+            var errs = new List<ValidationError>();
+            if (value is bool)
             {
-                // A CLR int is always within the IDL range.
-                return;
+                errs.Add(new ValidationError(path, "Expected float, got bool"));
+                return errs;
             }
-            if (value is long l && l >= IntMin && l <= IntMax)
+            if (value is double d)
             {
-                return;
+                if (double.IsNaN(d) || double.IsInfinity(d))
+                {
+                    errs.Add(new ValidationError(path, "Expected a finite float value"));
+                    return errs;
+                }
+                return errs;
             }
-            // Accept whole-number doubles within range, but never NaN or Infinity.
-            if (value is double d &&
-                !double.IsNaN(d) && !double.IsInfinity(d) &&
-                d == Math.Floor(d) && d >= IntMin && d <= IntMax)
+            if (value is float f)
             {
-                return;
+                if (float.IsNaN(f) || float.IsInfinity(f))
+                {
+                    errs.Add(new ValidationError(path, "Expected a finite float value"));
+                    return errs;
+                }
+                return errs;
             }
-            throw new ArgumentException(
-                $"Expected int in range [{IntMin}, {IntMax}], got {value?.GetType().Name ?? "null"}");
+            if (value is int or long)
+            {
+                return errs;
+            }
+            errs.Add(new ValidationError(path, $"Expected float, got {TypeName(value)}"));
+            return errs;
         }
 
-        /// <summary>
-        /// Validate that value is a float or int
-        /// </summary>
-        public static void ValidateFloat(object? value)
+        public static List<ValidationError> ValidateBool(object? value, string path)
         {
-            // Keep the numeric acceptance set consistent with ValidateInt (long
-            // included) and reject non-finite values (R2).
-            if (value is not float && value is not double && value is not int && value is not long)
-            {
-                throw new ArgumentException($"Expected float, got {value?.GetType().Name ?? "null"}");
-            }
-            if (value is double d && (double.IsNaN(d) || double.IsInfinity(d)))
-            {
-                throw new ArgumentException("Expected a finite float value");
-            }
-            if (value is float f && (float.IsNaN(f) || float.IsInfinity(f)))
-            {
-                throw new ArgumentException("Expected a finite float value");
-            }
-        }
-
-        /// <summary>
-        /// Validate that value is a bool
-        /// </summary>
-        public static void ValidateBool(object? value)
-        {
+            var errs = new List<ValidationError>();
             if (value is not bool)
-            {
-                throw new ArgumentException($"Expected bool, got {value?.GetType().Name ?? "null"}");
-            }
+                errs.Add(new ValidationError(path, $"Expected bool, got {TypeName(value)}"));
+            return errs;
         }
 
-        /// <summary>
-        /// Validate that value is an array and each element passes validation
-        /// </summary>
-        public static void ValidateArray(object? value, Action<object?> elementValidator)
+        public static List<ValidationError> ValidateArray(object? value, Func<object?, string, List<ValidationError>> elementValidator, string path)
         {
-            // Check if it's an array or list (but not a string or Dictionary, which also implement IEnumerable)
-            if (value == null || value is string || value is System.Collections.IDictionary || value is not System.Collections.IEnumerable enumerable)
+            var errs = new List<ValidationError>();
+            if (value is string || value is IDictionary || value == null)
             {
-                throw new ArgumentException($"Expected array, got {value?.GetType().Name ?? "null"}");
+                // null handled as error unless... match original: null array invalid
+                if (value == null) { errs.Add(new ValidationError(path, $"Expected array, got null")); return errs; }
+                if (value is string || value is IDictionary) { errs.Add(new ValidationError(path, $"Expected array, got {TypeName(value)}")); return errs; }
             }
-
-            int index = 0;
+            if (value is not IEnumerable enumerable)
+            {
+                errs.Add(new ValidationError(path, $"Expected array, got {TypeName(value)}"));
+                return errs;
+            }
+            int i = 0;
             foreach (var elem in enumerable)
             {
-                try
-                {
-                    elementValidator(elem);
-                }
-                catch (Exception e)
-                {
-                    throw new ArgumentException($"Array element at index {index} validation failed: {e.Message}", e);
-                }
-                index++;
+                string elemPath = $"{path}[{i}]";
+                var sub = elementValidator(elem, elemPath);
+                if (sub != null) errs.AddRange(sub);
+                i++;
             }
+            return errs;
         }
 
-        /// <summary>
-        /// Validate that value is a map (Dictionary) with string keys and validated values
-        /// </summary>
-        public static void ValidateMap(object? value, Action<object?> valueValidator)
+        public static List<ValidationError> ValidateMap(object? value, Func<object?, string, List<ValidationError>> valueValidator, string path)
         {
-            if (value is not Dictionary<string, object?> dict)
+            var errs = new List<ValidationError>();
+            if (value is not IDictionary dict)
             {
-                throw new ArgumentException($"Expected dictionary, got {value?.GetType().Name ?? "null"}");
+                errs.Add(new ValidationError(path, $"Expected map, got {TypeName(value)}"));
+                return errs;
             }
-
-            foreach (var kvp in dict)
+            foreach (DictionaryEntry entry in dict)
             {
-                try
+                if (entry.Key is not string key)
                 {
-                    valueValidator(kvp.Value);
+                    errs.Add(new ValidationError(path, $"Map key must be string, got {TypeName(entry.Key)}"));
+                    continue;
                 }
-                catch (Exception e)
-                {
-                    throw new ArgumentException($"Map value for key '{kvp.Key}' validation failed: {e.Message}", e);
-                }
+                string keyPath = $"{path}[{key}]";
+                var sub = valueValidator(entry.Value, keyPath);
+                if (sub != null) errs.AddRange(sub);
             }
+            return errs;
         }
 
-        /// <summary>
-        /// Validate that value is a string and matches one of the allowed enum values
-        /// </summary>
-        public static void ValidateEnum(object? value, string enumName, List<string> allowedValues)
+        public static List<ValidationError> ValidateEnum(object? value, string enumName, List<string> allowedValues, string path)
         {
-            if (value is not string strValue)
+            var errs = new List<ValidationError>();
+            if (value is not string s)
             {
-                throw new ArgumentException($"Expected string for enum {enumName}, got {value?.GetType().Name ?? "null"}");
+                errs.Add(new ValidationError(path, $"Expected string for enum {enumName}, got {TypeName(value)}"));
+                return errs;
             }
-
-            if (!allowedValues.Contains(strValue))
+            if (!allowedValues.Contains(s))
             {
-                throw new ArgumentException($"Invalid value for enum {enumName}: '{strValue}'. Allowed values: [{string.Join(", ", allowedValues.Select(v => $"'{v}'"))}]");
+                errs.Add(new ValidationError(path, $"Invalid value for enum {enumName}: '{s}'. Allowed values: [{string.Join(", ", allowedValues)}]"));
             }
+            return errs;
         }
 
-        /// <summary>
-        /// Validate that value is a Dictionary matching the struct definition
-        /// </summary>
-        public static void ValidateStruct(
-            object? value,
-            string structName,
-            Dictionary<string, object> structDef,
+        public static List<ValidationError> ValidateStruct(object? value, string structName, Dictionary<string, object> structDef,
             Dictionary<string, Dictionary<string, object>> allStructs,
-            Dictionary<string, Dictionary<string, object>> allEnums)
+            Dictionary<string, Dictionary<string, object>> allEnums, string path)
         {
-            if (value is not Dictionary<string, object?> dict)
+            var errs = new List<ValidationError>();
+            if (value is not IDictionary dict)
             {
-                throw new ArgumentException($"Expected dictionary for struct {structName}, got {value?.GetType().Name ?? "null"}");
+                errs.Add(new ValidationError(path, $"Expected map for struct {structName}, got {TypeName(value)}"));
+                return errs;
             }
-
-            // Get all fields including parent fields
             var fields = Types.GetStructFields(structName, allStructs);
-
-            // Check required fields
             foreach (var field in fields)
             {
-                var fieldName = field["name"].ToString() ?? "";
-                var fieldType = field["type"];
-                var isOptional = field.TryGetValue("optional", out var optionalObj) && optionalObj is bool opt && opt;
+                string fieldName = (string)field["name"];
+                var fieldType = (Dictionary<string, object>)field["type"];
+                bool isOptional = field.ContainsKey("optional") && (bool)field["optional"];
+                string fieldPath = string.IsNullOrEmpty(path) ? "." + fieldName : path + "." + fieldName;
 
-                if (!dict.ContainsKey(fieldName))
+                if (!dict.Contains(fieldName))
                 {
                     if (!isOptional)
-                    {
-                        throw new ArgumentException($"Missing required field '{fieldName}' in struct {structName}");
-                    }
+                        errs.Add(new ValidationError(fieldPath, $"Missing required field '{fieldName}' in struct {structName}"));
                 }
                 else
                 {
@@ -188,141 +193,150 @@ namespace PulseRPC
                     if (fieldValue == null)
                     {
                         if (!isOptional)
-                        {
-                            throw new ArgumentException($"Field '{fieldName}' in struct {structName} cannot be null");
-                        }
+                            errs.Add(new ValidationError(fieldPath, $"Field '{fieldName}' in struct {structName} cannot be null"));
                     }
                     else
                     {
-                        try
-                        {
-                            if (fieldType is Dictionary<string, object> typeDict)
-                            {
-                                ValidateType(fieldValue, typeDict, allStructs, allEnums, false);
-                            }
-                            else
-                            {
-                                // Field type should always be a Dictionary, but handle edge cases
-                                throw new ArgumentException($"Invalid field type definition for field '{fieldName}' in struct {structName}");
-                            }
-                        }
-                        catch (Exception e)
-                        {
-                            throw new ArgumentException($"Field '{fieldName}' in struct {structName} validation failed: {e.Message}", e);
-                        }
+                        var sub = ValidateType(fieldValue, fieldType, allStructs, allEnums, false, fieldPath);
+                        errs.AddRange(sub);
                     }
                 }
             }
+            return errs;
         }
 
-        /// <summary>
-        /// Validate a value against a type definition
-        /// </summary>
-        public static void ValidateType(
-            object? value,
-            Dictionary<string, object> typeDef,
+        public static List<ValidationError> ValidateType(object? value, Dictionary<string, object> typeDef,
             Dictionary<string, Dictionary<string, object>> allStructs,
             Dictionary<string, Dictionary<string, object>> allEnums,
-            bool isOptional = false)
+            bool isOptional, string path)
         {
-            // Handle optional types
+            var errs = new List<ValidationError>();
             if (value == null)
             {
-                if (isOptional)
-                {
-                    return;
-                }
-                else
-                {
-                    throw new ArgumentException("Value cannot be null for non-optional type");
-                }
+                if (!isOptional)
+                    errs.Add(new ValidationError(path, "Value cannot be null for non-optional type"));
+                return errs;
             }
-
-            // Built-in types
-            if (typeDef.TryGetValue("builtIn", out var builtInObj) && builtInObj is string builtIn)
+            if (typeDef.ContainsKey("builtIn"))
             {
+                string builtIn = (string)typeDef["builtIn"];
                 switch (builtIn)
                 {
-                    case "string":
-                        ValidateString(value);
-                        break;
-                    case "int":
-                        ValidateInt(value);
-                        break;
-                    case "float":
-                        ValidateFloat(value);
-                        break;
-                    case "bool":
-                        ValidateBool(value);
-                        break;
-                    default:
-                        throw new ArgumentException($"Unknown built-in type: {builtIn}");
+                    case "string": return ValidateString(value, path);
+                    case "int": return ValidateInt(value, path);
+                    case "float": return ValidateFloat(value, path);
+                    case "bool": return ValidateBool(value, path);
+                    default: errs.Add(new ValidationError(path, $"Unknown built-in type: {builtIn}")); return errs;
                 }
             }
-            // Array types
-            else if (typeDef.TryGetValue("array", out var arrayObj))
+            if (typeDef.ContainsKey("array"))
             {
-                if (arrayObj is Dictionary<string, object> elementType)
-                {
-                    ValidateArray(value, elem => ValidateType(elem, elementType, allStructs, allEnums, false));
-                }
-                else
-                {
-                    throw new ArgumentException("Invalid array type definition");
-                }
+                var elementType = (Dictionary<string, object>)typeDef["array"];
+                Func<object?, string, List<ValidationError>> cb = (v, p) => ValidateType(v, elementType, allStructs, allEnums, false, p);
+                return ValidateArray(value, cb, path);
             }
-            // Map types
-            else if (typeDef.TryGetValue("mapValue", out var mapValueObj))
+            if (typeDef.ContainsKey("mapValue"))
             {
-                if (mapValueObj is Dictionary<string, object> valueType)
-                {
-                    ValidateMap(value, val => ValidateType(val, valueType, allStructs, allEnums, false));
-                }
-                else
-                {
-                    throw new ArgumentException("Invalid map type definition");
-                }
+                var valueType = (Dictionary<string, object>)typeDef["mapValue"];
+                Func<object?, string, List<ValidationError>> cb = (v, p) => ValidateType(v, valueType, allStructs, allEnums, false, p);
+                return ValidateMap(value, cb, path);
             }
-            // User-defined types
-            else if (typeDef.TryGetValue("userDefined", out var userDefinedObj) && userDefinedObj is string userType)
+            if (typeDef.ContainsKey("userDefined"))
             {
-                // Check if it's a struct
+                string userType = (string)typeDef["userDefined"];
                 var structDef = Types.FindStruct(userType, allStructs);
                 if (structDef != null)
                 {
-                    ValidateStruct(value, userType, structDef, allStructs, allEnums);
+                    return ValidateStruct(value, userType, structDef, allStructs, allEnums, path);
                 }
-                // Check if it's an enum
-                else
+                var enumDef = Types.FindEnum(userType, allEnums);
+                if (enumDef != null)
                 {
-                    var enumDef = Types.FindEnum(userType, allEnums);
-                    if (enumDef != null)
+                    if (enumDef.TryGetValue("values", out var valuesObj) && valuesObj is IList enumValues)
                     {
-                        if (enumDef.TryGetValue("values", out var valuesObj) && valuesObj is System.Collections.IList enumValues)
-                        {
-                            var allowedValues = enumValues
-                                .OfType<Dictionary<string, object>>()
-                                .Select(v => v.TryGetValue("name", out var nameObj) ? nameObj.ToString() ?? "" : "")
-                                .Where(name => !string.IsNullOrEmpty(name))
-                                .ToList();
-                            ValidateEnum(value, userType, allowedValues);
-                        }
-                        else
-                        {
-                            throw new ArgumentException($"Invalid enum definition for {userType}: missing values");
-                        }
+                        var allowed = enumValues.Cast<Dictionary<string, object>>()
+                            .Select(v => v.TryGetValue("name", out var n) ? n?.ToString() : null)
+                            .Where(n => n != null).Cast<string>().ToList();
+                        return ValidateEnum(value, userType, allowed, path);
                     }
-                    else
-                    {
-                        throw new ArgumentException($"Unknown user-defined type: {userType}");
-                    }
+                    errs.Add(new ValidationError(path, $"Invalid enum definition for {userType}: missing values"));
+                    return errs;
                 }
+                errs.Add(new ValidationError(path, $"Unknown user-defined type: {userType}"));
+                return errs;
             }
-            else
+            errs.Add(new ValidationError(path, "Invalid type definition"));
+            return errs;
+        }
+
+        // ---- Backward-compatible throwing overloads ----
+        public static void ValidateString(object? value)
+        {
+            var e = ValidateString(value, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
+        }
+        public static void ValidateInt(object? value)
+        {
+            var e = ValidateInt(value, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
+        }
+        public static void ValidateFloat(object? value)
+        {
+            var e = ValidateFloat(value, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
+        }
+        public static void ValidateBool(object? value)
+        {
+            var e = ValidateBool(value, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
+        }
+        public static void ValidateEnum(object? value, string enumName, List<string> allowedValues)
+        {
+            var e = ValidateEnum(value, enumName, allowedValues, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
+        }
+        public static void ValidateArray(object? value, Action<object?> elementValidator)
+        {
+            Func<object?, string, List<ValidationError>> cb = (v, p) =>
             {
-                throw new ArgumentException($"Invalid type definition: {System.Text.Json.JsonSerializer.Serialize(typeDef)}");
-            }
+                try { elementValidator(v); return new List<ValidationError>(); }
+                catch (Exception e) { return new List<ValidationError> { new ValidationError(p, e.Message) }; }
+            };
+            var e = ValidateArray(value, cb, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
+        }
+        public static void ValidateMap(object? value, Action<object?> valueValidator)
+        {
+            Func<object?, string, List<ValidationError>> cb = (v, p) =>
+            {
+                try { valueValidator(v); return new List<ValidationError>(); }
+                catch (Exception e) { return new List<ValidationError> { new ValidationError(p, e.Message) }; }
+            };
+            var e = ValidateMap(value, cb, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
+        }
+        public static void ValidateStruct(object? value, string structName, Dictionary<string, object> structDef,
+            Dictionary<string, Dictionary<string, object>> allStructs,
+            Dictionary<string, Dictionary<string, object>> allEnums)
+        {
+            var e = ValidateStruct(value, structName, structDef, allStructs, allEnums, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
+        }
+        public static void ValidateType(object? value, Dictionary<string, object> typeDef,
+            Dictionary<string, Dictionary<string, object>> allStructs,
+            Dictionary<string, Dictionary<string, object>> allEnums,
+            bool isOptional)
+        {
+            var e = ValidateType(value, typeDef, allStructs, allEnums, isOptional, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
+        }
+
+        public static void ValidateType(object? value, Dictionary<string, object> typeDef,
+            Dictionary<string, Dictionary<string, object>> allStructs,
+            Dictionary<string, Dictionary<string, object>> allEnums)
+        {
+            var e = ValidateType(value, typeDef, allStructs, allEnums, false, "");
+            if (e.Count > 0) throw new ArgumentException(e[0].Message);
         }
     }
 }
-

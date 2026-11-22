@@ -145,6 +145,10 @@ namespace PulseRPC
                 {
                     _contract.ValidateRequest(ifaceName, funcName, positionalParams);
                 }
+                catch (RPCError rpcErr)
+                {
+                    return Fail(rpcErr.Code, rpcErr.Message, rpcErr.Data);
+                }
                 catch (ArgumentException ex)
                 {
                     return Fail(-32602, "Invalid params", ex.Message);
@@ -193,7 +197,7 @@ namespace PulseRPC
                 {
                     _contract.ValidateResponse(ifaceName, funcName, result);
                 }
-                catch (ArgumentException ex)
+                catch (Exception ex)
                 {
                     LogInternalError($"Response validation failed for {ifaceName}.{funcName}", ex);
                     return Fail(-32603, "Internal error");
