@@ -148,7 +148,7 @@ async function testRequestValidationAndErrorData() {
   assert.strictEqual(bad!.id, 7);
   // -32602 validation errors are user-facing and keep their data.
   assert.strictEqual((bad!.error as any).data.valid, false);
-  assert.deepStrictEqual((bad!.error as any).data.invalidFields, ["param[0]"]);
+  assert.deepStrictEqual((bad!.error as any).data.invalid_fields, ["param[0]"]);
 
   const unknown = await server.call(request("Svc.nope", [], 8));
   assert.strictEqual(unknown!.error?.code, -32601);
@@ -253,6 +253,25 @@ async function testJsonRpcVersionEnforced() {
   assert.ok(bad !== null);
   assert.strictEqual(bad!.jsonrpc, "2.0");
   assert.strictEqual(bad!.error?.code, -32600);
+  // A bad version invalidates the envelope: the id is untrusted and must be
+  // null rather than echoed (conformance).
+  assert.strictEqual(bad!.id, null);
+
+  // Missing jsonrpc with a real id is the same invalid-envelope case.
+  const missing = await server.call({
+    method: "Svc.greet",
+    params: ["a"],
+    id: 1,
+  } as any);
+  assert.ok(missing !== null);
+  assert.strictEqual(missing!.error?.code, -32600);
+  assert.strictEqual(missing!.id, null);
+
+  // Notifications never receive a response, even with an invalid version.
+  assert.strictEqual(
+    await server.call({ method: "Svc.greet", params: ["a"] } as any),
+    null
+  );
   console.log("✓ testJsonRpcVersionEnforced");
 }
 

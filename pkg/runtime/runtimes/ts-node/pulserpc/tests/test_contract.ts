@@ -58,7 +58,7 @@ function testValidate() {
   const bad = contract.validate("User", {});
   assert.strictEqual(bad.valid, false);
   assert.ok(bad.error?.includes("email"));
-  assert.deepStrictEqual(bad.invalidFields, [".email"]);
+  assert.deepStrictEqual(bad.invalid_fields, [".email"]);
   console.log("✓ testValidate");
 }
 
@@ -115,7 +115,7 @@ function testValidationErrorDataShape() {
     // M13: TS exposes a structured ValidationResult (validation.md:245-247).
     assert.strictEqual(e.data.valid, false);
     assert.strictEqual(typeof e.data.error, "string");
-    assert.deepStrictEqual(e.data.invalidFields, ["param[0]"]);
+    assert.deepStrictEqual(e.data.invalid_fields, ["param[0]"]);
   }
   console.log("✓ testValidationErrorDataShape");
 }
