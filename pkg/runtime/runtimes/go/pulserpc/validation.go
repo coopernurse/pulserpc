@@ -6,117 +6,329 @@ import (
 	"reflect"
 )
 
-// ValidateString validates that value is a string
-func ValidateString(value interface{}) error {
+// ValidationError carries a field path and a human-readable message.
+type ValidationError struct {
+	Path    string
+	Message string
+}
+
+// Validation errors returned by the accumulating validators. Empty == valid.
+
+func joinPath(parent, child string) string {
+	if parent == "" {
+		if child == "" {
+			return ""
+		}
+		// top-level field gets a leading dot? Python: param[i].field -> ".field"
+		// handled by caller; here just concatenate with dot if parent non-empty
+		return child
+	}
+	if child == "" {
+		return parent
+	}
+	return parent + "." + child
+}
+
+// --- accumulating validators (return []ValidationError) ---
+
+func ValidateStringE(value interface{}, path string) []ValidationError {
 	if _, ok := value.(string); !ok {
-		return fmt.Errorf("expected string, got %T", value)
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected string, got %T", value)}}
 	}
 	return nil
 }
 
-// ValidateInt validates that value is an IDL int: a whole JSON number within
-// the signed 32-bit range. D1/R25: Go's native int is wider, but the wire
-// contract is [-2147483648, 2147483647] in every runtime. Fractional, NaN/Inf,
-// bool, and out-of-range values are rejected.
-func ValidateInt(value interface{}) error {
+func ValidateIntE(value interface{}, path string) []ValidationError {
 	switch v := value.(type) {
 	case int:
 		if int64(v) < math.MinInt32 || int64(v) > math.MaxInt32 {
-			return fmt.Errorf("expected int in signed 32-bit range, got %d", v)
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %d", v)}}
 		}
 		return nil
 	case int64:
 		if v < math.MinInt32 || v > math.MaxInt32 {
-			return fmt.Errorf("expected int in signed 32-bit range, got %d", v)
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %d", v)}}
 		}
 		return nil
 	case float64:
 		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return fmt.Errorf("expected int, got non-finite float %v", v)
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got non-finite float %v", v)}}
 		}
 		if v != math.Trunc(v) {
-			return fmt.Errorf("expected int, got float with fractional part: %v", v)
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got float with fractional part: %v", v)}}
 		}
 		if v < math.MinInt32 || v > math.MaxInt32 {
-			return fmt.Errorf("expected int in signed 32-bit range, got %v", v)
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %v", v)}}
 		}
 		return nil
 	default:
-		return fmt.Errorf("expected int, got %T", value)
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got %T", value)}}
 	}
 }
 
-// ValidateFloat validates that value is a float64 or int
-func ValidateFloat(value interface{}) error {
+func ValidateFloatE(value interface{}, path string) []ValidationError {
 	switch value.(type) {
 	case float64, int:
 		return nil
 	default:
-		return fmt.Errorf("expected float, got %T", value)
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected float, got %T", value)}}
 	}
 }
 
-// ValidateBool validates that value is a bool
-func ValidateBool(value interface{}) error {
+func ValidateBoolE(value interface{}, path string) []ValidationError {
 	if _, ok := value.(bool); !ok {
-		return fmt.Errorf("expected bool, got %T", value)
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected bool, got %T", value)}}
 	}
 	return nil
 }
 
-// ValidateArray validates that value is an array and each element passes validation
-func ValidateArray(value interface{}, elementValidator func(interface{}) error) error {
-	// Check if it's a slice
+func ValidateArrayE(value interface{}, elementValidator func(interface{}, string) []ValidationError, path string) []ValidationError {
 	rv := reflect.ValueOf(value)
 	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
-		return fmt.Errorf("expected array, got %T", value)
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected array, got %T", value)}}
 	}
-
+	var errs []ValidationError
 	for i := 0; i < rv.Len(); i++ {
 		elem := rv.Index(i).Interface()
-		if err := elementValidator(elem); err != nil {
-			return fmt.Errorf("array element at index %d validation failed: %w", i, err)
+		elemPath := fmt.Sprintf("%s[%d]", path, i)
+		if e := elementValidator(elem, elemPath); e != nil {
+			errs = append(errs, e...)
 		}
 	}
-
-	return nil
+	return errs
 }
 
-// ValidateMap validates that value is a map (map[string]interface{}) with string keys and validated values
-func ValidateMap(value interface{}, valueValidator func(interface{}) error) error {
+func ValidateMapE(value interface{}, valueValidator func(interface{}, string) []ValidationError, path string) []ValidationError {
 	dict, ok := value.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("expected map, got %T", value)
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected map, got %T", value)}}
 	}
-
+	var errs []ValidationError
 	for key, val := range dict {
-		if err := valueValidator(val); err != nil {
-			return fmt.Errorf("map value for key '%s' validation failed: %w", key, err)
+		keyPath := fmt.Sprintf("%s[%s]", path, key)
+		if e := valueValidator(val, keyPath); e != nil {
+			errs = append(errs, e...)
 		}
-		_ = key // key is always string in Go maps
 	}
-
-	return nil
+	return errs
 }
 
-// ValidateEnum validates that value is a string and matches one of the allowed enum values
-func ValidateEnum(value interface{}, enumName string, allowedValues []string) error {
+func ValidateEnumE(value interface{}, enumName string, allowedValues []string, path string) []ValidationError {
 	strValue, ok := value.(string)
 	if !ok {
-		return fmt.Errorf("expected string for enum %s, got %T", enumName, value)
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected string for enum %s, got %T", enumName, value)}}
 	}
-
 	for _, allowed := range allowedValues {
 		if strValue == allowed {
 			return nil
 		}
 	}
-
-	return fmt.Errorf("invalid value for enum %s: '%s'. Allowed values: %v", enumName, strValue, allowedValues)
+	return []ValidationError{{Path: path, Message: fmt.Sprintf("invalid value for enum %s: '%s'. Allowed values: %v", enumName, strValue, allowedValues)}}
 }
 
-// typeResolver bundles the contract-owned struct/enum indexes so validation
-// resolves user-defined types in O(1) without rebuilding an index per field.
+func validateStructE(value interface{}, structName string, structDef StructDef, resolver *typeResolver, path string) []ValidationError {
+	dict, ok := value.(map[string]interface{})
+	if !ok {
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected map for struct %s, got %T", structName, value)}}
+	}
+
+	fields := getStructFields(structName, resolver.structs)
+	var errs []ValidationError
+	for _, field := range fields {
+		fieldName, ok := field["name"].(string)
+		if !ok {
+			continue
+		}
+		fieldType, ok := field["type"]
+		if !ok {
+			continue
+		}
+		isOptional := false
+		if opt, ok := field["optional"].(bool); ok {
+			isOptional = opt
+		}
+
+		fieldPath := path
+		if fieldPath == "" {
+			fieldPath = "." + fieldName
+		} else {
+			fieldPath = fieldPath + "." + fieldName
+		}
+
+		fieldValue, exists := dict[fieldName]
+		if !exists {
+			if !isOptional {
+				errs = append(errs, ValidationError{Path: fieldPath, Message: fmt.Sprintf("missing required field '%s' in struct %s", fieldName, structName)})
+			}
+			continue
+		}
+		if fieldValue == nil {
+			if !isOptional {
+				errs = append(errs, ValidationError{Path: fieldPath, Message: fmt.Sprintf("field '%s' in struct %s cannot be nil", fieldName, structName)})
+			}
+			continue
+		}
+		typeDef, ok := fieldType.(map[string]interface{})
+		if !ok {
+			errs = append(errs, ValidationError{Path: fieldPath, Message: fmt.Sprintf("invalid field type definition for field '%s' in struct %s", fieldName, structName)})
+			continue
+		}
+		sub := validateTypeE(fieldValue, typeDef, resolver, false, fieldPath)
+		errs = append(errs, sub...)
+	}
+	return errs
+}
+
+func validateTypeE(value interface{}, typeDef map[string]interface{}, resolver *typeResolver, isOptional bool, path string) []ValidationError {
+	if value == nil {
+		if isOptional {
+			return nil
+		}
+		return []ValidationError{{Path: path, Message: "value cannot be nil for non-optional type"}}
+	}
+
+	if builtIn, ok := typeDef["builtIn"].(string); ok {
+		switch builtIn {
+		case "string":
+			return ValidateStringE(value, path)
+		case "int":
+			return ValidateIntE(value, path)
+		case "float":
+			return ValidateFloatE(value, path)
+		case "bool":
+			return ValidateBoolE(value, path)
+		default:
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("unknown built-in type: %s", builtIn)}}
+		}
+	}
+
+	if arrayObj, ok := typeDef["array"]; ok {
+		elementType, ok := arrayObj.(map[string]interface{})
+		if !ok {
+			return []ValidationError{{Path: path, Message: "invalid array type definition"}}
+		}
+		elementValidator := func(v interface{}, p string) []ValidationError {
+			return validateTypeE(v, elementType, resolver, false, p)
+		}
+		return ValidateArrayE(value, elementValidator, path)
+	}
+
+	if mapValueObj, ok := typeDef["mapValue"]; ok {
+		valueType, ok := mapValueObj.(map[string]interface{})
+		if !ok {
+			return []ValidationError{{Path: path, Message: "invalid map type definition"}}
+		}
+		valueValidator := func(v interface{}, p string) []ValidationError {
+			return validateTypeE(v, valueType, resolver, false, p)
+		}
+		return ValidateMapE(value, valueValidator, path)
+	}
+
+	if userDefined, ok := typeDef["userDefined"].(string); ok {
+		structDef := resolver.structs.resolve(userDefined)
+		if structDef != nil {
+			return validateStructE(value, userDefined, structDef, resolver, path)
+		}
+		enumDef := resolver.enums.resolve(userDefined)
+		if enumDef != nil {
+			valuesObj, ok := enumDef["values"]
+			if !ok {
+				return []ValidationError{{Path: path, Message: fmt.Sprintf("invalid enum definition for %s: missing values", userDefined)}}
+			}
+			valuesList, ok := valuesObj.([]interface{})
+			if !ok {
+				return []ValidationError{{Path: path, Message: fmt.Sprintf("invalid enum definition for %s: values is not a list", userDefined)}}
+			}
+			allowedValues := make([]string, 0, len(valuesList))
+			for _, valObj := range valuesList {
+				if valMap, ok := valObj.(map[string]interface{}); ok {
+					if name, ok := valMap["name"].(string); ok {
+						allowedValues = append(allowedValues, name)
+					}
+				}
+			}
+			return ValidateEnumE(value, userDefined, allowedValues, path)
+		}
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("unknown user-defined type: %s", userDefined)}}
+	}
+
+	return []ValidationError{{Path: path, Message: fmt.Sprintf("invalid type definition: %v", typeDef)}}
+}
+
+// --- backward-compat wrappers returning error ---
+
+func ValidateString(value interface{}) error {
+	if e := ValidateStringE(value, ""); len(e) > 0 {
+		return fmt.Errorf("%s", e[0].Message)
+	}
+	return nil
+}
+func ValidateInt(value interface{}) error {
+	if e := ValidateIntE(value, ""); len(e) > 0 {
+		return fmt.Errorf("%s", e[0].Message)
+	}
+	return nil
+}
+func ValidateFloat(value interface{}) error {
+	if e := ValidateFloatE(value, ""); len(e) > 0 {
+		return fmt.Errorf("%s", e[0].Message)
+	}
+	return nil
+}
+func ValidateBool(value interface{}) error {
+	if e := ValidateBoolE(value, ""); len(e) > 0 {
+		return fmt.Errorf("%s", e[0].Message)
+	}
+	return nil
+}
+func ValidateArray(value interface{}, elementValidator func(interface{}) error) error {
+	wrapped := func(v interface{}, p string) []ValidationError {
+		if err := elementValidator(v); err != nil {
+			return []ValidationError{{Path: p, Message: err.Error()}}
+		}
+		return nil
+	}
+	if e := ValidateArrayE(value, wrapped, ""); len(e) > 0 {
+		return fmt.Errorf("%s", e[0].Message)
+	}
+	return nil
+}
+func ValidateMap(value interface{}, valueValidator func(interface{}) error) error {
+	wrapped := func(v interface{}, p string) []ValidationError {
+		if err := valueValidator(v); err != nil {
+			return []ValidationError{{Path: p, Message: err.Error()}}
+		}
+		return nil
+	}
+	if e := ValidateMapE(value, wrapped, ""); len(e) > 0 {
+		return fmt.Errorf("%s", e[0].Message)
+	}
+	return nil
+}
+func ValidateEnum(value interface{}, enumName string, allowedValues []string) error {
+	if e := ValidateEnumE(value, enumName, allowedValues, ""); len(e) > 0 {
+		return fmt.Errorf("%s", e[0].Message)
+	}
+	return nil
+}
+func ValidateStruct(value interface{}, structName string, structDef StructDef, allStructs StructMap, allEnums EnumMap) error {
+	if e := validateStructE(value, structName, structDef, newTypeResolver(allStructs, allEnums), ""); len(e) > 0 {
+		return fmt.Errorf("%s", e[0].Message)
+	}
+	return nil
+}
+func ValidateType(value interface{}, typeDef map[string]interface{}, allStructs StructMap, allEnums EnumMap, isOptional bool) error {
+	if e := validateTypeE(value, typeDef, newTypeResolver(allStructs, allEnums), isOptional, ""); len(e) > 0 {
+		return fmt.Errorf("%s", e[0].Message)
+	}
+	return nil
+}
+
+// Keep exported ValidateStruct/ValidateType with resolver? The above is fine.
+
+// ValidateStruct indexed (exported already exists via ValidateStruct). Add E variant exported? contract uses validateStructE.
+// Export validateStructE as ValidateStructE? keep lowercase for package use; contract is same package.
+// typeResolver bundles the contract-owned struct/enum indexes.
 type typeResolver struct {
 	structs *definitionIndex[StructDef]
 	enums   *definitionIndex[EnumDef]
@@ -127,182 +339,4 @@ func newTypeResolver(structs StructMap, enums EnumMap) *typeResolver {
 		structs: newDefinitionIndex(structs),
 		enums:   newDefinitionIndex(enums),
 	}
-}
-
-// ValidateStruct validates that value is a map[string]interface{} matching the struct definition
-func ValidateStruct(
-	value interface{},
-	structName string,
-	structDef StructDef,
-	allStructs StructMap,
-	allEnums EnumMap,
-) error {
-	return validateStruct(value, structName, structDef, newTypeResolver(allStructs, allEnums))
-}
-
-// validateStruct is the indexed implementation shared with contract validation.
-func validateStruct(
-	value interface{},
-	structName string,
-	structDef StructDef,
-	resolver *typeResolver,
-) error {
-	dict, ok := value.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("expected map for struct %s, got %T", structName, value)
-	}
-
-	// Get all fields including parent fields
-	fields := getStructFields(structName, resolver.structs)
-
-	// Check required fields
-	for _, field := range fields {
-		fieldName, ok := field["name"].(string)
-		if !ok {
-			continue
-		}
-
-		fieldType, ok := field["type"]
-		if !ok {
-			continue
-		}
-
-		isOptional := false
-		if opt, ok := field["optional"].(bool); ok {
-			isOptional = opt
-		}
-
-		fieldValue, exists := dict[fieldName]
-		if !exists {
-			if !isOptional {
-				return fmt.Errorf("missing required field '%s' in struct %s", fieldName, structName)
-			}
-		} else {
-			if fieldValue == nil {
-				if !isOptional {
-					return fmt.Errorf("field '%s' in struct %s cannot be nil", fieldName, structName)
-				}
-			} else {
-				// Validate field value
-				typeDef, ok := fieldType.(map[string]interface{})
-				if !ok {
-					return fmt.Errorf("invalid field type definition for field '%s' in struct %s", fieldName, structName)
-				}
-
-				if err := validateType(fieldValue, typeDef, resolver, false); err != nil {
-					return fmt.Errorf("field '%s' in struct %s validation failed: %w", fieldName, structName, err)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// ValidateType validates a value against a type definition
-func ValidateType(
-	value interface{},
-	typeDef map[string]interface{},
-	allStructs StructMap,
-	allEnums EnumMap,
-	isOptional bool,
-) error {
-	return validateType(value, typeDef, newTypeResolver(allStructs, allEnums), isOptional)
-}
-
-// validateType is the indexed implementation. The resolver is built once per
-// contract (or once per standalone ValidateType call) and reused for nested
-// array/map/struct validation, so user-defined lookups stay O(1) per field.
-func validateType(
-	value interface{},
-	typeDef map[string]interface{},
-	resolver *typeResolver,
-	isOptional bool,
-) error {
-	// Handle optional types
-	if value == nil {
-		if isOptional {
-			return nil
-		}
-		return fmt.Errorf("value cannot be nil for non-optional type")
-	}
-
-	// Built-in types
-	if builtIn, ok := typeDef["builtIn"].(string); ok {
-		switch builtIn {
-		case "string":
-			return ValidateString(value)
-		case "int":
-			return ValidateInt(value)
-		case "float":
-			return ValidateFloat(value)
-		case "bool":
-			return ValidateBool(value)
-		default:
-			return fmt.Errorf("unknown built-in type: %s", builtIn)
-		}
-	}
-
-	// Array types
-	if arrayObj, ok := typeDef["array"]; ok {
-		elementType, ok := arrayObj.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("invalid array type definition")
-		}
-		elementValidator := func(v interface{}) error {
-			return validateType(v, elementType, resolver, false)
-		}
-		return ValidateArray(value, elementValidator)
-	}
-
-	// Map types
-	if mapValueObj, ok := typeDef["mapValue"]; ok {
-		valueType, ok := mapValueObj.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("invalid map type definition")
-		}
-		valueValidator := func(v interface{}) error {
-			return validateType(v, valueType, resolver, false)
-		}
-		return ValidateMap(value, valueValidator)
-	}
-
-	// User-defined types
-	if userDefined, ok := typeDef["userDefined"].(string); ok {
-		// Check if it's a struct
-		structDef := resolver.structs.resolve(userDefined)
-		if structDef != nil {
-			return validateStruct(value, userDefined, structDef, resolver)
-		}
-
-		// Check if it's an enum
-		enumDef := resolver.enums.resolve(userDefined)
-		if enumDef != nil {
-			// Extract allowed values from enum definition
-			valuesObj, ok := enumDef["values"]
-			if !ok {
-				return fmt.Errorf("invalid enum definition for %s: missing values", userDefined)
-			}
-
-			valuesList, ok := valuesObj.([]interface{})
-			if !ok {
-				return fmt.Errorf("invalid enum definition for %s: values is not a list", userDefined)
-			}
-
-			allowedValues := make([]string, 0, len(valuesList))
-			for _, valObj := range valuesList {
-				if valMap, ok := valObj.(map[string]interface{}); ok {
-					if name, ok := valMap["name"].(string); ok {
-						allowedValues = append(allowedValues, name)
-					}
-				}
-			}
-
-			return ValidateEnum(value, userDefined, allowedValues)
-		}
-
-		return fmt.Errorf("unknown user-defined type: %s", userDefined)
-	}
-
-	return fmt.Errorf("invalid type definition: %v", typeDef)
 }

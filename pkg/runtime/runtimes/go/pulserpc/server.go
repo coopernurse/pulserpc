@@ -139,6 +139,9 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 	// Validate request using positional params
 	if s.validateRequests && s.contract != nil {
 		if err := s.contract.ValidateRequest(ifaceName, funcName, positionalParams); err != nil {
+			if rpcErr, ok := err.(*RPCError); ok {
+				return s.respondError(isNotification, reqID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
+			}
 			return s.respondError(isNotification, reqID, -32602, "Invalid params", err.Error())
 		}
 	}

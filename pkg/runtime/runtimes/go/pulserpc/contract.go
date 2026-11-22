@@ -228,14 +228,14 @@ func (c *Contract) ValidateRequest(ifaceName string, funcName string, params []i
 			ifaceName, funcName, len(paramDefs), len(params))
 	}
 
-	// Validate each parameter
+	// Validate each parameter and accumulate errors
+	var allErrors []ValidationError
 	for i, paramValue := range params {
 		paramDef, ok := paramDefs[i].(map[string]interface{})
 		if !ok {
 			continue
 		}
 
-		paramName, _ := paramDef["name"].(string)
 		paramType, ok := paramDef["type"].(map[string]interface{})
 		if !ok {
 			continue
@@ -246,10 +246,13 @@ func (c *Contract) ValidateRequest(ifaceName string, funcName string, params []i
 			isOptional = opt
 		}
 
-		if err := validateType(paramValue, paramType, c.typeResolver(), isOptional); err != nil {
-			return fmt.Errorf("function '%s.%s' invalid param '%s': %w",
-				ifaceName, funcName, paramName, err)
-		}
+		errs := validateTypeE(paramValue, paramType, c.typeResolver(), isOptional, fmt.Sprintf("param[%d]", i))
+		allErrors = append(allErrors, errs...)
+	}
+
+	if len(allErrors) > 0 {
+		vr := NewValidationResult(allErrors)
+		return NewRPCErrorWithData(-32602, fmt.Sprintf("function '%s.%s' invalid params", ifaceName, funcName), vr.ToMap())
 	}
 
 	return nil
@@ -300,9 +303,10 @@ func (c *Contract) ValidateResponse(ifaceName string, funcName string, result in
 		isOptional = opt
 	}
 
-	if err := validateType(result, returnType, c.typeResolver(), isOptional); err != nil {
-		return fmt.Errorf("function '%s.%s' invalid response: %w",
-			ifaceName, funcName, err)
+	errs := validateTypeE(result, returnType, c.typeResolver(), isOptional, "")
+	if len(errs) > 0 {
+		vr := NewValidationResult(errs)
+		return NewRPCErrorWithData(-32603, fmt.Sprintf("function '%s.%s' invalid response", ifaceName, funcName), vr.ToMap())
 	}
 
 	return nil
