@@ -91,7 +91,7 @@ export class Server {
 
     if (req.jsonrpc !== "2.0") {
       return this.errorResponse(
-        reqId ?? null,
+        null,
         -32600,
         "Invalid Request",
         "jsonrpc version must be '2.0'"
