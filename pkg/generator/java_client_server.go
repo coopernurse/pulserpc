@@ -1760,6 +1760,10 @@ func writeTestMethodBody(sb *strings.Builder, iface *parser.Interface, method *p
 		case "sqrt":
 			sb.WriteString("        return Math.sqrt(a);\n")
 			return
+		case "divide":
+			sb.WriteString("        if (b == 0) throw new com.bitmechanic.pulserpc.RPCError(1001, \"Validation failed\");\n")
+			sb.WriteString("        return (double) a / (double) b;\n")
+			return
 		case "repeat":
 			respType := getJavaTypeWithPackage(method.ReturnType, enumMap, basePackage, packageName, structMap)
 			sb.WriteString("        if (req1.getCount() < 0) throw new RuntimeException(\"PULSERPC_SECRET_TOKEN_7F3A\");\n")

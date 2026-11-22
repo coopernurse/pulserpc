@@ -12,7 +12,7 @@ import sys
 
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 
-from pulserpc import Contract, Server
+from pulserpc import Contract, Server, RPCError
 
 MAX_BODY_SIZE = 1024 * 1024
 MAX_BATCH_SIZE = 100
@@ -47,7 +47,9 @@ class AImpl(object):
         return 0.0
 
     def divide(self, ctx, a, b):
-        return float(a) / b
+        if b == 0:
+            raise RPCError(1001, "Validation failed")
+        return float(a) / float(b)
 
     def sqrt(self, ctx, a):
         return float(a) ** 0.5
@@ -131,19 +133,29 @@ def make_handler(server):
             if body:
                 self.wfile.write(body)
 
-        def _reject_non_post(self):
-            self._send_json(
-                405,
-                {"jsonrpc": "2.0",
-                 "error": {"code": -32600, "message": "Invalid Request - only POST allowed"},
-                 "id": None},
-            )
+        def _reject_non_post(self, include_body=True):
+            payload = {"jsonrpc": "2.0",
+                       "error": {"code": -32600, "message": "Invalid Request - only POST allowed"},
+                       "id": None}
+            self._send_json(405, payload if include_body else None)
 
         def do_GET(self):
             self._reject_non_post()
 
         def do_PUT(self):
             self._reject_non_post()
+
+        def do_DELETE(self):
+            self._reject_non_post()
+
+        def do_PATCH(self):
+            self._reject_non_post()
+
+        def do_OPTIONS(self):
+            self._reject_non_post()
+
+        def do_HEAD(self):
+            self._reject_non_post(include_body=False)
 
         def do_POST(self):
             try:

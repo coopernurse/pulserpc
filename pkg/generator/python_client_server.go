@@ -1184,6 +1184,11 @@ func writeTestMethodImpl(sb *strings.Builder, iface *parser.Interface, method *p
 		sb.WriteString("            return result\n")
 		sb.WriteString("        else:\n")
 		sb.WriteString("            return 0.0\n\n")
+	case "divide":
+		sb.WriteString("        # divide a by b; raise the declared ValidationError when b is zero\n")
+		sb.WriteString("        if b == 0:\n")
+		sb.WriteString("            raise RPCError(1001, 'Validation failed')\n")
+		sb.WriteString("        return float(a) / float(b)\n\n")
 	case "repeat":
 		sb.WriteString("        # Echos the req1.to_repeat string as a list, optionally forcing to_repeat to upper case\n")
 		sb.WriteString("        # RepeatResponse.items should be a list of strings whose length is equal to req1.count\n")
