@@ -14,7 +14,9 @@ import (
 // the result stays inside sessionDir (S1/D14). Absolute paths, Windows volume
 // paths, and any cleaned path containing a ".." segment are rejected. Backslashes
 // are treated as separators on every OS so the same input cannot escape on
-// Windows while looking harmless on Unix.
+// Windows while looking harmless on Unix. The resolved target is then checked
+// again after following symlinks, so a lexically safe name cannot point at a
+// file outside the session directory (S1-b).
 func resolveSessionFile(sessionDir, filename string) (string, error) {
 	if strings.TrimSpace(filename) == "" {
 		return "", fmt.Errorf("file path is required")
@@ -37,6 +39,27 @@ func resolveSessionFile(sessionDir, filename string) (string, error) {
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("file path escapes session directory: %s", filename)
+	}
+
+	// A lexically safe name can still escape through a symlink. Resolve the
+	// target and re-check containment against the real session directory so a
+	// link inside the session dir cannot read a file outside it (S1-b).
+	resolvedPath, err := filepath.EvalSymlinks(fullPath)
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("invalid file path %s: %w", filename, err)
+	}
+	if err == nil {
+		resolvedDir, dirErr := filepath.EvalSymlinks(sessionDir)
+		if dirErr != nil {
+			return "", fmt.Errorf("invalid session directory: %w", dirErr)
+		}
+		resolvedRel, relErr := filepath.Rel(resolvedDir, resolvedPath)
+		if relErr != nil {
+			return "", fmt.Errorf("invalid file path %s: %w", filename, relErr)
+		}
+		if resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) || filepath.IsAbs(resolvedRel) {
+			return "", fmt.Errorf("file path escapes session directory via symlink: %s", filename)
+		}
 	}
 
 	return fullPath, nil

@@ -7,15 +7,11 @@ import (
 	"time"
 )
 
-// TestGetFileSymlinkEscape documents the current behavior of session-relative
-// file reads (S1-b residual): resolveSessionFile validates the lexically cleaned
-// path but does not resolve symlinks before os.ReadFile. A symlink that lives
-// inside the session directory yet points at a file outside it is therefore
-// followed on read, leaking the outside file's content.
-//
-// The symlink is created after session generation so it is not part of the
-// generated file set; only GetFile's read path is under test here.
-func TestGetFileSymlinkEscape(t *testing.T) {
+// TestGetFileRejectsSymlinkEscape verifies that a session-relative name which
+// is lexically inside the session directory but resolves through a symlink to
+// a file outside it is rejected (S1-b). The symlink is created after session
+// generation so only GetFile's read path is under test.
+func TestGetFileRejectsSymlinkEscape(t *testing.T) {
 	baseDir, err := os.MkdirTemp("", "pulserpc-test-symlink-")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
@@ -51,14 +47,14 @@ func TestGetFileSymlinkEscape(t *testing.T) {
 	}
 	defer os.Remove(linkPath)
 
-	// The name passed to GetFile is session-relative and passes the lexical
-	// containment check in resolveSessionFile unchanged.
+	// The name is session-relative and passes the lexical containment check;
+	// the symlink re-check in resolveSessionFile must reject the read.
 	data, err := mgr.GetFile(session.ID, "escape.txt")
-	if err != nil {
-		t.Fatalf("GetFile(symlink) returned error: %v", err)
+	if err == nil {
+		t.Fatalf("GetFile(symlink) must be rejected, got content %q", data)
 	}
-	if string(data) != secret {
-		t.Fatalf("documented S1-b behavior: expected outside content %q, got %q", secret, data)
+	if len(data) != 0 {
+		t.Fatalf("rejected read must return no content, got %q", data)
 	}
-	t.Logf("S1-b ESCAPE DEMONSTRATED: GetFile followed a session-dir symlink and returned %q from outside the session dir", data)
+	t.Logf("GetFile(symlink) rejected as expected: %v", err)
 }
