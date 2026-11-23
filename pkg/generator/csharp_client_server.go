@@ -233,29 +233,29 @@ func generateNamespaceCs(namespace string, allNamespaces []string, types *Namesp
 	prefix := paths.GetNamespaceImportPrefix()
 	for _, ns := range allNamespaces {
 		if ns != namespace {
-			nsImport := ns
+			nsPascal := NamespaceToPascalCase(ns)
+			nsImport := nsPascal
 			if prefix != "" {
-				nsImport = prefix + ns
+				nsImport = prefix + nsPascal
 			}
 			sb.WriteString(fmt.Sprintf("using %s;\n", nsImport))
 		}
 	}
 	sb.WriteString("\n")
 
-	qualifiedNS := namespace
+	// Types.cs/Client.cs/Server.cs declare the PascalCase namespace; keep the
+	// legacy per-namespace file consistent or the same type name resolves to
+	// two distinct C# types (case-sensitive) and generated test files break.
+	qualifiedNS := NamespaceToPascalCase(namespace)
 	if prefix := paths.GetNamespaceImportPrefix(); prefix != "" {
-		qualifiedNS = prefix + namespace
+		qualifiedNS = prefix + qualifiedNS
 	}
 	sb.WriteString(fmt.Sprintf("namespace %s\n", qualifiedNS))
 	sb.WriteString("{\n")
 
-	// Generate enum types first (they may be referenced by structs)
-	generateEnumTypesCs(&sb, types.Enums, "    ")
-	sb.WriteString("\n")
-
-	// Generate struct classes
-	generateStructClassesCs(&sb, types.Structs, structMap, enumMap, namespace, namespaceMap, "    ")
-	sb.WriteString("\n")
+	// Struct and enum definitions live in Types.cs. Emitting them here too
+	// would duplicate every type in this namespace (the two files used to
+	// differ only by namespace casing, which masked the duplication).
 
 	// Generate IDL-specific type definitions for this namespace
 	sb.WriteString(fmt.Sprintf("    // IDL-specific type definitions for namespace: %s\n", namespace))
@@ -652,7 +652,7 @@ func generateContractCs(idl *parser.IDL, structMap map[string]*parser.Struct, en
 
 	prefix := paths.GetNamespaceImportPrefix()
 	for _, ns := range namespaces {
-		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, ns))
+		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, NamespaceToPascalCase(ns)))
 	}
 	sb.WriteString("\n")
 
@@ -668,8 +668,9 @@ func generateContractCs(idl *parser.IDL, structMap map[string]*parser.Struct, en
 	sb.WriteString("        static IdlData()\n")
 	sb.WriteString("        {\n")
 	for _, ns := range namespaces {
-		sb.WriteString(fmt.Sprintf("            foreach (var kvp in %s.%sIdl.ALL_STRUCTS) ALL_STRUCTS[kvp.Key] = kvp.Value;\n", ns, ns))
-		sb.WriteString(fmt.Sprintf("            foreach (var kvp in %s.%sIdl.ALL_ENUMS) ALL_ENUMS[kvp.Key] = kvp.Value;\n", ns, ns))
+		nsPascal := NamespaceToPascalCase(ns)
+		sb.WriteString(fmt.Sprintf("            foreach (var kvp in %s.%sIdl.ALL_STRUCTS) ALL_STRUCTS[kvp.Key] = kvp.Value;\n", nsPascal, ns))
+		sb.WriteString(fmt.Sprintf("            foreach (var kvp in %s.%sIdl.ALL_ENUMS) ALL_ENUMS[kvp.Key] = kvp.Value;\n", nsPascal, ns))
 	}
 	sb.WriteString("        }\n")
 	sb.WriteString("    }\n\n")
@@ -717,8 +718,8 @@ func generateServerCs(idl *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 	prefix := paths.GetNamespaceImportPrefix()
 	for _, ns := range namespaces {
 		// Namespace files define static classes like "checkoutIdl" in the "PulseRPC" namespace
-		sb.WriteString(fmt.Sprintf("using static %s%s.%sIdl;\n", prefix, ns, ns))
-		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, ns))
+		sb.WriteString(fmt.Sprintf("using static %s%s.%sIdl;\n", prefix, NamespaceToPascalCase(ns), ns))
+		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, NamespaceToPascalCase(ns)))
 	}
 	sb.WriteString("\n")
 
@@ -1639,8 +1640,8 @@ func generateClientCs(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	prefix := paths.GetNamespaceImportPrefix()
 	for _, ns := range namespaces {
 		// Namespace files define static classes like "checkoutIdl" in the "PulseRPC" namespace
-		sb.WriteString(fmt.Sprintf("using static %s%s.%sIdl;\n", prefix, ns, ns))
-		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, ns))
+		sb.WriteString(fmt.Sprintf("using static %s%s.%sIdl;\n", prefix, NamespaceToPascalCase(ns), ns))
+		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, NamespaceToPascalCase(ns)))
 	}
 	sb.WriteString("\n")
 
@@ -1963,7 +1964,7 @@ func generateTestServerCs(idl *parser.IDL, allNamespaces []string, structMap map
 
 	prefix := paths.GetNamespaceImportPrefix()
 	for _, ns := range allNamespaces {
-		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, ns))
+		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, NamespaceToPascalCase(ns)))
 	}
 	sb.WriteString("\n")
 
@@ -2009,7 +2010,7 @@ func generateTestClientCs(idl *parser.IDL, allNamespaces []string, structMap map
 
 	prefix := paths.GetNamespaceImportPrefix()
 	for _, ns := range allNamespaces {
-		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, ns))
+		sb.WriteString(fmt.Sprintf("using %s%s;\n", prefix, NamespaceToPascalCase(ns)))
 	}
 	sb.WriteString("\n")
 	sb.WriteString("public class Program\n")
@@ -2288,9 +2289,38 @@ func writeMethodImplementationCs(sb *strings.Builder, iface *parser.Interface, m
 	}
 }
 
+// testTypeNameCs emits the C# identifier for an IDL type in generated test
+// files. Those files live in the global namespace and import every generated
+// namespace with `using`, so the base name alone resolves correctly. Emitting
+// the raw IDL name (e.g. "common.Thing") produced lowercase namespace
+// references that do not exist in generated C#.
+func testTypeNameCs(typeName string, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) string {
+	return GetBaseName(typeName)
+}
+
+func findTestStructCs(typeName string, structMap map[string]*parser.Struct) (*parser.Struct, bool) {
+	if s, ok := structMap[typeName]; ok {
+		return s, true
+	}
+	if key, ok := resolveTypeKey(typeName, sortedMapKeys(structMap)); ok {
+		return structMap[key], true
+	}
+	return nil, false
+}
+
+func findTestEnumCs(typeName string, enumMap map[string]*parser.Enum) (*parser.Enum, bool) {
+	if e, ok := enumMap[typeName]; ok {
+		return e, true
+	}
+	if key, ok := resolveTypeKey(typeName, sortedMapKeys(enumMap)); ok {
+		return enumMap[key], true
+	}
+	return nil, false
+}
+
 // writeMinimalStructInstanceCs generates a minimal valid struct instance with all required fields
 func writeMinimalStructInstanceCs(sb *strings.Builder, typeName string, structDef *parser.Struct, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
-	fmt.Fprintf(sb, "        return new %s\n", typeName)
+	fmt.Fprintf(sb, "        return new %s\n", testTypeNameCs(typeName, structMap, enumMap))
 	sb.WriteString("        {\n")
 
 	for _, field := range structDef.Fields {
@@ -2323,16 +2353,16 @@ func writeMinimalStructInstanceCs(sb *strings.Builder, typeName string, structDe
 		} else if field.Type.IsUserDefined() {
 			userType := field.Type.UserDefined
 			// Check if it's an enum
-			if enumDef, ok := enumMap[userType]; ok {
+			if enumDef, ok := findTestEnumCs(userType, enumMap); ok {
 				// Use first enum value
 				if len(enumDef.Values) > 0 {
-					fmt.Fprintf(sb, "            %s = %s.%s,\n", csFieldName, userType, enumDef.Values[0].Name)
+					fmt.Fprintf(sb, "            %s = %s.%s,\n", csFieldName, testTypeNameCs(userType, structMap, enumMap), enumDef.Values[0].Name)
 				} else {
 					fmt.Fprintf(sb, "            %s = default,\n", csFieldName)
 				}
-			} else if nestedStruct, ok := structMap[userType]; ok {
+			} else if nestedStruct, ok := findTestStructCs(userType, structMap); ok {
 				// Recursively generate nested struct (only go one level deep for simplicity)
-				fmt.Fprintf(sb, "            %s = new %s\n", csFieldName, userType)
+				fmt.Fprintf(sb, "            %s = new %s\n", csFieldName, testTypeNameCs(userType, structMap, enumMap))
 				sb.WriteString("            {\n")
 				for _, nestedField := range nestedStruct.Fields {
 					if nestedField.Optional {
@@ -2424,28 +2454,17 @@ func writeTestParamValueCs(sb *strings.Builder, param *parser.Parameter, structM
 	} else if param.Type.IsUserDefined() {
 		// Check if it's an enum or struct
 		typeName := param.Type.UserDefined
-		// First try with qualified name (for imported types like inc.MathOp)
-		// Try to find enum or struct
-		unqualifiedName := typeName
-		if strings.Contains(typeName, ".") {
-			parts := strings.Split(typeName, ".")
-			unqualifiedName = parts[len(parts)-1]
-		}
-
-		enumDef, isEnum := enumMap[unqualifiedName]
-		if !isEnum {
-			enumDef, isEnum = enumMap[typeName]
-		}
+		enumDef, isEnum := findTestEnumCs(typeName, enumMap)
 
 		if isEnum {
 			// It's an enum - use the first enum value (enum name is the type name)
 			if len(enumDef.Values) > 0 {
-				enumTypeName := getEnumTypeName(unqualifiedName, enumMap)
+				enumTypeName := testTypeNameCs(typeName, structMap, enumMap)
 				fmt.Fprintf(sb, "%s.%s", enumTypeName, enumDef.Values[0].Name)
 			} else {
 				sb.WriteString("default")
 			}
-		} else if structDef, ok := structMap[unqualifiedName]; ok {
+		} else if structDef, ok := findTestStructCs(typeName, structMap); ok {
 			// It's a struct - create instance of generated class
 			writeStructInstanceCs(sb, structDef, structMap, enumMap)
 		} else {
@@ -2459,7 +2478,7 @@ func writeTestParamValueCs(sb *strings.Builder, param *parser.Parameter, structM
 
 // writeStructInstanceCs generates C# code to create an instance of a generated struct class
 func writeStructInstanceCs(sb *strings.Builder, structDef *parser.Struct, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
-	className := getStructClassName(structDef.Name, structMap)
+	className := testTypeNameCs(structDef.Name, structMap, enumMap)
 	fmt.Fprintf(sb, "new %s\n", className)
 	sb.WriteString("        {\n")
 	fieldCount := 0
@@ -2510,28 +2529,17 @@ func writeTestFieldValueCs(sb *strings.Builder, fieldType *parser.Type, structMa
 		sb.WriteString(" }")
 	} else if fieldType.IsUserDefined() {
 		typeName := fieldType.UserDefined
-		// First try with qualified name (for imported types like inc.MathOp)
-		// Try to find enum or struct
-		unqualifiedName := typeName
-		if strings.Contains(typeName, ".") {
-			parts := strings.Split(typeName, ".")
-			unqualifiedName = parts[len(parts)-1]
-		}
-
-		enumDef, isEnum := enumMap[unqualifiedName]
-		if !isEnum {
-			enumDef, isEnum = enumMap[typeName]
-		}
+		enumDef, isEnum := findTestEnumCs(typeName, enumMap)
 
 		if isEnum {
 			// It's an enum - use the first enum value (enum name is the type name)
 			if len(enumDef.Values) > 0 {
-				enumTypeName := getEnumTypeName(unqualifiedName, enumMap)
+				enumTypeName := testTypeNameCs(typeName, structMap, enumMap)
 				fmt.Fprintf(sb, "%s.%s", enumTypeName, enumDef.Values[0].Name)
 			} else {
 				sb.WriteString("default")
 			}
-		} else if structDef, ok := structMap[unqualifiedName]; ok {
+		} else if structDef, ok := findTestStructCs(typeName, structMap); ok {
 			// It's a struct - create instance of generated class
 			writeStructInstanceCs(sb, structDef, structMap, enumMap)
 		} else {
