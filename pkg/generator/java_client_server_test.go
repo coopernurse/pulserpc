@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/coopernurse/pulserpc/pkg/parser"
@@ -910,4 +911,82 @@ func TestJavaMultiFileProjectStructure(t *testing.T) {
 
 func TestJavaMultiFileWithGradleLayout(t *testing.T) {
 	t.Skip("Gradle layout requires different -dir handling not yet implemented")
+}
+
+// TestJavaVerifyOnBootstrapWiresVerification guards against the flag being a
+// write-only field: the generated client must actually read verifyOnBootstrap
+// in a bootstrap path and run the existing verifyCompatibility() logic.
+func TestJavaVerifyOnBootstrapWiresVerification(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "pulserpc-java-bootstrap-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	idl := &parser.IDL{
+		Interfaces: []*parser.Interface{
+			{Name: "A", Namespace: ""},
+		},
+	}
+
+	p := NewJavaClientServer()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("dir", "", "output dir")
+	p.RegisterFlags(fs)
+	if err := fs.Set("dir", tmpDir); err != nil {
+		t.Fatalf("failed to set dir flag: %v", err)
+	}
+	if err := fs.Set("package", "com.example"); err != nil {
+		t.Fatalf("failed to set package flag: %v", err)
+	}
+	if err := p.Generate(idl, fs); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	clientPath := filepath.Join(tmpDir, "src", "main", "java", "com", "example", "Client.java")
+	content, err := os.ReadFile(clientPath)
+	if err != nil {
+		t.Fatalf("failed to read generated Client.java: %v", err)
+	}
+	src := string(content)
+
+	// The flag must be read by a synchronous bootstrap path that invokes the
+	// existing verification logic. Declaring the field or the fluent setter
+	// alone is not enough.
+	bootstrapMethod := "private void bootstrap() {\n" +
+		"        if (this.verifyOnBootstrap) {\n" +
+		"            verifyCompatibility();\n" +
+		"        }\n" +
+		"    }"
+	if !strings.Contains(src, bootstrapMethod) {
+		t.Errorf("generated Client.java must read verifyOnBootstrap and call verifyCompatibility() from bootstrap(); got:\n%s", src)
+	}
+
+	// Both construction and the fluent option enter the bootstrap path.
+	if n := strings.Count(src, "this.bootstrap();"); n < 2 {
+		t.Errorf("generated Client.java should call bootstrap() from construction and the setter, found %d call(s)", n)
+	}
+
+	// Enabled path: the fluent setter flips the flag before bootstrapping so
+	// the guard above runs verification synchronously.
+	setter := "public Client verifyOnBootstrap() {\n" +
+		"        this.verifyOnBootstrap = true;\n" +
+		"        this.bootstrap();\n" +
+		"        return this;\n" +
+		"    }"
+	if !strings.Contains(src, setter) {
+		t.Errorf("verifyOnBootstrap() setter must enable the flag and trigger bootstrap(); got:\n%s", src)
+	}
+
+	// Disabled path: the Java boolean field defaults to false, so the flag is
+	// off unless explicitly enabled and the guard skips verification.
+	if !strings.Contains(src, "private boolean verifyOnBootstrap;") {
+		t.Errorf("generated Client.java must keep the verifyOnBootstrap field (default false)")
+	}
+
+	// verifyCompatibility() must still perform the existing server-IDL fetch
+	// and diff; the bootstrap wiring must not replace that logic.
+	if !strings.Contains(src, "call(\"pulserpc-idl\", new HashMap<>())") {
+		t.Errorf("verifyCompatibility() must still fetch the server IDL via pulserpc-idl")
+	}
 }
