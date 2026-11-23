@@ -1431,10 +1431,14 @@ func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.
 		// name (C1/D16).
 		for _, key := range sortedMapKeys(structMap) {
 			if strings.HasSuffix(key, "."+typeName) {
+				// types.ts declares every struct with its base name, even when
+				// the IDL name is qualified ("common.Shared"). Keep the wire
+				// name out of the TS identifier here as well (the enum loop
+				// below already does this).
 				if useTypesPrefix {
-					return "types." + key
+					return "types." + GetBaseName(key)
 				}
-				return key
+				return GetBaseName(key)
 			}
 		}
 		for _, key := range sortedMapKeys(enumMap) {
@@ -1466,6 +1470,18 @@ func getTypeScriptTypeForNamespace(t *parser.Type, structMap map[string]*parser.
 // The -package flag no longer affects class names. It now only serves as the base module
 // path for generated imports (e.g., @myapp/lib/rpc). The previous class-name-prefix behavior
 // has been removed as no existing test or quickstart used it with a non-empty value.
+
+// tsInterfaceIdent returns a valid TypeScript identifier for an interface.
+//
+// Imported interfaces carry a qualified IDL name (for example
+// "common.CommonOps"), which is not a valid TS identifier. Every identifier
+// site — abstract/server classes, client classes, imports, implementation
+// classes and constructor calls — must use the base name instead. The
+// qualified name is deliberately retained for JSON-RPC method strings, IDL
+// metadata, and registration/validation keys.
+func tsInterfaceIdent(iface *parser.Interface) string {
+	return GetBaseName(iface.Name)
+}
 
 // generateServerTs generates the server.ts file with abstract interface classes only
 func generateServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, _ map[string]*parser.Interface, _ string, _ map[string]*NamespaceTypes, moduleStyle string) string {
@@ -1507,7 +1523,7 @@ func writeInterfaceStubTs(sb *strings.Builder, iface *parser.Interface, structMa
 			fmt.Fprintf(sb, "// %s\n", line)
 		}
 	}
-	fmt.Fprintf(sb, "export abstract class %s {\n", iface.Name)
+	fmt.Fprintf(sb, "export abstract class %s {\n", tsInterfaceIdent(iface))
 
 	methodNames := make([]string, 0, len(iface.Methods))
 	for _, method := range iface.Methods {
@@ -1559,7 +1575,7 @@ func writeInterfaceStubTsForNamespace(sb *strings.Builder, iface *parser.Interfa
 			fmt.Fprintf(sb, "// %s\n", line)
 		}
 	}
-	fmt.Fprintf(sb, "export abstract class %s {\n", iface.Name)
+	fmt.Fprintf(sb, "export abstract class %s {\n", tsInterfaceIdent(iface))
 
 	methodNames := make([]string, 0, len(iface.Methods))
 	for _, method := range iface.Methods {
@@ -1648,9 +1664,9 @@ func getTypeScriptType(t *parser.Type, structMap map[string]*parser.Struct, enum
 		for _, key := range sortedMapKeys(structMap) {
 			if strings.HasSuffix(key, "."+typeName) {
 				if useTypesPrefix {
-					return "types." + key
+					return "types." + GetBaseName(key)
 				}
-				return key
+				return GetBaseName(key)
 			}
 		}
 		for _, key := range sortedMapKeys(enumMap) {
@@ -2075,7 +2091,7 @@ func writeInterfaceClientTs(sb *strings.Builder, iface *parser.Interface, struct
 		}
 	}
 
-	clientName := iface.Name + "Client"
+	clientName := tsInterfaceIdent(iface) + "Client"
 	fmt.Fprintf(sb, "export class %s {\n", clientName)
 	sb.WriteString("  private _nextId = 0;\n")
 	sb.WriteString("  constructor(private transport: Transport) {}\n\n")
@@ -2135,16 +2151,16 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 		if ns != "" {
 			if inNsSubdir && ns == entryPointNs {
 				// Interface is in the same namespace as where we're placing the test file
-				fmt.Fprintf(&sb, "import { %s } from '%s';\n", iface.Name, tsImportPath(moduleStyle, "./server"))
+				fmt.Fprintf(&sb, "import { %s } from '%s';\n", tsInterfaceIdent(iface), tsImportPath(moduleStyle, "./server"))
 			} else if inNsSubdir {
 				// Interface is in a different namespace - go up and into that namespace
-				fmt.Fprintf(&sb, "import { %s } from '%s';\n", iface.Name, tsImportPath(moduleStyle, "../"+ns+"/server"))
+				fmt.Fprintf(&sb, "import { %s } from '%s';\n", tsInterfaceIdent(iface), tsImportPath(moduleStyle, "../"+ns+"/server"))
 			} else {
 				// File is at root - standard path
-				fmt.Fprintf(&sb, "import { %s } from '%s';\n", iface.Name, tsImportPath(moduleStyle, "./"+ns+"/server"))
+				fmt.Fprintf(&sb, "import { %s } from '%s';\n", tsInterfaceIdent(iface), tsImportPath(moduleStyle, "./"+ns+"/server"))
 			}
 		} else {
-			fmt.Fprintf(&sb, "import { %s } from '%s';\n", iface.Name, tsImportPath(moduleStyle, "./server"))
+			fmt.Fprintf(&sb, "import { %s } from '%s';\n", tsInterfaceIdent(iface), tsImportPath(moduleStyle, "./server"))
 		}
 	}
 	sb.WriteString("\n")
@@ -2161,7 +2177,9 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("// Create Server instance\n")
 	sb.WriteString("const rpcServer = new Server({ contract, validateRequests: true, validateResponses: true });\n")
 	for _, iface := range idl.Interfaces {
-		fmt.Fprintf(&sb, "rpcServer.addHandler(\"%s\", new %sImpl());\n", iface.Name, iface.Name)
+		// The handler key is the qualified IDL name (the runtime Contract is
+		// keyed by it); the constructed class must use a valid TS identifier.
+		fmt.Fprintf(&sb, "rpcServer.addHandler(\"%s\", new %sImpl());\n", iface.Name, tsInterfaceIdent(iface))
 	}
 
 	// Generate HTTP server handler
@@ -2296,7 +2314,7 @@ func generateTestServerTs(idl *parser.IDL, structMap map[string]*parser.Struct, 
 
 // writeTestInterfaceImplTs generates a test implementation class for an interface
 func writeTestInterfaceImplTs(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
-	fmt.Fprintf(sb, "class %sImpl extends %s {\n", iface.Name, iface.Name)
+	fmt.Fprintf(sb, "class %sImpl extends %s {\n", tsInterfaceIdent(iface), tsInterfaceIdent(iface))
 	fmt.Fprintf(sb, "  // Test implementation of %s interface\n\n", iface.Name)
 
 	// Generate method implementations
@@ -2634,11 +2652,14 @@ func writeTestClientCallTs(sb *strings.Builder, iface *parser.Interface, method 
 		params = append(params, paramValue)
 	}
 
-	// Generate method call using dynamic proxy pattern: client.InterfaceName.methodName()
+	// Generate the dynamic proxy call. The Client proxy is keyed by the IDL
+	// interface name, which may be namespace-qualified ("common.CommonOps"),
+	// so use bracket notation: a dotted chain would both mis-resolve the
+	// proxy property and interpolate a qualified name into identifiers.
 	if len(params) > 0 {
-		fmt.Fprintf(sb, "    const result = await %s.%s.%s(%s);\n", clientVar, iface.Name, method.Name, strings.Join(params, ", "))
+		fmt.Fprintf(sb, "    const result = await %s[\"%s\"].%s(%s);\n", clientVar, iface.Name, method.Name, strings.Join(params, ", "))
 	} else {
-		fmt.Fprintf(sb, "    const result = await %s.%s.%s();\n", clientVar, iface.Name, method.Name)
+		fmt.Fprintf(sb, "    const result = await %s[\"%s\"].%s();\n", clientVar, iface.Name, method.Name)
 	}
 
 	// Generate assertions based on method
@@ -2649,7 +2670,7 @@ func writeTestClientCallTs(sb *strings.Builder, iface *parser.Interface, method 
 		sb.WriteString("      throw new Error(`Expected 'test', got ${result}`);\n")
 		sb.WriteString("    }\n")
 		sb.WriteString("    // Test null return\n")
-		fmt.Fprintf(sb, "    const resultNull = await %s.%s.echo('return-null');\n", clientVar, iface.Name)
+		fmt.Fprintf(sb, "    const resultNull = await %s[\"%s\"].echo('return-null');\n", clientVar, iface.Name)
 		sb.WriteString("    if (resultNull !== null) {\n")
 		sb.WriteString("      throw new Error(`Expected null, got ${resultNull}`);\n")
 		sb.WriteString("    }\n")
