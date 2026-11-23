@@ -116,28 +116,46 @@ func GetStructFields(structName string, allStructs StructMap) []map[string]inter
 	return getStructFields(structName, newDefinitionIndex(allStructs))
 }
 
-// getStructFields is the indexed implementation shared by GetStructFields and
-// contract-time validation. It avoids rebuilding the index for every `extends`
-// hop or every field that is validated.
+// getStructFields is the indexed implementation used by the public helper.
+// Contract-time validation calls typeResolver.getStructFields instead so the
+// resolved field list is reused across requests.
 func getStructFields(structName string, structs *definitionIndex[StructDef]) []map[string]interface{} {
+	return resolveStructFields(structName, structs, nil)
+}
+
+// resolveStructFields walks the `extends` chain and returns parent fields
+// followed by child fields, with child definitions overriding parent fields of
+// the same name. cache (when non-nil) memoizes every struct in the chain. The
+// name index makes overrides O(1) instead of rescanning the accumulated list.
+func resolveStructFields(structName string, structs *definitionIndex[StructDef], cache map[string][]map[string]interface{}) []map[string]interface{} {
+	if fields, ok := cache[structName]; ok {
+		return fields
+	}
+
 	structDef := structs.resolve(structName)
 	if structDef == nil {
-		return []map[string]interface{}{}
+		fields := []map[string]interface{}{}
+		if cache != nil {
+			cache[structName] = fields
+		}
+		return fields
 	}
 
 	var fields []map[string]interface{}
 
 	// Get parent fields first
 	if extends, ok := structDef["extends"].(string); ok && extends != "" {
-		parentFields := getStructFields(extends, structs)
-		fields = append(fields, parentFields...)
+		fields = append(fields, resolveStructFields(extends, structs, cache)...)
 	}
 
-	// Track field names to handle overrides
-	fieldNames := make(map[string]bool)
-	for _, f := range fields {
+	// Track the first position of each field name so overrides replace the
+	// same field the original linear scan would have found.
+	fieldIndex := make(map[string]int, len(fields))
+	for i, f := range fields {
 		if name, ok := f["name"].(string); ok {
-			fieldNames[name] = true
+			if _, exists := fieldIndex[name]; !exists {
+				fieldIndex[name] = i
+			}
 		}
 	}
 
@@ -147,17 +165,11 @@ func getStructFields(structName string, structs *definitionIndex[StructDef]) []m
 			for _, fieldObj := range fieldsList {
 				if field, ok := fieldObj.(map[string]interface{}); ok {
 					if name, ok := field["name"].(string); ok {
-						if !fieldNames[name] {
-							fields = append(fields, field)
-							fieldNames[name] = true
+						if i, exists := fieldIndex[name]; exists {
+							fields[i] = field
 						} else {
-							// Override parent field
-							for i, f := range fields {
-								if fName, ok := f["name"].(string); ok && fName == name {
-									fields[i] = field
-									break
-								}
-							}
+							fieldIndex[name] = len(fields)
+							fields = append(fields, field)
 						}
 					}
 				}
@@ -165,5 +177,8 @@ func getStructFields(structName string, structs *definitionIndex[StructDef]) []m
 		}
 	}
 
+	if cache != nil {
+		cache[structName] = fields
+	}
 	return fields
 }

@@ -1,10 +1,13 @@
 package pulserpc
 
 import (
+	"encoding"
 	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
+	"strings"
 )
 
 // FunctionDef represents a function/method definition from the IDL
@@ -325,54 +328,409 @@ func convertToMap(value interface{}) (interface{}, error) {
 		return value, nil
 	}
 
-	// For pointers, unwrap and try again
-	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Ptr {
+	rv := reflect.ValueOf(value)
+	if needsJSONFallback(rv) {
+		// Keep the original top-level round trip for custom marshalers,
+		// including its "unmarshal into map" error behavior.
+		return structViaJSON(value)
+	}
+	return convertValueToMap(rv)
+}
+
+// convertValueToMap normalizes a reflected value to the shape the validators
+// expect: maps for structs, []interface{} for slices/arrays, and primitives for
+// named scalar types such as generated enums.
+func convertValueToMap(rv reflect.Value) (interface{}, error) {
+	if !rv.IsValid() {
+		return nil, nil
+	}
+	if needsJSONFallback(rv) {
+		return jsonRoundTrip(rv.Interface())
+	}
+
+	switch rv.Kind() {
+	case reflect.Interface:
 		if rv.IsNil() {
 			return nil, nil
 		}
-		return convertToMap(rv.Elem().Interface())
-	}
-
-	// For slices/arrays, convert each element
-	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+		return convertValueToMap(rv.Elem())
+	case reflect.Pointer:
+		if rv.IsNil() {
+			return nil, nil
+		}
+		return convertValueToMap(rv.Elem())
+	case reflect.Slice, reflect.Array:
 		result := make([]interface{}, rv.Len())
 		for i := 0; i < rv.Len(); i++ {
-			elem, err := convertToMap(rv.Index(i).Interface())
+			elem, err := convertValueToMap(rv.Index(i))
 			if err != nil {
 				return nil, err
 			}
 			result[i] = elem
 		}
 		return result, nil
-	}
-
-	// Generated enums (and other named primitives) are distinct Go types.
-	// Normalize them to their underlying primitive so validation sees the
-	// same shape it would after a JSON round trip.
-	rv := reflect.ValueOf(value)
-	switch rv.Kind() {
 	case reflect.String:
 		return rv.String(), nil
 	case reflect.Bool:
 		return rv.Bool(), nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return float64(rv.Int()), nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return float64(rv.Uint()), nil
 	case reflect.Float32, reflect.Float64:
 		return rv.Float(), nil
+	case reflect.Struct:
+		if !canConvertStructByReflection(rv.Type(), make(map[reflect.Type]bool)) ||
+			typeIsRecursive(rv.Type(), rv.Type(), make(map[reflect.Type]bool)) {
+			return jsonRoundTrip(rv.Interface())
+		}
+		return convertStructToMap(rv)
+	default:
+		// Typed maps, channels, funcs, etc. went through JSON before; keep
+		// that behavior (and its error messages) for these cases.
+		return jsonRoundTrip(rv.Interface())
 	}
+}
 
-	// For structs, convert to map via JSON
+var (
+	jsonMarshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+)
+
+func typeImplementsMarshaler(t reflect.Type) bool {
+	ptr := reflect.PointerTo(t)
+	return t.Implements(jsonMarshalerType) || t.Implements(textMarshalerType) ||
+		ptr.Implements(jsonMarshalerType) || ptr.Implements(textMarshalerType)
+}
+
+// needsJSONFallback detects values whose JSON encoding is not reproducible by
+// walking fields (custom marshalers, including pointer-receiver methods on
+// addressable values).
+func needsJSONFallback(rv reflect.Value) bool {
+	if !rv.IsValid() {
+		return false
+	}
+	t := rv.Type()
+	if t.Implements(jsonMarshalerType) || t.Implements(textMarshalerType) {
+		return true
+	}
+	return rv.CanAddr() && typeImplementsMarshaler(t)
+}
+
+// structViaJSON is the original top-level round trip, kept for custom
+// marshalers and other cases reflection cannot safely reproduce.
+func structViaJSON(value interface{}) (interface{}, error) {
 	jsonBytes, err := json.Marshal(value)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal struct to JSON: %w", err)
 	}
-
 	var result map[string]interface{}
 	if err := json.Unmarshal(jsonBytes, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON to map: %w", err)
 	}
-
 	return result, nil
+}
+
+// jsonRoundTrip is the narrow fallback for nested values, where the JSON shape
+// may be a scalar or array rather than an object.
+func jsonRoundTrip(value interface{}) (interface{}, error) {
+	jsonBytes, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal struct to JSON: %w", err)
+	}
+	var result interface{}
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON to map: %w", err)
+	}
+	return result, nil
+}
+
+// canConvertStructByReflection reports whether a struct type can be walked
+// without changing the shape json.Marshal would produce. Unsupported field
+// kinds, exotic tag options and unexported embedded structs take the fallback.
+func canConvertStructByReflection(t reflect.Type, visited map[reflect.Type]bool) bool {
+	if visited[t] {
+		return true
+	}
+	visited[t] = true
+	switch t.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Complex64, reflect.Complex128, reflect.UnsafePointer:
+		return false
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return canConvertStructByReflection(t.Elem(), visited)
+	case reflect.Map:
+		return canConvertStructByReflection(t.Key(), visited) && canConvertStructByReflection(t.Elem(), visited)
+	case reflect.Struct:
+		if typeImplementsMarshaler(t) {
+			return true
+		}
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" && !f.Anonymous {
+				continue
+			}
+			if f.Tag.Get("json") == "-" {
+				continue
+			}
+			if _, _, _, ok := parseJSONTagForValidation(f.Tag.Get("json")); !ok {
+				return false
+			}
+			// json.Marshal can promote exported fields of an unexported
+			// embedded struct; reflect marks those fields read-only.
+			if f.Anonymous && f.PkgPath != "" {
+				return false
+			}
+			if !canConvertStructByReflection(f.Type, visited) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+// typeIsRecursive reports whether target can be reached again from itself,
+// in which case a JSON round trip keeps json.Marshal's cycle detection.
+func typeIsRecursive(target, t reflect.Type, path map[reflect.Type]bool) bool {
+	if t == target && len(path) > 0 {
+		return true
+	}
+	if path[t] {
+		return false
+	}
+	path[t] = true
+	defer delete(path, t)
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:
+		return typeIsRecursive(target, t.Elem(), path)
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" && !f.Anonymous {
+				continue
+			}
+			if typeIsRecursive(target, f.Type, path) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parseJSONTagForValidation(tag string) (name string, omitEmpty bool, tagged bool, ok bool) {
+	if tag == "" {
+		return "", false, false, true
+	}
+	parts := strings.Split(tag, ",")
+	name = parts[0]
+	if name != "" && !validJSONTagName(name) {
+		return "", false, false, false
+	}
+	for _, opt := range parts[1:] {
+		if opt != "omitempty" {
+			// e.g. ",string" or ",omitzero": defer to encoding/json.
+			return "", false, false, false
+		}
+		omitEmpty = true
+	}
+	return name, omitEmpty, name != "", true
+}
+
+func validJSONTagName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case strings.ContainsRune("!#$%&()*+-./:<=>?@[]^_{|}~ ", c):
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// jsonFieldCandidate is a struct field that json.Marshal would emit, together
+// with the data needed to apply Go's embedded-field dominance rules.
+type jsonFieldCandidate struct {
+	name      string
+	value     reflect.Value
+	omitEmpty bool
+	tagged    bool
+	depth     int
+	index     []int
+}
+
+// collectJSONFields walks embedded structs breadth-first, as encoding/json
+// does, so promoted fields are flattened with the correct dominance.
+func collectJSONFields(v reflect.Value) ([]jsonFieldCandidate, bool) {
+	type pending struct {
+		typ   reflect.Type
+		val   reflect.Value
+		index []int
+		depth int
+	}
+	current := []pending{{typ: v.Type(), val: v}}
+	visited := map[reflect.Type]bool{}
+	var candidates []jsonFieldCandidate
+
+	for len(current) > 0 {
+		var next []pending
+		nextCount := map[reflect.Type]bool{}
+		for _, item := range current {
+			if visited[item.typ] {
+				continue
+			}
+			visited[item.typ] = true
+			if !item.val.IsValid() { // nil embedded pointer: no promoted fields
+				continue
+			}
+			for i := 0; i < item.typ.NumField(); i++ {
+				sf := item.typ.Field(i)
+				if sf.Anonymous {
+					ft := sf.Type
+					if ft.Kind() == reflect.Pointer {
+						ft = ft.Elem()
+					}
+					if !sf.IsExported() {
+						if ft.Kind() != reflect.Struct {
+							continue
+						}
+						return nil, false
+					}
+				} else if !sf.IsExported() {
+					continue
+				}
+				tag := sf.Tag.Get("json")
+				if tag == "-" {
+					continue
+				}
+				name, omitEmpty, tagged, ok := parseJSONTagForValidation(tag)
+				if !ok {
+					return nil, false
+				}
+				index := make([]int, len(item.index)+1)
+				copy(index, item.index)
+				index[len(item.index)] = i
+				fieldVal := item.val.Field(i)
+
+				ft := sf.Type
+				if ft.Name() == "" && ft.Kind() == reflect.Pointer {
+					ft = ft.Elem()
+				}
+				if name != "" || !sf.Anonymous || ft.Kind() != reflect.Struct {
+					if name == "" {
+						name = sf.Name
+					}
+					candidates = append(candidates, jsonFieldCandidate{
+						name: name, value: fieldVal, omitEmpty: omitEmpty,
+						tagged: tagged, depth: item.depth, index: index,
+					})
+					continue
+				}
+
+				// Untagged embedded struct: promote its fields into this one.
+				if fieldVal.Kind() == reflect.Pointer {
+					if fieldVal.IsNil() {
+						continue
+					}
+					fieldVal = fieldVal.Elem()
+				}
+				if !nextCount[ft] {
+					nextCount[ft] = true
+					next = append(next, pending{typ: ft, val: fieldVal, index: index, depth: item.depth + 1})
+				}
+			}
+		}
+		current = next
+	}
+	return candidates, true
+}
+
+func selectJSONFields(candidates []jsonFieldCandidate) map[string]jsonFieldCandidate {
+	groups := make(map[string][]jsonFieldCandidate)
+	for _, c := range candidates {
+		groups[c.name] = append(groups[c.name], c)
+	}
+	selected := make(map[string]jsonFieldCandidate, len(groups))
+	for name, group := range groups {
+		sort.SliceStable(group, func(i, j int) bool {
+			a, b := group[i], group[j]
+			if a.depth != b.depth {
+				return a.depth < b.depth
+			}
+			if a.tagged != b.tagged {
+				return a.tagged
+			}
+			return compareFieldIndices(a.index, b.index) < 0
+		})
+		// Two fields at the same depth with the same tagged status hide each
+		// other, exactly as encoding/json's dominantField does.
+		if len(group) > 1 && group[0].depth == group[1].depth && group[0].tagged == group[1].tagged {
+			continue
+		}
+		selected[name] = group[0]
+	}
+	return selected
+}
+
+func compareFieldIndices(a, b []int) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			if a[i] < b[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return len(a) - len(b)
+}
+
+func convertStructToMap(rv reflect.Value) (interface{}, error) {
+	candidates, ok := collectJSONFields(rv)
+	if !ok {
+		return jsonRoundTrip(rv.Interface())
+	}
+
+	result := make(map[string]interface{})
+	for name, field := range selectJSONFields(candidates) {
+		if field.omitEmpty && isEmptyJSONValue(field.value) {
+			continue
+		}
+		var converted interface{}
+		var err error
+		// Inside a struct, json.Marshal encodes []byte as base64; the
+		// top-level slice short-circuit in convertValueToMap must not.
+		if field.value.Kind() == reflect.Slice && field.value.Type().Elem().Kind() == reflect.Uint8 && !needsJSONFallback(field.value) {
+			converted, err = jsonRoundTrip(field.value.Interface())
+		} else {
+			converted, err = convertValueToMap(field.value)
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[name] = converted
+	}
+	return result, nil
+}
+
+func isEmptyJSONValue(rv reflect.Value) bool {
+	switch rv.Kind() {
+	case reflect.Array, reflect.Slice, reflect.Map, reflect.String:
+		return rv.Len() == 0
+	case reflect.Bool:
+		return !rv.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return rv.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return rv.Float() == 0
+	case reflect.Interface, reflect.Pointer:
+		return rv.IsNil()
+	default:
+		return false // structs are never empty for json:",omitempty"
+	}
 }
