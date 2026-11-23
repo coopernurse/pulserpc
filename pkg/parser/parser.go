@@ -708,7 +708,7 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool,
 			// Prefix types from the imported file with the imported namespace
 			// Types from nested imports already have their namespace prefix
 			for _, s := range importedIDL.Structs {
-				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources,s) {
+				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources, s) {
 					continue
 				}
 				// If the type's namespace matches the imported file's namespace, it's a local type - prefix it
@@ -723,7 +723,7 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool,
 				idl.Structs = append(idl.Structs, s)
 			}
 			for _, e := range importedIDL.Enums {
-				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources,e) {
+				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources, e) {
 					continue
 				}
 				if e.Namespace == importedNamespace {
@@ -733,7 +733,7 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool,
 				idl.Enums = append(idl.Enums, e)
 			}
 			for _, i := range importedIDL.Interfaces {
-				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources,i) {
+				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources, i) {
 					continue
 				}
 				if i.Namespace == importedNamespace {
@@ -748,7 +748,7 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool,
 
 			// Prefix error names from imported file (if not already prefixed)
 			for _, err := range importedIDL.Errors {
-				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources,err) {
+				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources, err) {
 					continue
 				}
 				if err.Namespace == importedNamespace {
@@ -762,22 +762,22 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool,
 		} else {
 			// No namespace - add types as-is
 			for _, s := range importedIDL.Structs {
-				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources,s) {
+				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources, s) {
 					idl.Structs = append(idl.Structs, s)
 				}
 			}
 			for _, e := range importedIDL.Enums {
-				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources,e) {
+				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources, e) {
 					idl.Enums = append(idl.Enums, e)
 				}
 			}
 			for _, i := range importedIDL.Interfaces {
-				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources,i) {
+				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources, i) {
 					idl.Interfaces = append(idl.Interfaces, i)
 				}
 			}
 			for _, err := range importedIDL.Errors {
-				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources,err) {
+				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources, err) {
 					idl.Errors = append(idl.Errors, err)
 				}
 			}
