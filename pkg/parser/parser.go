@@ -348,11 +348,16 @@ func extractEnumValueComments(input string, enumPos lexer.Position, values []str
 // filename is used for resolving relative imports
 func ParseIDL(filename string, input string) (*IDL, error) {
 	visited := make(map[string]bool)
-	return parseIDLWithImports(filename, input, visited)
+	// sources records, for every declaration created during this parse, the
+	// absolute path of the source file that declared it. It is shared by the
+	// whole import tree so a diamond import can be merged only once without
+	// changing the declaration types (and therefore the public API).
+	sources := make(map[interface{}]string)
+	return parseIDLWithImports(filename, input, visited, sources)
 }
 
 // parseIDLWithImports parses an IDL file and resolves imports recursively
-func parseIDLWithImports(filename string, input string, visited map[string]bool) (*IDL, error) {
+func parseIDLWithImports(filename string, input string, visited map[string]bool, sources map[interface{}]string) (*IDL, error) {
 	// Normalize filename path
 	absPath, err := filepath.Abs(filename)
 	if err != nil {
@@ -455,7 +460,7 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 			return nil, fmt.Errorf("failed to read import file %s (resolved from %s): %w", resolvedPath, importPath, err)
 		}
 
-		importedIDL, err := parseIDLWithImports(resolvedPath, string(importedContent), visited)
+		importedIDL, err := parseIDLWithImports(resolvedPath, string(importedContent), visited, sources)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse imported file %s: %w", resolvedPath, err)
 		}
@@ -657,6 +662,22 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 		}
 	}
 
+	// Record provenance for the declarations declared by this file. Nested
+	// import declarations were registered by the recursive calls that created
+	// them, so every declaration carries the path of the file it came from.
+	for _, i := range idl.Interfaces {
+		sources[i] = absPath
+	}
+	for _, s := range idl.Structs {
+		sources[s] = absPath
+	}
+	for _, e := range idl.Enums {
+		sources[e] = absPath
+	}
+	for _, e := range idl.Errors {
+		sources[e] = absPath
+	}
+
 	// Record how many declarations came from the root file. Everything after
 	// these offsets arrived through imports and is checked for namespace
 	// collisions below.
@@ -665,14 +686,31 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 	rootInterfaceCount := len(idl.Interfaces)
 	rootErrorCount := len(idl.Errors)
 
-	// Merge imported IDLs with namespace prefixes
+	// Merge imported IDLs with namespace prefixes. mergedSources tracks the
+	// source files whose declarations have already been appended at this merge
+	// level, scoped to this level so each level resolves its own diamonds.
+	// A declaration is kept only if its declaring file has not contributed yet;
+	// declarations from different source files are always kept, so genuine
+	// duplicates still reach strict validation.
+	mergedSources := make(map[string]bool)
 	for _, imported := range importedIDLs {
 		importedNamespace := imported.namespace
 		importedIDL := imported.idl
+		// Snapshot the source files already merged before this import. All
+		// declarations originating from one file must stay together: marking a
+		// source as merged while processing its first declaration would drop
+		// its remaining declarations in the same import.
+		alreadyMerged := make(map[string]bool, len(mergedSources))
+		for k := range mergedSources {
+			alreadyMerged[k] = true
+		}
 		if importedNamespace != "" {
 			// Prefix types from the imported file with the imported namespace
 			// Types from nested imports already have their namespace prefix
 			for _, s := range importedIDL.Structs {
+				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources,s) {
+					continue
+				}
 				// If the type's namespace matches the imported file's namespace, it's a local type - prefix it
 				// If it has a different namespace, it's from a nested import - keep it as-is
 				if s.Namespace == importedNamespace {
@@ -685,6 +723,9 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 				idl.Structs = append(idl.Structs, s)
 			}
 			for _, e := range importedIDL.Enums {
+				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources,e) {
+					continue
+				}
 				if e.Namespace == importedNamespace {
 					// Local type from imported file - prefix it
 					e.Name = importedNamespace + "." + e.Name
@@ -692,6 +733,9 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 				idl.Enums = append(idl.Enums, e)
 			}
 			for _, i := range importedIDL.Interfaces {
+				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources,i) {
+					continue
+				}
 				if i.Namespace == importedNamespace {
 					// Local type from imported file - prefix it
 					i.Name = importedNamespace + "." + i.Name
@@ -704,6 +748,9 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 
 			// Prefix error names from imported file (if not already prefixed)
 			for _, err := range importedIDL.Errors {
+				if !shouldMergeDeclaration(sources, alreadyMerged, mergedSources,err) {
+					continue
+				}
 				if err.Namespace == importedNamespace {
 					// Only prefix if not already prefixed
 					if !strings.HasPrefix(err.Name, importedNamespace+".") {
@@ -714,10 +761,26 @@ func parseIDLWithImports(filename string, input string, visited map[string]bool)
 			}
 		} else {
 			// No namespace - add types as-is
-			idl.Structs = append(idl.Structs, importedIDL.Structs...)
-			idl.Enums = append(idl.Enums, importedIDL.Enums...)
-			idl.Interfaces = append(idl.Interfaces, importedIDL.Interfaces...)
-			idl.Errors = append(idl.Errors, importedIDL.Errors...)
+			for _, s := range importedIDL.Structs {
+				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources,s) {
+					idl.Structs = append(idl.Structs, s)
+				}
+			}
+			for _, e := range importedIDL.Enums {
+				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources,e) {
+					idl.Enums = append(idl.Enums, e)
+				}
+			}
+			for _, i := range importedIDL.Interfaces {
+				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources,i) {
+					idl.Interfaces = append(idl.Interfaces, i)
+				}
+			}
+			for _, err := range importedIDL.Errors {
+				if shouldMergeDeclaration(sources, alreadyMerged, mergedSources,err) {
+					idl.Errors = append(idl.Errors, err)
+				}
+			}
 		}
 	}
 
@@ -766,6 +829,27 @@ func importDedupKey(resolved string) string {
 		resolved = strings.ToLower(resolved)
 	}
 	return resolved
+}
+
+// shouldMergeDeclaration reports whether a declaration reached through an
+// import should be appended at the current merge level. Provenance is the
+// normalized path of the file that declared it, so a file reachable through
+// several import branches (a diamond) contributes its declarations only once.
+// Declarations from different source files are always kept, so genuine
+// duplicate names still reach strict validation.
+func shouldMergeDeclaration(sources map[interface{}]string, alreadyMerged, merged map[string]bool, decl interface{}) bool {
+	src := sources[decl]
+	if src == "" {
+		// Defensive: declarations without recorded provenance keep the legacy
+		// behavior of always being merged.
+		return true
+	}
+	key := importDedupKey(src)
+	if alreadyMerged[key] {
+		return false
+	}
+	merged[key] = true
+	return true
 }
 
 // convertTypeExpr converts a TypeExpr from the grammar to a Type in the IDL structure
