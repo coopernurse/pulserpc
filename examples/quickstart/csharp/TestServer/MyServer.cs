@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using PulseRPC;
-using checkout;
+using Checkout;
 
 public class CatalogServiceImpl : ICatalogService
 {
