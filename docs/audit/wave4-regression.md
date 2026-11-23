@@ -59,3 +59,25 @@ The Java perf commit `fadb530 perf(java): cache enum/struct metadata and handler
 ## Key question: any observable behavior difference?
 
 **Not yet proven either way.** For ordinary inputs the inspected diffs preserve exact error text, validation results, and field ordering, and two risks were positively cleared (C# error text; C# parse-once). However, the six UNVERIFIED candidates above — especially the TS shared cached array and the C# overloaded-handler/duplicate-case-key paths — still need characterization probes, and Java was not examined at all. No behavior difference has been confirmed, but equivalence has not been demonstrated across all seven runtimes.
+
+## Orchestrator follow-up verification (read-only)
+
+- **Java `fadb530` examined:** `Contract.java` adds overloads with pre-resolved
+  IDL entries (additive); `Server.java` resolves `(iface, fn, paramDefs)` once,
+  keeps exact-then-capitalized method lookup via `ConcurrentHashMap` populated
+  in `addHandler`, and `positionalToNamedParams` now takes the resolved list.
+  `Validation.java:134-153` renders the error with `Types.EnumMetadata.display()`,
+  which is `ordered.toString()` — byte-identical to the original
+  `validateEnum(value, userType, allowedValues, path)` rendering with an
+  `ArrayList<String>`. `Types.java` caches are synchronized `WeakHashMap`s.
+  No behavior difference found.
+- **TS shared-array candidate resolved as benign:** production call sites
+  (`ts-node/validation.ts:174`, `ts-cjs/validation.ts:164`) only read the
+  returned field array; tests assert identity intentionally.
+- **C# overload candidate resolved as unreachable for generated code:**
+  generated handlers expose one method per IDL function, so the former
+  `AmbiguousMatchException` path cannot occur; the OrdinalIgnoreCase dictionary
+  preserves the capitalized-alias fallback.
+- **Updated answer:** no observable behavior difference has been found in any
+  of the seven perf commits, but there is still no cross-runtime golden
+  response suite that would prove it mechanically.
