@@ -123,11 +123,15 @@ func TestCrossNamespaceFixtureJavaAndCSharp(t *testing.T) {
 		requireContains(t, "Client.java", client,
 			`\"name\": \"common.CommonOps\"`,
 			`\"name\": \"Ping\"`,
-			`\"name\": \"Echo\"`,
+			`\"name\": \"Echo\"`)
+		// Per-interface clients live in the interface's own package; the wire
+		// method string is emitted there, not in the aggregate Client.java.
+		commonClient := readCrossNSFile(t, filepath.Join(outDir, "src", "main", "java", "com", "example", "rpc", "common", "CommonOpsClient.java"))
+		requireContains(t, "common/CommonOpsClient.java", commonClient,
 			`String method = "common.CommonOps.Ping";`,
 			`String method = "common.CommonOps.Echo";`)
 		for _, bad := range []string{`String method = "CommonOps.Ping"`, `String method = "CommonOps.Echo"`} {
-			if strings.Contains(client, bad) {
+			if strings.Contains(commonClient, bad) {
 				t.Errorf("Java client uses unqualified method string %q for the imported interface", bad)
 			}
 		}

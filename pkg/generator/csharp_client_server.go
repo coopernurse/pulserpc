@@ -762,6 +762,37 @@ func csharpInterfaceIdent(iface *parser.Interface) string {
 	return GetBaseName(iface.Name)
 }
 
+// csharpKeywords are C# reserved words. The IDL lexer accepts them as
+// parameter names, so generated C# must escape them with the @ prefix or the
+// emitted signatures are syntax errors (e.g. `base common.Shared`).
+var csharpKeywords = map[string]bool{
+	"abstract": true, "as": true, "base": true, "bool": true, "break": true,
+	"byte": true, "case": true, "catch": true, "char": true, "checked": true,
+	"class": true, "const": true, "continue": true, "decimal": true,
+	"default": true, "delegate": true, "do": true, "double": true, "else": true,
+	"enum": true, "event": true, "explicit": true, "extern": true, "false": true,
+	"finally": true, "fixed": true, "float": true, "for": true, "foreach": true,
+	"goto": true, "if": true, "implicit": true, "in": true, "int": true,
+	"interface": true, "internal": true, "is": true, "lock": true, "long": true,
+	"namespace": true, "new": true, "null": true, "object": true,
+	"operator": true, "out": true, "override": true, "params": true,
+	"private": true, "protected": true, "public": true, "readonly": true,
+	"ref": true, "return": true, "sbyte": true, "sealed": true, "short": true,
+	"sizeof": true, "stackalloc": true, "static": true, "string": true,
+	"struct": true, "switch": true, "this": true, "throw": true, "true": true,
+	"try": true, "typeof": true, "uint": true, "ulong": true,
+	"unchecked": true, "unsafe": true, "ushort": true, "using": true,
+	"virtual": true, "void": true, "volatile": true, "while": true,
+}
+
+// csharpParamIdent returns a C# identifier for an IDL parameter name.
+func csharpParamIdent(name string) string {
+	if csharpKeywords[name] {
+		return "@" + name
+	}
+	return name
+}
+
 // writeInterfaceStubCs generates an interface for an IDL interface
 func writeInterfaceStubCs(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
 	if iface.Comment != "" {
@@ -787,7 +818,7 @@ func writeInterfaceStubCs(sb *strings.Builder, iface *parser.Interface, structMa
 				sb.WriteString(", ")
 			}
 			paramType := mapTypeToCsType(param.Type, structMap, enumMap, false)
-			fmt.Fprintf(sb, "%s %s", paramType, param.Name)
+			fmt.Fprintf(sb, "%s %s", paramType, csharpParamIdent(param.Name))
 		}
 		sb.WriteString(");\n")
 	}
@@ -1834,7 +1865,7 @@ func writeClientMethodImplCs(sb *strings.Builder, iface *parser.Interface, metho
 		paramType := mapTypeToCsType(param.Type, structMap, enumMap, false)
 		sb.WriteString(paramType)
 		sb.WriteString(" ")
-		fmt.Fprintf(sb, "%s", param.Name)
+		fmt.Fprintf(sb, "%s", csharpParamIdent(param.Name))
 	}
 	sb.WriteString(")\n")
 	sb.WriteString("    {\n")
@@ -1844,7 +1875,7 @@ func writeClientMethodImplCs(sb *strings.Builder, iface *parser.Interface, metho
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		fmt.Fprintf(sb, "%s", param.Name)
+		fmt.Fprintf(sb, "%s", csharpParamIdent(param.Name))
 	}
 	sb.WriteString(");\n")
 	sb.WriteString("        return task.GetAwaiter().GetResult();\n")
@@ -1862,7 +1893,7 @@ func writeClientMethodImplCs(sb *strings.Builder, iface *parser.Interface, metho
 		paramType := mapTypeToCsType(param.Type, structMap, enumMap, false)
 		sb.WriteString(paramType)
 		sb.WriteString(" ")
-		fmt.Fprintf(sb, "%s", param.Name)
+		fmt.Fprintf(sb, "%s", csharpParamIdent(param.Name))
 	}
 	sb.WriteString(")\n")
 	sb.WriteString("    {\n")
@@ -1874,7 +1905,7 @@ func writeClientMethodImplCs(sb *strings.Builder, iface *parser.Interface, metho
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		fmt.Fprintf(sb, "%s", param.Name)
+		fmt.Fprintf(sb, "%s", csharpParamIdent(param.Name))
 	}
 	sb.WriteString(" };\n\n")
 
@@ -2149,7 +2180,7 @@ func writeTestMethodImplCs(sb *strings.Builder, iface *parser.Interface, method 
 			sb.WriteString(", ")
 		}
 		paramType := mapTypeToCsType(param.Type, structMap, enumMap, false)
-		fmt.Fprintf(sb, "%s %s", paramType, param.Name)
+		fmt.Fprintf(sb, "%s %s", paramType, csharpParamIdent(param.Name))
 	}
 	sb.WriteString(")\n")
 	sb.WriteString("    {\n")
