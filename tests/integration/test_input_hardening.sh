@@ -271,6 +271,47 @@ else
 fi
 record_result "Large numeric id echoed (exact or documented-lossy)" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
 
+# ---------------------------------------------------------------------------
+# Probe 3: deeply nested params (~2000 levels)
+# ---------------------------------------------------------------------------
+echo -e "${BLUE}=== Deeply Nested Params (2000 levels) ===${NC}"
+
+# A well-formed JSON-RPC request whose params are 2000 nested arrays. Any
+# well-formed error (e.g. -32600 / -32700 / a depth-limit error) or a normal
+# response is acceptable; a hang (curl timeout -> status 000) or a crash is a
+# hard failure. No specific error code is asserted.
+if [ -n "$JSON_PY" ]; then
+    DEEP_PARAMS=$("$JSON_PY" -c 'print("[" * 2000 + "1" + "]" * 2000)')
+else
+    DEEP_PARAMS=""
+    for _i in $(seq 1 2000); do DEEP_PARAMS="${DEEP_PARAMS}["; done
+    DEEP_PARAMS="${DEEP_PARAMS}1"
+    for _i in $(seq 1 2000); do DEEP_PARAMS="${DEEP_PARAMS}]"; done
+fi
+DEEP_BODY="{\"jsonrpc\":\"2.0\",\"method\":\"A.echo\",\"params\":$DEEP_PARAMS,\"id\":1}"
+
+do_post "$DEEP_BODY" 60
+probe_ok=1
+probe_detail=""
+if [ "$RESPONSE_STATUS" != "200" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}expected HTTP 200, got $RESPONSE_STATUS (hang/crash/unexpected status); "
+elif [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}expected a single well-formed JSON object, got type '$(json_type "")'; "
+else
+    error_code=$(json_get error.code)
+    if [ "$error_code" = "__MISSING__" ] || [ -z "$error_code" ] || [ "$error_code" = "null" ]; then
+        # No error object: a normal response must still carry a result.
+        if [ "$(json_type result)" = "__MISSING__" ]; then
+            probe_ok=0
+            probe_detail="${probe_detail}response has neither a well-formed error nor a result; "
+        fi
+    fi
+    # Any well-formed error code is acceptable - deliberately not pinned.
+fi
+record_result "Deeply nested params return a response/error without hang" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
+
 echo ""
 echo -e "${BLUE}=== Test Summary ===${NC}"
 echo -e "Total tests: $((TESTS_PASSED + TESTS_FAILED))"
