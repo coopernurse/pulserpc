@@ -6,7 +6,7 @@ and provides validation for requests and responses.
 
 import json
 
-from validation import validate_type
+from validation import validate_type, ValidationContext
 from rpc import RPCError
 
 
@@ -84,6 +84,9 @@ class Contract(object):
                         if key != "type":
                             self.meta[key] = value
 
+        # Precompute lookup/resolution metadata once; validation reuses it.
+        self._validation_context = ValidationContext(self.structs, self.enums)
+
     @classmethod
     def from_file(cls, path):
         """Load a Contract from a JSON file path
@@ -139,7 +142,8 @@ class Contract(object):
 
             try:
                 validate_type(
-                    param_value, param_type, self.structs, self.enums, is_optional
+                    param_value, param_type, self.structs, self.enums, is_optional,
+                    self._validation_context,
                 )
             except (TypeError, ValueError) as e:
                 # Canonical M13 shape: invalid_fields is a list of path strings.
@@ -177,7 +181,10 @@ class Contract(object):
 
         is_optional = func.get("returnOptional", False)
         try:
-            validate_type(result, return_type, self.structs, self.enums, is_optional)
+            validate_type(
+                result, return_type, self.structs, self.enums, is_optional,
+                self._validation_context,
+            )
         except (TypeError, ValueError) as e:
             message = "Function '%s.%s' invalid response" % (iface_name, func_name)
             raise _validation_error(-32603, message, ["result"])
