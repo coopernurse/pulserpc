@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sync"
 )
 
 // ValidationError carries a field path and a human-readable message.
@@ -114,6 +115,14 @@ func ValidateMapE(value interface{}, valueValidator func(interface{}, string) []
 }
 
 func ValidateEnumE(value interface{}, enumName string, allowedValues []string, path string) []ValidationError {
+	// External callers pass a plain slice, so build the membership set here.
+	// The ordered slice is retained for the (unchanged) error message.
+	return validateEnumEWithSet(value, enumName, path, newEnumValueSetFromStrings(allowedValues))
+}
+
+// validateEnumEWithSet is the O(1) lookup variant used by contract validation,
+// where the set is built once when the contract is constructed.
+func validateEnumEWithSet(value interface{}, enumName string, path string, set *enumValueSet) []ValidationError {
 	// Generated enums are named string types (e.g. `type MathOp string`).
 	// A plain type assertion to string rejects those, so accept any value
 	// whose underlying kind is string.
@@ -122,12 +131,49 @@ func ValidateEnumE(value interface{}, enumName string, allowedValues []string, p
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected string for enum %s, got %T", enumName, value)}}
 	}
 	strValue := rv.String()
-	for _, allowed := range allowedValues {
-		if strValue == allowed {
-			return nil
+	if _, ok := set.members[strValue]; ok {
+		return nil
+	}
+	return []ValidationError{{Path: path, Message: fmt.Sprintf("invalid value for enum %s: '%s'. Allowed values: %v", enumName, strValue, set.allowed)}}
+}
+
+// enumValueSet pairs the ordered enum names (for error text) with a set used
+// for constant-time membership checks.
+type enumValueSet struct {
+	allowed []string
+	members map[string]struct{}
+}
+
+func newEnumValueSet(valuesList []interface{}) *enumValueSet {
+	set := &enumValueSet{members: make(map[string]struct{}, len(valuesList))}
+	for _, valObj := range valuesList {
+		if valMap, ok := valObj.(map[string]interface{}); ok {
+			if name, ok := valMap["name"].(string); ok {
+				set.allowed = append(set.allowed, name)
+				set.members[name] = struct{}{}
+			}
 		}
 	}
-	return []ValidationError{{Path: path, Message: fmt.Sprintf("invalid value for enum %s: '%s'. Allowed values: %v", enumName, strValue, allowedValues)}}
+	return set
+}
+
+func newEnumValueSetFromStrings(values []string) *enumValueSet {
+	set := &enumValueSet{allowed: values, members: make(map[string]struct{}, len(values))}
+	for _, name := range values {
+		set.members[name] = struct{}{}
+	}
+	return set
+}
+
+func enumSetFromDef(def EnumDef) *enumValueSet {
+	if def == nil {
+		return nil
+	}
+	valuesList, ok := def["values"].([]interface{})
+	if !ok {
+		return nil
+	}
+	return newEnumValueSet(valuesList)
 }
 
 func validateStructE(value interface{}, structName string, structDef StructDef, resolver *typeResolver, path string) []ValidationError {
@@ -136,7 +182,7 @@ func validateStructE(value interface{}, structName string, structDef StructDef, 
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected map for struct %s, got %T", structName, value)}}
 	}
 
-	fields := getStructFields(structName, resolver.structs)
+	fields := resolver.getStructFields(structName)
 	var errs []ValidationError
 	for _, field := range fields {
 		fieldName, ok := field["name"].(string)
@@ -243,15 +289,9 @@ func validateTypeE(value interface{}, typeDef map[string]interface{}, resolver *
 			if !ok {
 				return []ValidationError{{Path: path, Message: fmt.Sprintf("invalid enum definition for %s: values is not a list", userDefined)}}
 			}
-			allowedValues := make([]string, 0, len(valuesList))
-			for _, valObj := range valuesList {
-				if valMap, ok := valObj.(map[string]interface{}); ok {
-					if name, ok := valMap["name"].(string); ok {
-						allowedValues = append(allowedValues, name)
-					}
-				}
-			}
-			return ValidateEnumE(value, userDefined, allowedValues, path)
+			// Shape checks stay here so malformed definitions keep their
+			// original error messages; the membership index is cached.
+			return validateEnumEWithSet(value, userDefined, path, resolver.enumSetFor(userDefined, valuesList))
 		}
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("unknown user-defined type: %s", userDefined)}}
 	}
@@ -332,15 +372,89 @@ func ValidateType(value interface{}, typeDef map[string]interface{}, allStructs 
 
 // ValidateStruct indexed (exported already exists via ValidateStruct). Add E variant exported? contract uses validateStructE.
 // Export validateStructE as ValidateStructE? keep lowercase for package use; contract is same package.
-// typeResolver bundles the contract-owned struct/enum indexes.
+// typeResolver bundles the contract-owned struct/enum indexes and the
+// validation metadata derived from them. Metadata is built once at
+// construction; the mutex only guards the lazily filled field cache used by
+// ad-hoc resolvers (contracts pre-populate the common paths at construction).
 type typeResolver struct {
 	structs *definitionIndex[StructDef]
 	enums   *definitionIndex[EnumDef]
+
+	enumValues   map[string]*enumValueSet
+	structFields map[string][]map[string]interface{}
+	fieldsMu     sync.RWMutex
 }
 
 func newTypeResolver(structs StructMap, enums EnumMap) *typeResolver {
-	return &typeResolver{
-		structs: newDefinitionIndex(structs),
-		enums:   newDefinitionIndex(enums),
+	r := &typeResolver{
+		structs:    newDefinitionIndex(structs),
+		enums:      newDefinitionIndex(enums),
+		enumValues: make(map[string]*enumValueSet, len(enums)*2),
 	}
+
+	// Exact keys win, matching definitionIndex.resolve.
+	for name, def := range enums {
+		if set := enumSetFromDef(def); set != nil {
+			r.enumValues[name] = set
+		}
+	}
+	// Base names resolve to the first sorted key sharing that base name; the
+	// index already records that deterministic winner.
+	for base, entry := range r.enums.byBase {
+		if _, isExact := enums[base]; isExact {
+			continue
+		}
+		if _, exists := r.enumValues[base]; exists {
+			continue
+		}
+		if set := enumSetFromDef(entry.def); set != nil {
+			r.enumValues[base] = set
+		}
+	}
+
+	return r
+}
+
+// enumSetFor returns the precomputed membership set for a user-defined enum
+// name. The values list is only used as a fallback for resolvers built outside
+// newTypeResolver; such sets are not cached, so the maps stay read-only after
+// construction and validation is safe across goroutines.
+func (r *typeResolver) enumSetFor(name string, valuesList []interface{}) *enumValueSet {
+	if r != nil {
+		if set := r.enumValues[name]; set != nil {
+			return set
+		}
+	}
+	return newEnumValueSet(valuesList)
+}
+
+// getStructFields returns the cached, fully resolved field list for a struct.
+func (r *typeResolver) getStructFields(structName string) []map[string]interface{} {
+	if r == nil {
+		return getStructFields(structName, nil)
+	}
+	r.fieldsMu.RLock()
+	fields, ok := r.structFields[structName]
+	r.fieldsMu.RUnlock()
+	if ok {
+		return fields
+	}
+
+	scratch := make(map[string][]map[string]interface{})
+	fields = resolveStructFields(structName, r.structs, scratch)
+
+	r.fieldsMu.Lock()
+	if r.structFields == nil {
+		r.structFields = make(map[string][]map[string]interface{})
+	}
+	for name, resolved := range scratch {
+		if _, exists := r.structFields[name]; !exists {
+			r.structFields[name] = resolved
+		}
+	}
+	if _, exists := r.structFields[structName]; !exists {
+		r.structFields[structName] = fields
+	}
+	r.fieldsMu.Unlock()
+	return fields
 }

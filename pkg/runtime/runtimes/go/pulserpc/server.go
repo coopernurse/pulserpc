@@ -155,8 +155,8 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 		return s.respondError(isNotification, reqID, -32602, "Invalid params", err.Error())
 	}
 
-	// Invoke handler method
-	result, err := s.invokeHandler(handlerValue, funcName, namedParams, fnDef)
+	// Invoke handler method with the reflect.Value resolved above.
+	result, err := s.invokeHandler(handlerValue, funcName, funcValue, namedParams, fnDef)
 	if err != nil {
 		// Check if it's an RPCError
 		if rpcErr, ok := err.(*RPCError); ok {
@@ -404,22 +404,14 @@ func (s *Server) positionalToNamedParams(ifaceName, funcName string, positionalP
 
 // invokeHandler invokes a handler method with the given named parameters
 // fnDef is the function definition from the contract, used to get param names and types
-func (s *Server) invokeHandler(handlerValue reflect.Value, funcName string, params map[string]interface{}, fnDef FunctionDef) (interface{}, error) {
-	// Find the method
-	method := handlerValue.MethodByName(funcName)
+// resolved is the method value already found by Call; fallbacks only run when
+// it is invalid.
+func (s *Server) invokeHandler(handlerValue reflect.Value, funcName string, resolved reflect.Value, params map[string]interface{}, fnDef FunctionDef) (interface{}, error) {
+	method := resolved
 	if !method.IsValid() {
-		// Try capitalized
-		if len(funcName) > 0 {
-			capitalized := string(rune(funcName[0]-'a'+'A')) + funcName[1:]
-			method = handlerValue.MethodByName(capitalized)
-		}
-	}
-
-	if !method.IsValid() {
-		// Try with snake_case to CamelCase conversion
+		// Covers capitalized and snake_case variants.
 		method = findMethodByName(handlerValue, funcName)
 	}
-
 	if !method.IsValid() {
 		return nil, fmt.Errorf("method not found: %s", funcName)
 	}
