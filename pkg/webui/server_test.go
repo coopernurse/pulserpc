@@ -174,6 +174,7 @@ struct User {
 		url          string
 		expectStatus int
 		expectError  bool
+		expectBody   string
 	}{
 		{
 			name:         "valid file request",
@@ -216,6 +217,7 @@ struct User {
 			url:          "/api/playground/files/" + session.ID + "/nonexistent.txt",
 			expectStatus: 404,
 			expectError:  true,
+			expectBody:   "File not found\n",
 		},
 		{
 			name:         "parent traversal",
@@ -251,6 +253,10 @@ struct User {
 			// Check status
 			if w.Code != tt.expectStatus {
 				t.Errorf("expected status %d, got %d. Body: %s", tt.expectStatus, w.Code, w.Body.String())
+			}
+
+			if tt.expectBody != "" && w.Body.String() != tt.expectBody {
+				t.Errorf("expected body %q, got %q", tt.expectBody, w.Body.String())
 			}
 
 			// Check content type for successful requests
