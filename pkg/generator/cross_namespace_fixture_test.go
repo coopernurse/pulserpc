@@ -103,11 +103,9 @@ func TestCrossNamespaceFixtureGo(t *testing.T) {
 	}
 }
 
-// Java and C# must at least carry the imported interface under its qualified
-// name in their embedded IDL metadata, and Java must compile. Both currently
-// have a known defect in identifiers/method strings (documented in
-// docs/audit/wave6-idl-fixtures.md); those assertions are not encoded here as
-// passing expectations, but the committed fixture is their shared reproducer.
+// Java and C# must use base-name Go-style identifiers while keeping the
+// namespace-qualified name in JSON-RPC method strings and IDL metadata. Both
+// generated projects must compile outside the PulseRPC checkout.
 func TestCrossNamespaceFixtureJavaAndCSharp(t *testing.T) {
 	idl := parseCrossNamespaceFixture(t)
 
@@ -125,9 +123,13 @@ func TestCrossNamespaceFixtureJavaAndCSharp(t *testing.T) {
 		requireContains(t, "Client.java", client,
 			`\"name\": \"common.CommonOps\"`,
 			`\"name\": \"Ping\"`,
-			`\"name\": \"Echo\"`)
-		if strings.Contains(client, `String method = \"CommonOps.Ping\"`) {
-			t.Logf("known gap: Java client uses unqualified method string \"CommonOps.Ping\" for the imported interface")
+			`\"name\": \"Echo\"`,
+			`String method = "common.CommonOps.Ping";`,
+			`String method = "common.CommonOps.Echo";`)
+		for _, bad := range []string{`String method = "CommonOps.Ping"`, `String method = "CommonOps.Echo"`} {
+			if strings.Contains(client, bad) {
+				t.Errorf("Java client uses unqualified method string %q for the imported interface", bad)
+			}
 		}
 
 		mvn, err := exec.LookPath("mvn")
@@ -148,12 +150,13 @@ func TestCrossNamespaceFixtureJavaAndCSharp(t *testing.T) {
 		requireContains(t, "Client.cs", client,
 			`""name"": ""common.CommonOps""`,
 			`""name"": ""Ping""`,
-			`""name"": ""Echo""`)
+			`""name"": ""Echo""`,
+			"public class CommonOpsClient : ICommonOps")
+		if strings.Contains(client, "public class common.CommonOpsClient") {
+			t.Error("C# client class still uses the raw namespace qualifier in its identifier")
+		}
 
 		t.Run("build", func(t *testing.T) {
-			if strings.Contains(client, "public class common.CommonOpsClient") {
-				t.Skip("known C# gap: imported interface identifiers are emitted with the raw namespace qualifier; generated projects fail dotnet build with CS1001")
-			}
 			dotnet, err := exec.LookPath("dotnet")
 			if err != nil {
 				t.Skip("dotnet not on PATH; generated-C# build skipped")
