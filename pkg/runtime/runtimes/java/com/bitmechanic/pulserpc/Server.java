@@ -4,6 +4,8 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * JSON-RPC 2.0 server with handler registration and optional validation
@@ -13,6 +15,41 @@ public class Server {
     private final Map<String, Object> handlers = new HashMap<>();
     private final boolean validateRequests;
     private final boolean validateResponses;
+
+    /** Reflection resolution is done once per handler class + method name. */
+    private final ConcurrentMap<MethodKey, MethodResolution> methodCache = new ConcurrentHashMap<>();
+
+    private static final class MethodKey {
+        final Class<?> clazz;
+        final String name;
+
+        MethodKey(Class<?> clazz, String name) {
+            this.clazz = clazz;
+            this.name = name;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) return true;
+            if (!(other instanceof MethodKey)) return false;
+            MethodKey key = (MethodKey) other;
+            return clazz == key.clazz && name.equals(key.name);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * clazz.hashCode() + name.hashCode();
+        }
+    }
+
+    /** A null method records a resolution miss so it is not scanned twice. */
+    private static final class MethodResolution {
+        final Method method;
+
+        MethodResolution(Method method) {
+            this.method = method;
+        }
+    }
 
     /**
      * Creates a new Server instance
@@ -28,6 +65,15 @@ public class Server {
      */
     public void addHandler(String ifaceName, Object handler) {
         handlers.put(ifaceName, handler);
+        if (handler == null) {
+            return;
+        }
+        // Populate exact method names up front (first match wins, as in the
+        // original getMethods() scan) so requests never reflect per call.
+        Class<?> clazz = handler.getClass();
+        for (Method m : clazz.getMethods()) {
+            methodCache.putIfAbsent(new MethodKey(clazz, m.getName()), new MethodResolution(m));
+        }
     }
 
     /**
@@ -90,6 +136,14 @@ public class Server {
             return isNotification ? null : errorResponse(reqId, -32601, "Method not found", "Unknown method: " + method);
         }
 
+        // Resolve the IDL entries once and share them with both the validation
+        // and the parameter-conversion stage.
+        Interface iface = contract != null ? contract.getInterface(ifaceName) : null;
+        FunctionDef fn = iface != null ? iface.getFunction(funcName) : null;
+        List<?> paramDefs = fn != null && fn.containsKey("parameters") && fn.get("parameters") instanceof List
+            ? (List<?>) fn.get("parameters")
+            : java.util.Collections.emptyList();
+
         // Get params
         Object paramsObj = request.get("params");
 
@@ -106,7 +160,7 @@ public class Server {
         // supplied, so a method declared with parameters cannot be invoked empty.
         if (validateRequests && contract != null) {
             try {
-                contract.validateRequest(ifaceName, funcName, positionalParams);
+                contract.validateRequest(ifaceName, funcName, positionalParams, iface, fn, paramDefs);
             } catch (RPCError rpcErr) {
                 return isNotification ? null : errorResponse(reqId, rpcErr.getCode(), rpcErr.getMessage(), rpcErr.getData());
             } catch (IllegalArgumentException ex) {
@@ -114,8 +168,9 @@ public class Server {
             }
         }
 
-        // Convert positional params to named params using IDL signature
-        Map<String, Object> namedParams = positionalToNamedParams(ifaceName, funcName, positionalParams);
+        // Convert positional params to named params using the already resolved
+        // IDL signature.
+        Map<String, Object> namedParams = positionalToNamedParams(paramDefs, positionalParams);
 
         // Invoke handler method
         Object result;
@@ -200,64 +255,37 @@ public class Server {
     }
 
     /**
-     * Finds a method by name (case-insensitive, with capital first letter for Java conventions)
+     * Finds a method by name (exact match first, then capitalized first letter
+     * for Java conventions) using the resolution cache populated at addHandler.
      */
     private Method findMethod(Class<?> clazz, String name) {
-        // Try exact match first
-        for (Method m : clazz.getMethods()) {
-            if (m.getName().equals(name)) {
-                return m;
-            }
+        MethodKey key = new MethodKey(clazz, name);
+        MethodResolution exact = methodCache.get(key);
+        if (exact != null) {
+            return exact.method;
         }
 
-        // Try with first letter uppercased (Go/Java convention)
-        if (name.length() > 0) {
+        Method resolved = null;
+        if (!name.isEmpty()) {
+            // All real method names were cached at addHandler, so the alias
+            // lookup needs no reflection either.
             String capitalized = Character.toUpperCase(name.charAt(0)) + name.substring(1);
-            for (Method m : clazz.getMethods()) {
-                if (m.getName().equals(capitalized)) {
-                    return m;
-                }
+            MethodResolution alias = methodCache.get(new MethodKey(clazz, capitalized));
+            if (alias != null) {
+                resolved = alias.method;
             }
         }
-
-        return null;
+        methodCache.put(key, new MethodResolution(resolved));
+        return resolved;
     }
 
     /**
-     * Converts positional params to named params using IDL signature
+     * Converts positional params to named params using the already resolved
+     * IDL parameter definitions.
      */
     @SuppressWarnings("unchecked")
-    private Map<String, Object> positionalToNamedParams(String ifaceName, String funcName,
-            List<Object> positionalParams) {
+    private Map<String, Object> positionalToNamedParams(List<?> paramDefs, List<Object> positionalParams) {
         Map<String, Object> result = new HashMap<>();
-
-        if (contract == null) {
-            for (int i = 0; i < positionalParams.size(); i++) {
-                result.put("p" + i, positionalParams.get(i));
-            }
-            return result;
-        }
-
-        Interface iface = contract.getInterface(ifaceName);
-        if (iface == null) {
-            for (int i = 0; i < positionalParams.size(); i++) {
-                result.put("p" + i, positionalParams.get(i));
-            }
-            return result;
-        }
-
-        FunctionDef fn = iface.getFunction(funcName);
-        if (fn == null) {
-            for (int i = 0; i < positionalParams.size(); i++) {
-                result.put("p" + i, positionalParams.get(i));
-            }
-            return result;
-        }
-
-        // Get parameter definitions
-        List<?> paramDefs = fn.containsKey("parameters") && fn.get("parameters") instanceof List
-            ? (List<?>) fn.get("parameters")
-            : new java.util.ArrayList<>();
 
         for (int i = 0; i < positionalParams.size(); i++) {
             if (i < paramDefs.size() && paramDefs.get(i) instanceof Map) {
