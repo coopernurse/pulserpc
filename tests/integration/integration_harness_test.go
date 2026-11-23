@@ -68,7 +68,7 @@ func TestHTTPAPIHarnessFailsOnWrongErrorCode(t *testing.T) {
 // non-zero. Both shell harnesses must probe functionality before using a
 // candidate interpreter rather than trusting `command -v`.
 func TestHarnessPythonDetectionIsFunctional(t *testing.T) {
-	for _, script := range []string{"test_limits.sh", "test_http_api.sh"} {
+	for _, script := range []string{"test_limits.sh", "test_http_api.sh", "test_input_hardening.sh"} {
 		data, err := os.ReadFile(script)
 		if err != nil {
 			t.Fatalf("read %s: %v", script, err)
@@ -395,7 +395,7 @@ func TestHardGateProbesAreWired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read test_all_runtimes.sh: %v", err)
 	}
-	for _, script := range []string{"test_internal_errors.sh", "test_concurrency.sh"} {
+	for _, script := range []string{"test_internal_errors.sh", "test_concurrency.sh", "test_input_hardening.sh"} {
 		if !strings.Contains(string(matrix), script) {
 			t.Errorf("test_all_runtimes.sh does not run %s", script)
 		}
@@ -405,13 +405,13 @@ func TestHardGateProbesAreWired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Makefile: %v", err)
 	}
-	for _, target := range []string{"test-internal-errors:", "test-concurrency:"} {
+	for _, target := range []string{"test-internal-errors:", "test-concurrency:", "test-input-hardening:"} {
 		if !strings.Contains(string(mk), target) {
 			t.Errorf("Makefile does not define %s", target)
 		}
 	}
 
-	for _, script := range []string{"test_internal_errors.sh", "test_limits.sh"} {
+	for _, script := range []string{"test_internal_errors.sh", "test_limits.sh", "test_input_hardening.sh"} {
 		data, err := os.ReadFile(script)
 		if err != nil {
 			t.Fatalf("read %s: %v", script, err)

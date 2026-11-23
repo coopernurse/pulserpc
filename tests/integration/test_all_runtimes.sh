@@ -19,6 +19,7 @@ HTTP_TEST_SCRIPT="$SCRIPT_DIR/test_http_api.sh"
 LIMITS_TEST_SCRIPT="$SCRIPT_DIR/test_limits.sh"
 INTERNAL_ERRORS_TEST_SCRIPT="$SCRIPT_DIR/test_internal_errors.sh"
 CONCURRENCY_TEST_SCRIPT="$SCRIPT_DIR/test_concurrency.sh"
+INPUT_HARDENING_TEST_SCRIPT="$SCRIPT_DIR/test_input_hardening.sh"
 
 # Runtime ports (matching test-servers.sh configuration)
 # All seven runtimes advertised in docs/RUNTIME_IMPLEMENTATION_GUIDE.md.
@@ -62,7 +63,7 @@ if [ ! -f "$LIMITS_TEST_SCRIPT" ]; then
     exit 1
 fi
 
-for required_script in "$INTERNAL_ERRORS_TEST_SCRIPT" "$CONCURRENCY_TEST_SCRIPT"; do
+for required_script in "$INTERNAL_ERRORS_TEST_SCRIPT" "$CONCURRENCY_TEST_SCRIPT" "$INPUT_HARDENING_TEST_SCRIPT"; do
     if [ ! -f "$required_script" ]; then
         echo -e "${RED}ERROR: Conformance script not found at $required_script${NC}"
         exit 1
@@ -152,6 +153,13 @@ for runtime in python ts csharp java go python2 ts-cjs; do
     if ! SERVER_URL="$url" bash "$CONCURRENCY_TEST_SCRIPT"; then
         echo ""
         echo -e "${RED}✗ $runtime runtime: concurrency tests failed${NC}"
+        runtime_ok=0
+    fi
+
+    echo ""
+    if ! SERVER_URL="$url" bash "$INPUT_HARDENING_TEST_SCRIPT"; then
+        echo ""
+        echo -e "${RED}✗- $runtime runtime: input-hardening tests failed${NC}"
         runtime_ok=0
     fi
 
