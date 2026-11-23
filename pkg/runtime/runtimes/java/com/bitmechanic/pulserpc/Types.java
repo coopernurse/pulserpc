@@ -7,6 +7,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Collections;
 import java.util.WeakHashMap;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Helper methods for PulseRPC type operations
@@ -35,6 +38,67 @@ public class Types {
             Collections.sort(keys);
             SORTED_KEYS.put(definitions, keys);
             cached = keys;
+        }
+        return cached;
+    }
+
+    /**
+     * Immutable, precomputed view of an enum's declared value names. Membership
+     * is a HashSet lookup; the exact {@code List.toString()} rendering is kept
+     * alongside it so validation error text is unchanged.
+     */
+    public static final class EnumMetadata {
+        private final Set<String> names;
+        private final String display;
+        private final List<?> source;
+        private final int sourceSize;
+
+        @SuppressWarnings("unchecked")
+        private EnumMetadata(List<?> values) {
+            List<String> ordered = new ArrayList<>();
+            for (Object enumValue : values) {
+                if (enumValue instanceof Map) {
+                    Map<String, Object> valueMap = (Map<String, Object>) enumValue;
+                    String name = (String) valueMap.get("name");
+                    if (name != null) {
+                        ordered.add(name);
+                    }
+                }
+            }
+            this.names = Collections.unmodifiableSet(new HashSet<>(ordered));
+            this.display = ordered.toString();
+            this.source = values;
+            this.sourceSize = values.size();
+        }
+
+        public boolean contains(String name) {
+            return names.contains(name);
+        }
+
+        public String display() {
+            return display;
+        }
+
+        private boolean matches(List<?> values) {
+            return source == values && sourceSize == values.size();
+        }
+    }
+
+    private static final Map<Map<String, ?>, EnumMetadata> ENUM_METADATA =
+        Collections.synchronizedMap(new WeakHashMap<>());
+
+    /**
+     * Return the cached metadata for an enum definition, keyed weakly on the
+     * definition map. Replacing the values list (or changing its size)
+     * invalidates the entry, mirroring the sorted-key cache's size guard.
+     */
+    public static EnumMetadata enumMetadata(Map<String, Object> enumDef) {
+        List<?> values = (List<?>) enumDef.get("values");
+        EnumMetadata cached = ENUM_METADATA.get(enumDef);
+        if (cached == null || !cached.matches(values)) {
+            EnumMetadata fresh = new EnumMetadata(values);
+            ENUM_METADATA.put(enumDef, fresh);
+            return fresh;
         }
         return cached;
     }
@@ -87,11 +151,47 @@ public class Types {
     }
 
     /**
+     * Flattened fields for every struct name seen for one definitions map.
+     * Weak keys avoid pinning contracts, and the size guard keeps a mutated map
+     * from returning a stale field list.
+     */
+    private static final class StructFieldCache {
+        final int size;
+        final Map<String, List<Map<String, Object>>> byStruct = new ConcurrentHashMap<>();
+
+        StructFieldCache(int size) {
+            this.size = size;
+        }
+    }
+
+    private static final Map<Map<String, ?>, StructFieldCache> STRUCT_FIELDS =
+        Collections.synchronizedMap(new WeakHashMap<>());
+
+    /**
      * Get all fields for a struct, including inherited fields from parent
      * structs. Parent fields come first; a child redeclaration of the same field
-     * name overrides the parent definition (java-06).
+     * name overrides the parent definition (java-06). The flattened result is
+     * cached per (struct name, definitions map).
      */
     public static List<Map<String, Object>> getStructFields(String structName, Map<String, Map<String, Object>> allStructs) {
+        if (structName == null || allStructs == null) {
+            return new ArrayList<>();
+        }
+        StructFieldCache cache = STRUCT_FIELDS.get(allStructs);
+        if (cache == null || cache.size != allStructs.size()) {
+            cache = new StructFieldCache(allStructs.size());
+            STRUCT_FIELDS.put(allStructs, cache);
+        }
+        List<Map<String, Object>> cached = cache.byStruct.get(structName);
+        if (cached != null) {
+            return cached;
+        }
+        List<Map<String, Object>> fields = Collections.unmodifiableList(computeStructFields(structName, allStructs));
+        cache.byStruct.put(structName, fields);
+        return fields;
+    }
+
+    private static List<Map<String, Object>> computeStructFields(String structName, Map<String, Map<String, Object>> allStructs) {
         // Collect the inheritance chain from child to parent.
         List<Map<String, Object>> chain = new ArrayList<>();
         List<String> visited = new ArrayList<>();
@@ -107,7 +207,8 @@ public class Types {
         }
 
         // Walk parent -> child so child fields replace parent fields of the
-        // same name. LinkedHashMap keeps the parent's insertion position.
+        // same name. LinkedHashMap keeps the parent's insertion position, and
+        // the name -> field map makes each override an O(1) replacement.
         Map<String, Map<String, Object>> byName = new LinkedHashMap<>();
         for (int i = chain.size() - 1; i >= 0; i--) {
             Map<String, Object> structDef = chain.get(i);

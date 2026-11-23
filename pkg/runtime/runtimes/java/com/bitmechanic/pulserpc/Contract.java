@@ -182,19 +182,27 @@ public class Contract {
      */
     public void validateRequest(String ifaceName, String funcName, List<Object> params) {
         Interface iface = getInterface(ifaceName);
+        FunctionDef fn = iface == null ? null : iface.getFunction(funcName);
+        List<?> paramDefs = fn != null && fn.containsKey("parameters") && fn.get("parameters") instanceof List
+            ? (List<?>) fn.get("parameters")
+            : new ArrayList<>();
+        validateRequest(ifaceName, funcName, params, iface, fn, paramDefs);
+    }
+
+    /**
+     * Validate with interface, function and parameter definitions already
+     * resolved by the caller, so a request does not resolve the same IDL entries
+     * again in both the validation and parameter-conversion stages.
+     */
+    public void validateRequest(String ifaceName, String funcName, List<Object> params,
+                                Interface iface, FunctionDef fn, List<?> paramDefs) {
         if (iface == null) {
             throw new IllegalArgumentException("Unknown interface: '" + ifaceName + "'");
         }
 
-        FunctionDef fn = iface.getFunction(funcName);
         if (fn == null) {
             throw new IllegalArgumentException(ifaceName + ": Unknown function: '" + funcName + "'");
         }
-
-        // Get parameter definitions
-        List<?> paramDefs = fn.containsKey("parameters") && fn.get("parameters") instanceof List
-            ? (List<?>) fn.get("parameters")
-            : new ArrayList<>();
 
         // Check parameter count
         if (params.size() != paramDefs.size()) {
@@ -229,11 +237,19 @@ public class Contract {
      */
     public void validateResponse(String ifaceName, String funcName, Object result) {
         Interface iface = getInterface(ifaceName);
+        FunctionDef fn = iface == null ? null : iface.getFunction(funcName);
+        validateResponse(ifaceName, funcName, result, iface, fn);
+    }
+
+    /**
+     * Validate with interface and function already resolved by the caller.
+     */
+    public void validateResponse(String ifaceName, String funcName, Object result,
+                                 Interface iface, FunctionDef fn) {
         if (iface == null) {
             throw new IllegalArgumentException("Unknown interface: '" + ifaceName + "'");
         }
 
-        FunctionDef fn = iface.getFunction(funcName);
         if (fn == null) {
             throw new IllegalArgumentException(ifaceName + ": Unknown function: '" + funcName + "'");
         }

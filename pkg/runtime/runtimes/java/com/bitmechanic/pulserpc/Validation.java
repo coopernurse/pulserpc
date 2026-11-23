@@ -134,6 +134,25 @@ public class Validation {
         return errs;
     }
 
+    /**
+     * Enum-definition path: membership is an O(1) set lookup and the error text
+     * comes from the cached ordered rendering, so repeated enum values never
+     * rebuild the allowed-value list.
+     */
+    private static List<ValidationError> validateEnumMetadata(Object value, String enumName,
+            Types.EnumMetadata metadata, String path) {
+        List<ValidationError> errs = new ArrayList<>();
+        if (!(value instanceof String)) {
+            errs.add(new ValidationError(path, "Expected string for enum " + enumName + ", got " + getTypeName(value)));
+            return errs;
+        }
+        String strValue = (String) value;
+        if (!metadata.contains(strValue)) {
+            errs.add(new ValidationError(path, "Invalid value for enum " + enumName + ": '" + strValue + "'. Allowed values: " + metadata.display()));
+        }
+        return errs;
+    }
+
     public static List<ValidationError> validateStruct(Object value, String structName, Map<String, Object> structDef,
                                     Map<String, Map<String, Object>> allStructs,
                                     Map<String, Map<String, Object>> allEnums, String path) {
@@ -222,18 +241,7 @@ public class Validation {
             Map<String, Object> enumDef = Types.findEnum(userType, allEnums);
             if (enumDef != null) {
                 if (enumDef.containsKey("values")) {
-                    List<?> enumValues = (List<?>) enumDef.get("values");
-                    List<String> allowedValues = new ArrayList<>();
-                    for (Object enumValue : enumValues) {
-                        if (enumValue instanceof Map) {
-                            Map<String, Object> valueMap = (Map<String, Object>) enumValue;
-                            String name = (String) valueMap.get("name");
-                            if (name != null) {
-                                allowedValues.add(name);
-                            }
-                        }
-                    }
-                    return validateEnum(value, userType, allowedValues, path);
+                    return validateEnumMetadata(value, userType, Types.enumMetadata(enumDef), path);
                 } else {
                     errs.add(new ValidationError(path, "Invalid enum definition for " + userType + ": missing values"));
                     return errs;
