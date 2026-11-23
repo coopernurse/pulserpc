@@ -233,13 +233,14 @@ func TestCSharpMultiNamespaceGenerationIsByteDeterministic(t *testing.T) {
 		}
 	}
 
-	// Imports are emitted in sorted namespace order, not map order.
-	appFile := string(first["App/App.cs"])
-	commonIdx := strings.Index(appFile, "using common;")
-	userIdx := strings.Index(appFile, "using user;")
-	zzzIdx := strings.Index(appFile, "using zzz;")
+	// Type definitions (and their cross-namespace imports) live in Types.cs;
+	// the legacy per-namespace file now holds only IDL metadata.
+	typesFile := string(first["App/Types.cs"])
+	commonIdx := strings.Index(typesFile, "using Common;")
+	userIdx := strings.Index(typesFile, "using User;")
+	zzzIdx := strings.Index(typesFile, "using Zzz;")
 	if commonIdx < 0 || userIdx < 0 || zzzIdx < 0 {
-		t.Fatalf("App/App.cs missing cross-namespace imports:\n%s", appFile)
+		t.Fatalf("App/Types.cs missing cross-namespace imports:\n%s", typesFile)
 	}
 	if !(commonIdx < userIdx && userIdx < zzzIdx) {
 		t.Errorf("cross-namespace imports are not sorted: common=%d user=%d zzz=%d", commonIdx, userIdx, zzzIdx)
