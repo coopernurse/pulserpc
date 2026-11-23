@@ -8,13 +8,27 @@ Collector/comparator contract
 * File naming is strictly ``<runtime>.json`` for each of the seven runtimes:
   python, ts, csharp, java, go, python2, ts-cjs.
 * Each file holds the same set of named responses (a JSON object keyed by case
-  name, or a JSON list compared positionally). Responses are compared
-  case-by-case after normalization.
-* Normalization performed before/during comparison:
+  name). Responses are compared case-by-case after normalization.
+* The collector stores each response as a JSON string; the comparator parses
+  it before comparing so key order and whitespace are irrelevant.
+
+What is compared strictly
+-------------------------
+``jsonrpc``, ``id`` (modulo >2^53 representation), ``result`` values, error
+``code``, and the structured validation fields ``invalid_fields`` / ``valid``.
+Human-readable prose (``message`` and ``data.error``) is NOT compared across
+runtimes: the guide requires clear messages but never byte-identical wording,
+and the runtimes have always described the same error differently. Prose
+presence/emptiness is still checked so a runtime cannot silently drop messages.
+
+Normalization performed before comparison:
     - D7 optional fields: a key with value ``null`` is treated as omitted.
     - Numeric ids larger than 2^53 are normalized (representation may differ
-      between runtimes, e.g. JSON number vs string). Ids <= 2^53 are NOT
-      normalized, so a real type/value change still fails.
+      between runtimes). Ids <= 2^53 are NOT normalized.
+    - Error objects always gain an empty ``data`` object if they had none;
+      a string ``data`` (prose only) normalizes to an empty object.
+    - ``message`` and prose ``data.error`` values collapse to a ``<prose>``
+      marker; an empty/missing message stays distinct from a present one.
 
 Allowed divergences (everything else is a hard failure)
 -------------------------------------------------------
@@ -27,8 +41,8 @@ Allowed divergences (everything else is a hard failure)
 4. Numeric id representation differences, but only for ids > 2^53.
 
 Usage:
-    python tests/integration/compare_golden.py                # uses GOLDEN_DIR
-    python tests/integration/compare_golden.py A.json B.json  # explicit pair
+    python3 tests/integration/compare_golden.py                # uses GOLDEN_DIR
+    python3 tests/integration/compare_golden.py A.json B.json  # explicit pair
 """
 
 import json
@@ -42,6 +56,11 @@ BIG_INT = 2 ** 53
 PYTHON2 = "python2"
 INVALID_FIELDS_KEY = "invalid_fields"
 DATA_KEY = "data"
+ERROR_KEY = "error"
+CODE_KEY = "code"
+MESSAGE_KEY = "message"
+VALID_KEY = "valid"
+PROSE_MARKER = "<prose>"
 
 
 def _is_id_key(key):
@@ -89,6 +108,52 @@ def _list_subset(a, b):
     return sa <= sb or sb <= sa
 
 
+def _normalize_data(value):
+    """Keep only structured validation fields; prose strings become empty."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    if INVALID_FIELDS_KEY in value and value[INVALID_FIELDS_KEY]:
+        result[INVALID_FIELDS_KEY] = value[INVALID_FIELDS_KEY]
+    if VALID_KEY in value:
+        result[VALID_KEY] = value[VALID_KEY]
+    return result
+
+
+def _normalize(value):
+    """Normalize prose and data shape while preserving structural signals."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return value
+        if isinstance(parsed, (dict, list)):
+            return _normalize(parsed)
+        return value
+    if isinstance(value, list):
+        return [_normalize(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    out = {}
+    for key, item in value.items():
+        if key == DATA_KEY:
+            out[key] = _normalize_data(item)
+        elif key in (MESSAGE_KEY, ERROR_KEY) and isinstance(item, str):
+            # data.error is prose; a top-level error object is a dict and is
+            # handled by the normal branch below.
+            out[key] = PROSE_MARKER if item.strip() else item
+        else:
+            out[key] = _normalize(item)
+
+    # Every error object gets a data key so presence/absence is not compared;
+    # structured contents inside data still are. The error object is the dict
+    # carrying "code", which may be nested under a top-level "error" key.
+    if CODE_KEY in value and DATA_KEY not in out:
+        out[DATA_KEY] = {}
+    return out
+
+
 def _dict_subset_equal(a, b, ctx, path):
     """Python2 reduced-data allowance: shared keys equal, smaller keys a subset.
 
@@ -106,7 +171,7 @@ def _dict_subset_equal(a, b, ctx, path):
 
 
 def compare(a, b, path, ctx, key=None):
-    """Recursively compare two values, returning a list of diff messages."""
+    """Recursively compare two normalized values, returning diff messages."""
     out = []
 
     if _is_id_key(key):
@@ -168,7 +233,8 @@ def run(argv=None):
     loaded = {}
     for name, path in files.items():
         try:
-            loaded[name] = _load(path)
+            raw = _load(path)
+            loaded[name] = {case: _normalize(value) for case, value in raw.items()}
         except Exception as exc:  # noqa: BLE001 - report and fail loudly
             diffs.append("[%s] cannot load %s: %s" % (name, path, exc))
             continue
