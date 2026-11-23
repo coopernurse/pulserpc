@@ -177,6 +177,13 @@ test-concurrency:
 	@echo "Testing concurrent requests against $(SERVER_URL)..."
 	@SERVER_URL=$(SERVER_URL) bash tests/integration/test_concurrency.sh
 
+# Input-hardening probes (duplicate keys, large ids, deep nesting, over-cap
+# batch, oversized body) against a running server. Also run for every runtime
+# by `make test-all-runtimes`.
+test-input-hardening:
+	@echo "Testing input hardening against $(SERVER_URL)..."
+	@SERVER_URL=$(SERVER_URL) bash tests/integration/test_input_hardening.sh
+
 # Orphaned harness scripts, now reachable from `make`.
 test-numeric-types: build
 	@bash tests/integration/test_numeric_types.sh
