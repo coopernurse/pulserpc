@@ -20,6 +20,11 @@ LIMITS_TEST_SCRIPT="$SCRIPT_DIR/test_limits.sh"
 INTERNAL_ERRORS_TEST_SCRIPT="$SCRIPT_DIR/test_internal_errors.sh"
 CONCURRENCY_TEST_SCRIPT="$SCRIPT_DIR/test_concurrency.sh"
 INPUT_HARDENING_TEST_SCRIPT="$SCRIPT_DIR/test_input_hardening.sh"
+GOLDEN_TEST_SCRIPT="$SCRIPT_DIR/test_golden_responses.sh"
+
+# Per-runtime golden response files are written here for cross-runtime
+# comparison. Allow CI/operators to override the location.
+export GOLDEN_DIR="${GOLDEN_DIR:-/tmp/pulserpc-golden}"
 
 # Runtime ports (matching test-servers.sh configuration)
 # All seven runtimes advertised in docs/RUNTIME_IMPLEMENTATION_GUIDE.md.
@@ -63,7 +68,7 @@ if [ ! -f "$LIMITS_TEST_SCRIPT" ]; then
     exit 1
 fi
 
-for required_script in "$INTERNAL_ERRORS_TEST_SCRIPT" "$CONCURRENCY_TEST_SCRIPT" "$INPUT_HARDENING_TEST_SCRIPT"; do
+for required_script in "$INTERNAL_ERRORS_TEST_SCRIPT" "$CONCURRENCY_TEST_SCRIPT" "$INPUT_HARDENING_TEST_SCRIPT" "$GOLDEN_TEST_SCRIPT"; do
     if [ ! -f "$required_script" ]; then
         echo -e "${RED}ERROR: Conformance script not found at $required_script${NC}"
         exit 1
@@ -160,6 +165,13 @@ for runtime in python ts csharp java go python2 ts-cjs; do
     if ! SERVER_URL="$url" bash "$INPUT_HARDENING_TEST_SCRIPT"; then
         echo ""
         echo -e "${RED}✗- $runtime runtime: input-hardening tests failed${NC}"
+        runtime_ok=0
+    fi
+
+    echo ""
+    if ! RUNTIME="$runtime" SERVER_URL="$url" bash "$GOLDEN_TEST_SCRIPT"; then
+        echo ""
+        echo -e "${RED}✗ $runtime runtime: golden response collection failed${NC}"
         runtime_ok=0
     fi
 
