@@ -724,7 +724,7 @@ func generateEnumTypesGo(sb *strings.Builder, enums []*parser.Enum) {
 }
 
 // generateStructTypesGo generates Go struct types for all structs in the namespace
-func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*parser.Struct, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
+func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*parser.Struct, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, nsImports map[string]string, packageImportPath string) {
 	for _, s := range structs {
 		if s.Comment != "" {
 			lines := strings.Split(strings.TrimSpace(s.Comment), "\n")
@@ -738,11 +738,15 @@ func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*par
 
 		// Handle inheritance via embedding
 		if s.Extends != "" {
-			parentName := getGoStructOrEnumTypeName(s.Extends, structMap, enumMap)
-			// Check if the parent is from a different namespace
 			parentNs := findNamespaceForType(s.Extends, structMap, enumMap)
+			parent := &parser.Type{UserDefined: s.Extends}
+			parentName := getGoTypeWithNamespace(parent, structMap, enumMap, false, namespace, nsImports, packageImportPath)
+			// Ensure the parent's namespace is registered for import even when
+			// the helper could not qualify it (e.g. unqualified type name).
 			if parentNs != "" && parentNs != namespace {
-				parentName = parentNs + "." + GetBaseName(s.Extends)
+				if _, exists := nsImports[parentNs]; !exists {
+					nsImports[parentNs] = packageImportPath + "/" + parentNs
+				}
 			}
 			fmt.Fprintf(sb, "	%s\n", parentName)
 		}
@@ -758,7 +762,7 @@ func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*par
 
 			// JSON tag (IDL uses snake_case, Go uses CamelCase)
 			fieldName := snakeToCamelCase(field.Name)
-			goType := mapTypeToGoType(field.Type, structMap, enumMap, field.Optional)
+			goType := getGoTypeWithNamespace(field.Type, structMap, enumMap, field.Optional, namespace, nsImports, packageImportPath)
 			jsonTag := field.Name
 			if field.Optional {
 				jsonTag += ",omitempty"
