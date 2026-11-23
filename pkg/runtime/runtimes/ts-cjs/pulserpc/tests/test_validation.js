@@ -363,6 +363,72 @@ function testValidateNestedStructInArray() {
   console.log("✓ testValidateNestedStructInArray");
 }
 
+function testValidateEnumErrorTextStandaloneAndCached() {
+  const expected = "Invalid value for enum Platform: 'invalid'. Allowed values: kindle, nook";
+  assert.deepStrictEqual(validateEnum("invalid", "Platform", ["kindle", "nook"]), [
+    { path: "", message: expected },
+  ]);
+
+  const allEnums = { Platform: { values: [{ name: "kindle" }, { name: "nook" }] } };
+  const typeDef = { userDefined: "Platform" };
+  // validateType supplies prepared (cached) metadata; error text must match
+  // the standalone validator exactly, including path and declaration order.
+  assert.deepStrictEqual(validateType("invalid", typeDef, {}, allEnums, false, ".device"), [
+    { path: ".device", message: expected },
+  ]);
+  assert.deepStrictEqual(validateType(7, typeDef, {}, allEnums, false, ".device"), [
+    { path: ".device", message: "Expected string for enum Platform, got number" },
+  ]);
+  assert.deepStrictEqual(validateType("nook", typeDef, {}, allEnums), []);
+  console.log("✓ testValidateEnumErrorTextStandaloneAndCached");
+}
+
+function testValidateEnumCacheReuse() {
+  let valuesReads = 0;
+  const enumDef = {
+    get values() {
+      valuesReads++;
+      return [{ name: "a" }, { name: "b" }];
+    },
+  };
+  const allEnums = { Mode: enumDef };
+  const typeDef = { userDefined: "Mode" };
+
+  assert.deepStrictEqual(validateType("a", typeDef, {}, allEnums), []);
+  assert.strictEqual(valuesReads, 1);
+  for (let i = 0; i < 50; i++) {
+    assert.deepStrictEqual(validateType("b", typeDef, {}, allEnums), []);
+    assert.strictEqual(validateType("nope", typeDef, {}, allEnums).length, 1);
+  }
+  assert.strictEqual(valuesReads, 1, "enum names must be derived once per definition");
+
+  // The cache is keyed by definition, so a fresh map holding the same def reuses it.
+  assert.deepStrictEqual(validateType("a", typeDef, {}, { Mode: enumDef }), []);
+  assert.strictEqual(valuesReads, 1);
+
+  // A different definition still builds its own values.
+  const otherDef = { values: [{ name: "x" }] };
+  const otherType = { userDefined: "Other" };
+  assert.deepStrictEqual(validateType("x", otherType, {}, { Other: otherDef }), []);
+  assert.strictEqual(validateType("a", otherType, {}, { Other: otherDef }).length, 1);
+  console.log("✓ testValidateEnumCacheReuse");
+}
+
+function testValidateStructInheritedOverride() {
+  const allStructs = {
+    Base: { fields: [{ name: "id", type: { builtIn: "string" } }] },
+    Child: { extends: "Base", fields: [{ name: "id", type: { builtIn: "int" } }] },
+  };
+  assert.deepStrictEqual(
+    validateStruct({ id: 1 }, "Child", allStructs.Child, allStructs, {}),
+    []
+  );
+  assert.deepStrictEqual(validateStruct({ id: "x" }, "Child", allStructs.Child, allStructs, {}), [
+    { path: ".id", message: "Expected number for int, got string" },
+  ]);
+  console.log("✓ testValidateStructInheritedOverride");
+}
+
 testValidateStringSuccess();
 testValidateStringFailure();
 testValidateIntSuccess();
@@ -392,4 +458,7 @@ testValidateTypeOptionalNone();
 testValidateTypeArray();
 testValidateTypeMap();
 testValidateNestedStructInArray();
+testValidateEnumErrorTextStandaloneAndCached();
+testValidateEnumCacheReuse();
+testValidateStructInheritedOverride();
 console.log("\nAll validation tests passed!");
