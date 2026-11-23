@@ -22,6 +22,37 @@ logger = logging.getLogger(__name__)
 # cheap request-amplification / memory-exhaustion vector (review finding 1).
 DEFAULT_MAX_BATCH_SIZE = 100
 
+# Default upper bound on the size (bytes) of a single inbound HTTP request body.
+# The Server is transport-independent, so adapters perform the actual read; the
+# limit is exposed here as the one shared value that generated handlers and
+# hand-written production handlers enforce.  Matches the generated test
+# handler's MAX_BODY_SIZE and the documented 1 MiB cap (R16/D5), and mirrors the
+# Python2 runtime constant of the same name.
+DEFAULT_MAX_BODY_SIZE = 1024 * 1024  # 1 MiB
+
+
+class BodyTooLargeError(Exception):
+    """Raised when an inbound body exceeds the configured size cap (R16/D5)."""
+
+    def __init__(self, limit: int):
+        super().__init__(f"Request body exceeds maximum size of {limit} bytes")
+        self.limit = limit
+
+
+def read_request_body(rfile: Any, content_length: int,
+                      max_body_size: int = DEFAULT_MAX_BODY_SIZE) -> bytes:
+    """Read an inbound request body, refusing oversized payloads up front.
+
+    Returns the body bytes.  Raises :class:`BodyTooLargeError` when the declared
+    ``Content-Length`` exceeds ``max_body_size`` so an HTTP adapter can answer
+    with an Invalid Request JSON-RPC error ("Request body too large") rather
+    than reading an unbounded amount into memory or dropping the connection
+    (R16/D5).
+    """
+    if content_length > max_body_size:
+        raise BodyTooLargeError(max_body_size)
+    return rfile.read(content_length)
+
 
 def _is_valid_request_id(req_id: Any) -> bool:
     """Return True when ``req_id`` is a legal JSON-RPC id (D2/R24).
