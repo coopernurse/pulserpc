@@ -752,6 +752,16 @@ func escapeCSharpVerbatimString(s string) string {
 	return sb.String()
 }
 
+// csharpInterfaceIdent returns the C# identifier for an IDL interface.
+// Interfaces declared in an imported .pulse file carry a namespace qualifier
+// (e.g. "alpha.Alpha"); that qualifier is part of the JSON-RPC method name but
+// is not valid in a C# identifier. Identifier sites use the base name, while
+// method/interface strings keep the qualified name so "alpha.Alpha.Ping"
+// stays intact.
+func csharpInterfaceIdent(iface *parser.Interface) string {
+	return GetBaseName(iface.Name)
+}
+
 // writeInterfaceStubCs generates an interface for an IDL interface
 func writeInterfaceStubCs(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
 	if iface.Comment != "" {
@@ -760,7 +770,7 @@ func writeInterfaceStubCs(sb *strings.Builder, iface *parser.Interface, structMa
 			fmt.Fprintf(sb, "// %s\n", line)
 		}
 	}
-	fmt.Fprintf(sb, "public interface I%s\n", iface.Name)
+	fmt.Fprintf(sb, "public interface I%s\n", csharpInterfaceIdent(iface))
 	sb.WriteString("{\n")
 
 	for _, method := range iface.Methods {
@@ -810,7 +820,7 @@ func writePulseRPCServerCs(sb *strings.Builder, idl *parser.IDL, structMap map[s
 
 	// Generate typed Register methods for each interface
 	for _, iface := range idl.Interfaces {
-		fmt.Fprintf(sb, "    public void Register%s(I%s implementation)\n", iface.Name, iface.Name)
+		fmt.Fprintf(sb, "    public void Register%s(I%s implementation)\n", csharpInterfaceIdent(iface), csharpInterfaceIdent(iface))
 		sb.WriteString("    {\n")
 		fmt.Fprintf(sb, "        this.Register(\"%s\", implementation);\n", iface.Name)
 		sb.WriteString("    }\n\n")
@@ -1678,8 +1688,8 @@ func generateClientCs(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 
 // writeInterfaceClientCs generates a client class for an interface that implements the interface
 func writeInterfaceClientCs(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
-	clientClassName := iface.Name + "Client"
-	fmt.Fprintf(sb, "public class %s : I%s\n", clientClassName, iface.Name)
+	clientClassName := csharpInterfaceIdent(iface) + "Client"
+	fmt.Fprintf(sb, "public class %s : I%s\n", clientClassName, csharpInterfaceIdent(iface))
 	sb.WriteString("{\n")
 	sb.WriteString("    private readonly ITransport _transport;\n")
 	sb.WriteString("    private IContractAuditor _auditor;\n")
@@ -1986,8 +1996,8 @@ func generateTestServerCs(idl *parser.IDL, allNamespaces []string, structMap map
 	sb.WriteString("        var logger = loggerFactory.CreateLogger<PulseRPCServer>();\n\n")
 	sb.WriteString("        var server = new PulseRPCServer(logger);\n")
 	for _, iface := range idl.Interfaces {
-		implName := iface.Name + "Impl"
-		fmt.Fprintf(&sb, "        server.Register%s(new %s());\n", iface.Name, implName)
+		implName := csharpInterfaceIdent(iface) + "Impl"
+		fmt.Fprintf(&sb, "        server.Register%s(new %s());\n", csharpInterfaceIdent(iface), implName)
 	}
 	sb.WriteString("        await server.RunAsync(\"0.0.0.0\", 8080);\n")
 	sb.WriteString("    }\n")
@@ -2023,7 +2033,8 @@ func generateTestClientCs(idl *parser.IDL, allNamespaces []string, structMap map
 
 	// Generate test calls for all interfaces and methods
 	for _, iface := range idl.Interfaces {
-		fmt.Fprintf(&sb, "        var %sClient = new %sClient(transport);\n", strings.ToLower(iface.Name), iface.Name)
+		ident := csharpInterfaceIdent(iface)
+		fmt.Fprintf(&sb, "        var %sClient = new %sClient(transport);\n", strings.ToLower(ident), ident)
 		sb.WriteString("\n")
 		for _, method := range iface.Methods {
 			writeTestClientMethodCallCs(&sb, iface, method, structMap, enumMap)
@@ -2110,8 +2121,8 @@ func generateTestClientCsproj() string {
 
 // writeTestInterfaceImplCs generates a concrete implementation class for an interface
 func writeTestInterfaceImplCs(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
-	implName := iface.Name + "Impl"
-	fmt.Fprintf(sb, "public class %s : I%s\n", implName, iface.Name)
+	implName := csharpInterfaceIdent(iface) + "Impl"
+	fmt.Fprintf(sb, "public class %s : I%s\n", implName, csharpInterfaceIdent(iface))
 	sb.WriteString("{\n")
 
 	for _, method := range iface.Methods {
@@ -2412,7 +2423,7 @@ func writeMinimalStructInstanceCs(sb *strings.Builder, typeName string, structDe
 func writeTestClientMethodCallCs(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
 	fmt.Fprintf(sb, "        try\n")
 	sb.WriteString("        {\n")
-	fmt.Fprintf(sb, "            var result = await %sClient.%sAsync(", strings.ToLower(iface.Name), method.Name)
+	fmt.Fprintf(sb, "            var result = await %sClient.%sAsync(", strings.ToLower(csharpInterfaceIdent(iface)), method.Name)
 
 	// Generate test parameter values
 	for i, param := range method.Parameters {
