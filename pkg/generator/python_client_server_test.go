@@ -1614,8 +1614,9 @@ func TestGenerateTestServerPyMalformedJSONReturnsParseError(t *testing.T) {
 		"\"Parse error\"",
 		"Invalid JSON",
 		// json.loads raises plain ValueError (not JSONDecodeError) for huge
-		// integers, so the parse handler must catch the superclass (M26).
-		"except ValueError:",
+		// integers, and RecursionError for deeply nested input; the parse
+		// handler must catch both or the connection is dropped (M26/S3).
+		"except (ValueError, RecursionError):",
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("generated test_server.py should contain %q, got:\n%s", want, code)

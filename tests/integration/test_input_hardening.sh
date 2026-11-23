@@ -218,9 +218,12 @@ elif [ "$(json_type "")" != "dict" ]; then
     probe_ok=0
     probe_detail="${probe_detail}expected a single JSON object response, got type '$(json_type "")'; "
 fi
+err_type="$(json_type error.code)"
 err_code="$(json_get error.code)"
 if [ "$probe_ok" = "1" ]; then
-    if [ "$err_code" != "__MISSING__" ] && [ "$err_code" != "null" ]; then
+    # json_get yields an empty field for a missing key, so use json_type to
+    # detect absence; a successful response has no error object at all.
+    if [ "$err_type" != "__MISSING__" ] && [ "$err_type" != "NoneType" ]; then
         # A runtime may legitimately reject duplicate keys at parse time, or
         # keep one method name and dispatch it. Both are well-formed; only an
         # internal error or an unexpected code means the probe broke.
