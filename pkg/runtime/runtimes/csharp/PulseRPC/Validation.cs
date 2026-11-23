@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 
 namespace PulseRPC
 {
@@ -12,6 +13,39 @@ namespace PulseRPC
     public static class Validation
     {
         private static string TypeName(object? value) => value == null ? "null" : value.GetType().Name;
+
+        /// <summary>
+        /// Precomputed enum value names: a set for O(1) membership plus the exact
+        /// bracketed text used in error messages. Entries are held weakly on the
+        /// definition dictionary so contracts are not pinned in memory.
+        /// </summary>
+        private sealed class EnumInfo
+        {
+            public readonly HashSet<string> Allowed;
+            public readonly string Display;
+
+            public EnumInfo(HashSet<string> allowed, string display)
+            {
+                Allowed = allowed;
+                Display = display;
+            }
+        }
+
+        private static readonly ConditionalWeakTable<Dictionary<string, object>, EnumInfo> EnumCache = new();
+
+        private static EnumInfo GetEnumInfo(Dictionary<string, object> enumDef)
+        {
+            return EnumCache.GetValue(enumDef, static def =>
+            {
+                var allowed = def.TryGetValue("values", out var valuesObj) && valuesObj is IList values
+                    ? values.Cast<Dictionary<string, object>>()
+                        .Select(v => v.TryGetValue("name", out var n) ? n?.ToString() : null)
+                        .Where(n => n != null).Cast<string>().ToList()
+                    : new List<string>();
+                return new EnumInfo(new HashSet<string>(allowed, StringComparer.Ordinal),
+                    $"[{string.Join(", ", allowed)}]");
+            });
+        }
 
         private static string JoinPath(string parent, string child)
         {
@@ -164,9 +198,26 @@ namespace PulseRPC
             return errs;
         }
 
+        /// <summary>Enum-definition path using the cached set and cached error text.</summary>
+        private static List<ValidationError> ValidateEnum(object? value, string enumName, EnumInfo info, string path)
+        {
+            var errs = new List<ValidationError>();
+            if (value is not string s)
+            {
+                errs.Add(new ValidationError(path, $"Expected string for enum {enumName}, got {TypeName(value)}"));
+                return errs;
+            }
+            if (!info.Allowed.Contains(s))
+            {
+                errs.Add(new ValidationError(path, $"Invalid value for enum {enumName}: '{s}'. Allowed values: {info.Display}"));
+            }
+            return errs;
+        }
+
         public static List<ValidationError> ValidateStruct(object? value, string structName, Dictionary<string, object> structDef,
             Dictionary<string, Dictionary<string, object>> allStructs,
-            Dictionary<string, Dictionary<string, object>> allEnums, string path)
+            Dictionary<string, Dictionary<string, object>> allEnums, string path,
+            Func<string, List<Dictionary<string, object>>>? fieldResolver = null)
         {
             var errs = new List<ValidationError>();
             if (value is not IDictionary dict)
@@ -174,7 +225,9 @@ namespace PulseRPC
                 errs.Add(new ValidationError(path, $"Expected map for struct {structName}, got {TypeName(value)}"));
                 return errs;
             }
-            var fields = Types.GetStructFields(structName, allStructs);
+            var fields = fieldResolver != null
+                ? fieldResolver(structName)
+                : Types.GetStructFields(structName, allStructs);
             foreach (var field in fields)
             {
                 string fieldName = (string)field["name"];
@@ -197,7 +250,7 @@ namespace PulseRPC
                     }
                     else
                     {
-                        var sub = ValidateType(fieldValue, fieldType, allStructs, allEnums, false, fieldPath);
+                        var sub = ValidateType(fieldValue, fieldType, allStructs, allEnums, false, fieldPath, fieldResolver);
                         errs.AddRange(sub);
                     }
                 }
@@ -208,7 +261,8 @@ namespace PulseRPC
         public static List<ValidationError> ValidateType(object? value, Dictionary<string, object> typeDef,
             Dictionary<string, Dictionary<string, object>> allStructs,
             Dictionary<string, Dictionary<string, object>> allEnums,
-            bool isOptional, string path)
+            bool isOptional, string path,
+            Func<string, List<Dictionary<string, object>>>? fieldResolver = null)
         {
             var errs = new List<ValidationError>();
             if (value == null)
@@ -232,13 +286,13 @@ namespace PulseRPC
             if (typeDef.ContainsKey("array"))
             {
                 var elementType = (Dictionary<string, object>)typeDef["array"];
-                Func<object?, string, List<ValidationError>> cb = (v, p) => ValidateType(v, elementType, allStructs, allEnums, false, p);
+                Func<object?, string, List<ValidationError>> cb = (v, p) => ValidateType(v, elementType, allStructs, allEnums, false, p, fieldResolver);
                 return ValidateArray(value, cb, path);
             }
             if (typeDef.ContainsKey("mapValue"))
             {
                 var valueType = (Dictionary<string, object>)typeDef["mapValue"];
-                Func<object?, string, List<ValidationError>> cb = (v, p) => ValidateType(v, valueType, allStructs, allEnums, false, p);
+                Func<object?, string, List<ValidationError>> cb = (v, p) => ValidateType(v, valueType, allStructs, allEnums, false, p, fieldResolver);
                 return ValidateMap(value, cb, path);
             }
             if (typeDef.ContainsKey("userDefined"))
@@ -247,17 +301,14 @@ namespace PulseRPC
                 var structDef = Types.FindStruct(userType, allStructs);
                 if (structDef != null)
                 {
-                    return ValidateStruct(value, userType, structDef, allStructs, allEnums, path);
+                    return ValidateStruct(value, userType, structDef, allStructs, allEnums, path, fieldResolver);
                 }
                 var enumDef = Types.FindEnum(userType, allEnums);
                 if (enumDef != null)
                 {
-                    if (enumDef.TryGetValue("values", out var valuesObj) && valuesObj is IList enumValues)
+                    if (enumDef.TryGetValue("values", out var valuesObj) && valuesObj is IList)
                     {
-                        var allowed = enumValues.Cast<Dictionary<string, object>>()
-                            .Select(v => v.TryGetValue("name", out var n) ? n?.ToString() : null)
-                            .Where(n => n != null).Cast<string>().ToList();
-                        return ValidateEnum(value, userType, allowed, path);
+                        return ValidateEnum(value, userType, GetEnumInfo(enumDef), path);
                     }
                     errs.Add(new ValidationError(path, $"Invalid enum definition for {userType}: missing values"));
                     return errs;

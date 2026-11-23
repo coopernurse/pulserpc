@@ -1,4 +1,6 @@
 using System;
+using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -38,6 +40,15 @@ namespace PulseRPC
         public Dictionary<string, Dictionary<string, object>> Structs { get; set; } = new Dictionary<string, Dictionary<string, object>>();
         public Dictionary<string, Dictionary<string, object>> Enums { get; set; } = new Dictionary<string, Dictionary<string, object>>();
         public Dictionary<string, object> Meta { get; set; } = new Dictionary<string, object>();
+
+        /// <summary>
+        /// Flattened struct fields, cached lazily per struct name. The flattening
+        /// itself (including O(1) inherited-field overrides) lives in Types.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, List<Dictionary<string, object>>> _structFields = new();
+
+        public List<Dictionary<string, object>> GetStructFields(string structName)
+            => _structFields.GetOrAdd(structName, name => Types.GetStructFields(name, Structs));
 
         /// <summary>
         /// Creates a new Contract from parsed IDL data.
@@ -203,21 +214,26 @@ iface.Functions[funcName] = funcDef;
         public void ValidateRequest(string ifaceName, string funcName, List<object?> @params)
         {
             var iface = GetInterface(ifaceName);
+            var fn = iface?.GetFunction(funcName);
+            var paramDefs = fn != null && fn.TryGetValue("parameters", out var pdObj) && pdObj is IList pdList
+                ? pdList
+                : new ArrayList();
+            ValidateRequest(ifaceName, funcName, @params, iface, fn, paramDefs);
+        }
+
+        /// <summary>Validation with IDL entries already resolved by the caller.</summary>
+        public void ValidateRequest(string ifaceName, string funcName, List<object?> @params,
+            Interface? iface, FunctionDef? fn, IList paramDefs)
+        {
             if (iface == null)
             {
                 throw new ArgumentException($"Unknown interface: '{ifaceName}'");
             }
 
-            var fn = iface.GetFunction(funcName);
             if (fn == null)
             {
                 throw new ArgumentException($"{ifaceName}: Unknown function: '{funcName}'");
             }
-
-            // Get parameter definitions
-            var paramDefs = fn.TryGetValue("parameters", out var paramDefsObj) && paramDefsObj is System.Collections.IList paramList
-                ? paramList
-                : new System.Collections.ArrayList();
 
             // Check parameter count
             if (@params.Count != paramDefs.Count)
@@ -239,7 +255,7 @@ iface.Functions[funcName] = funcDef;
 
                 var isOptional = paramDef.TryGetValue("optional", out var optObj) && optObj is bool opt && opt;
 
-                var errs = Validation.ValidateType(paramValue, paramType, Structs, Enums, isOptional, $"param[{i}]");
+                var errs = Validation.ValidateType(paramValue, paramType, Structs, Enums, isOptional, $"param[{i}]", GetStructFields);
                 allErrors.AddRange(errs);
             }
 
@@ -256,12 +272,18 @@ iface.Functions[funcName] = funcDef;
         public void ValidateResponse(string ifaceName, string funcName, object? result)
         {
             var iface = GetInterface(ifaceName);
+            ValidateResponse(ifaceName, funcName, result, iface, iface?.GetFunction(funcName));
+        }
+
+        /// <summary>Validation with IDL entries already resolved by the caller.</summary>
+        public void ValidateResponse(string ifaceName, string funcName, object? result,
+            Interface? iface, FunctionDef? fn)
+        {
             if (iface == null)
             {
                 throw new ArgumentException($"Unknown interface: '{ifaceName}'");
             }
 
-            var fn = iface.GetFunction(funcName);
             if (fn == null)
             {
                 throw new ArgumentException($"{ifaceName}: Unknown function: '{funcName}'");
@@ -292,7 +314,7 @@ iface.Functions[funcName] = funcDef;
                 return;
             }
 
-            var subErrs = Validation.ValidateType(result, returnType, Structs, Enums, isOptional, "");
+            var subErrs = Validation.ValidateType(result, returnType, Structs, Enums, isOptional, "", GetStructFields);
             if (subErrs.Count > 0)
             {
                 var vr = ValidationResult.Fail(subErrs);

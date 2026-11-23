@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -12,6 +13,9 @@ namespace PulseRPC
     {
         private readonly Contract _contract;
         private readonly Dictionary<string, object> _handlers = new Dictionary<string, object>();
+        // Per interface: case-insensitive name -> method plus its cached parameters.
+        private readonly Dictionary<string, Dictionary<string, (MethodInfo Method, ParameterInfo[] Parameters)>>
+            _handlerMethods = new Dictionary<string, Dictionary<string, (MethodInfo Method, ParameterInfo[] Parameters)>>();
         private readonly bool _validateRequests;
         private readonly bool _validateResponses;
 
@@ -53,6 +57,20 @@ namespace PulseRPC
         public void AddHandler(string ifaceName, object handler)
         {
             _handlers[ifaceName] = handler;
+
+            // Resolve reflection once at registration. The case-insensitive map
+            // covers both the wire name and the capitalized C# alias, and caches
+            // ParameterInfo[] so invocation never re-queries it.
+            var methods = new Dictionary<string, (MethodInfo Method, ParameterInfo[] Parameters)>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var m in handler.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!methods.ContainsKey(m.Name))
+                {
+                    methods[m.Name] = (m, m.GetParameters());
+                }
+            }
+            _handlerMethods[ifaceName] = methods;
         }
 
         /// <summary>
@@ -112,27 +130,27 @@ namespace PulseRPC
                 return Fail(-32601, "Method not found", $"Unknown interface: {ifaceName}");
             }
 
-            // Get function from handler
-            var handlerType = handler.GetType();
-            var methodInfo = handlerType.GetMethod(funcName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-            if (methodInfo == null)
-            {
-                // Try with first letter uppercased (Go/C# convention)
-                var capitalizedName = char.ToUpper(funcName[0]) + funcName.Substring(1);
-                methodInfo = handlerType.GetMethod(capitalizedName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-            }
-
-            if (methodInfo == null)
+            // Get function from handler using the cache built at AddHandler
+            if (!_handlerMethods.TryGetValue(ifaceName, out var handlerMethods)
+                || !handlerMethods.TryGetValue(funcName, out var resolvedMethod))
             {
                 return Fail(-32601, "Method not found", $"Unknown method: {method}");
             }
+
+            // Resolve the IDL entries once and share them with normalization,
+            // validation and parameter naming.
+            var iface = _contract.GetInterface(ifaceName);
+            var fn = iface?.GetFunction(funcName);
+            IList paramDefs = fn != null && fn.TryGetValue("parameters", out var pdObj) && pdObj is IList pdList
+                ? pdList
+                : new ArrayList();
 
             // Get and normalize params (positional arrays, by-name objects, or a single scalar)
             request.TryGetValue("params", out var paramsObj);
             List<object?> positionalParams;
             try
             {
-                positionalParams = NormalizeParams(ifaceName, funcName, paramsObj);
+                positionalParams = NormalizeParams(ifaceName, funcName, paramDefs, paramsObj);
             }
             catch (ArgumentException ex)
             {
@@ -144,7 +162,7 @@ namespace PulseRPC
             {
                 try
                 {
-                    _contract.ValidateRequest(ifaceName, funcName, positionalParams);
+                    _contract.ValidateRequest(ifaceName, funcName, positionalParams, iface, fn, paramDefs);
                 }
                 catch (RPCError rpcErr)
                 {
@@ -157,13 +175,13 @@ namespace PulseRPC
             }
 
             // Convert positional params to named params using IDL signature
-            var namedParams = PositionalToNamedParams(ifaceName, funcName, positionalParams);
+            var namedParams = PositionalToNamedParams(paramDefs, positionalParams);
 
             // Invoke handler method
             object? result;
             try
             {
-                result = InvokeHandler(handler, methodInfo, namedParams);
+                result = InvokeHandler(handler, resolvedMethod, namedParams);
             }
             catch (TargetInvocationException ex)
             {
@@ -196,7 +214,7 @@ namespace PulseRPC
             {
                 try
                 {
-                    _contract.ValidateResponse(ifaceName, funcName, result);
+                    _contract.ValidateResponse(ifaceName, funcName, result, iface, fn);
                 }
                 catch (Exception ex)
                 {
@@ -215,24 +233,11 @@ namespace PulseRPC
         }
 
         /// <summary>
-        /// Gets the IDL parameter definitions for a method.
-        /// </summary>
-        private List<Dictionary<string, object>> GetParamDefs(string ifaceName, string funcName)
-        {
-            var fn = _contract.GetInterface(ifaceName)?.GetFunction(funcName);
-            if (fn == null || !fn.TryGetValue("parameters", out var pdObj) || pdObj is not System.Collections.IList pdList)
-            {
-                return new List<Dictionary<string, object>>();
-            }
-            return pdList.OfType<Dictionary<string, object>>().ToList();
-        }
-
-        /// <summary>
         /// Normalizes JSON-RPC params into a positional list using the IDL
         /// parameter names. By-name objects are reordered and unknown names are
         /// rejected so they cannot be silently dropped (M8).
         /// </summary>
-        private List<object?> NormalizeParams(string ifaceName, string funcName, object? paramsObj)
+        private List<object?> NormalizeParams(string ifaceName, string funcName, IList paramDefs, object? paramsObj)
         {
             if (paramsObj == null)
             {
@@ -251,44 +256,56 @@ namespace PulseRPC
 
             if (paramsObj is System.Collections.IDictionary dict)
             {
-                var paramDefs = GetParamDefs(ifaceName, funcName);
+                // One case-insensitive lookup serves both unknown-key rejection
+                // and value resolution, replacing the old O(paramCount * keyCount)
+                // scan. First occurrence wins for names differing only by case,
+                // matching the previous loop's break-on-first-match behavior.
+                var byName = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var key in dict.Keys)
+                {
+                    var keyName = key?.ToString() ?? "";
+                    if (!byName.ContainsKey(keyName))
+                    {
+                        byName[keyName] = dict[key!];
+                    }
+                }
+
                 var knownNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var pd in paramDefs)
                 {
-                    if (pd.TryGetValue("name", out var nameObj) && nameObj != null)
+                    if (pd is Dictionary<string, object> pdDict
+                        && pdDict.TryGetValue("name", out var nameObj) && nameObj != null)
                     {
                         knownNames.Add(nameObj.ToString()!);
                     }
                 }
 
-                foreach (var key in dict.Keys)
+                foreach (var key in byName.Keys)
                 {
-                    var keyName = key?.ToString() ?? "";
-                    if (!knownNames.Contains(keyName))
+                    if (!knownNames.Contains(key))
                     {
-                        throw new ArgumentException($"Unknown parameter '{keyName}' for {ifaceName}.{funcName}");
+                        throw new ArgumentException($"Unknown parameter '{key}' for {ifaceName}.{funcName}");
                     }
                 }
 
                 var result = new List<object?>();
                 foreach (var pd in paramDefs)
                 {
-                    var name = pd.TryGetValue("name", out var nameObj) ? nameObj?.ToString() ?? "" : "";
+                    if (pd is not Dictionary<string, object> paramDef)
+                    {
+                        result.Add(null);
+                        continue;
+                    }
+                    var name = paramDef.TryGetValue("name", out var nameObj) ? nameObj?.ToString() ?? "" : "";
                     object? value = null;
+                    // Exact match still takes precedence over case-insensitive.
                     if (!string.IsNullOrEmpty(name) && dict.Contains(name))
                     {
                         value = dict[name];
                     }
-                    else
+                    else if (!string.IsNullOrEmpty(name) && byName.TryGetValue(name, out var matched))
                     {
-                        foreach (var key in dict.Keys)
-                        {
-                            if (string.Equals(key?.ToString(), name, StringComparison.OrdinalIgnoreCase))
-                            {
-                                value = dict[key!];
-                                break;
-                            }
-                        }
+                        value = matched;
                     }
                     result.Add(value);
                 }
@@ -362,44 +379,10 @@ namespace PulseRPC
         /// <summary>
         /// Converts positional params to named params using IDL signature
         /// </summary>
-        private Dictionary<string, object?> PositionalToNamedParams(string ifaceName, string funcName,
+        private Dictionary<string, object?> PositionalToNamedParams(IList paramDefs,
             List<object?> positionalParams)
         {
             var result = new Dictionary<string, object?>();
-
-            if (_contract == null)
-            {
-                for (int i = 0; i < positionalParams.Count; i++)
-                {
-                    result[$"p{i}"] = positionalParams[i];
-                }
-                return result;
-            }
-
-            var iface = _contract.GetInterface(ifaceName);
-            if (iface == null)
-            {
-                for (int i = 0; i < positionalParams.Count; i++)
-                {
-                    result[$"p{i}"] = positionalParams[i];
-                }
-                return result;
-            }
-
-            var fn = iface.GetFunction(funcName);
-            if (fn == null)
-            {
-                for (int i = 0; i < positionalParams.Count; i++)
-                {
-                    result[$"p{i}"] = positionalParams[i];
-                }
-                return result;
-            }
-
-            // Get parameter definitions
-            var paramDefs = fn.TryGetValue("parameters", out var pdObj) && pdObj is System.Collections.IList pdList
-                ? pdList.Cast<object>().ToList()
-                : new List<object>();
 
             for (int i = 0; i < positionalParams.Count; i++)
             {
@@ -420,10 +403,12 @@ namespace PulseRPC
         /// <summary>
         /// Invokes a handler method with the given named parameters
         /// </summary>
-        private object? InvokeHandler(object handler, MethodInfo methodInfo, Dictionary<string, object?> namedParams)
+        private object? InvokeHandler(object handler,
+            (MethodInfo Method, ParameterInfo[] Parameters) resolved,
+            Dictionary<string, object?> namedParams)
         {
-            var parameters = methodInfo.GetParameters();
-            var args = new List<object?>();
+            var parameters = resolved.Parameters;
+            var args = new object?[parameters.Length];
 
             for (int i = 0; i < parameters.Length; i++)
             {
@@ -436,7 +421,7 @@ namespace PulseRPC
                     // Convert if necessary
                     if (arg != null && parameters[i].ParameterType.IsAssignableFrom(arg.GetType()))
                     {
-                        args.Add(arg);
+                        args[i] = arg;
                         continue;
                     }
                 }
@@ -447,19 +432,19 @@ namespace PulseRPC
                     var lowerName = char.ToLower(paramName[0]) + paramName.Substring(1);
                     if (namedParams.TryGetValue(lowerName, out arg))
                     {
-                        args.Add(arg);
+                        args[i] = arg;
                         continue;
                     }
                 }
 
                 // Use default value
-                args.Add(parameters[i].DefaultValue);
+                args[i] = parameters[i].DefaultValue;
             }
 
-            var result = methodInfo.Invoke(handler, args.ToArray());
+            var result = resolved.Method.Invoke(handler, args);
 
             // Check if method returns an error
-            if (methodInfo.ReturnType is Type rt && rt.IsGenericType)
+            if (resolved.Method.ReturnType is Type rt && rt.IsGenericType)
             {
                 // For methods returning (result, error) tuples
             }

@@ -151,9 +151,11 @@ namespace PulseRPC
 
         public object? Call(string method, object? @params = null)
         {
+            // Parse the wire method name once; both validation stages need it.
+            var parts = ParseMethodName(method);
+
             if (_validateRequest && Contract != null)
             {
-                var parts = ParseMethodName(method);
                 if (parts != null)
                 {
                     var paramList = ConvertParamsToList(parts.Value.ifaceName, parts.Value.funcName, @params);
@@ -187,7 +189,6 @@ namespace PulseRPC
 
             if (_validateResponse && Contract != null)
             {
-                var parts = ParseMethodName(method);
                 if (parts != null)
                 {
                     try
