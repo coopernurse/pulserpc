@@ -1,0 +1,14 @@
+// Entry point for the cross-namespace fixture.
+namespace app
+
+import "common.pulse"
+
+// Struct inheritance from the imported namespace.
+struct Derived extends common.Shared {
+    score int
+}
+
+interface AppOps {
+    Status(mode common.Mode) common.Shared
+    Combine(base common.Shared, extra Derived) common.Shared
+}
