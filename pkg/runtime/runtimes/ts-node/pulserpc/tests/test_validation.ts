@@ -175,6 +175,74 @@ function testValidateEnumInvalidValue() {
   console.log("✓ testValidateEnumInvalidValue");
 }
 
+function testValidateEnumErrorMessageUnchanged() {
+  const expected = [
+    {
+      path: ".status",
+      message: "Invalid value for enum Platform: 'bogus'. Allowed values: kindle, nook",
+    },
+  ];
+  // Public standalone helper keeps the exact message/format.
+  assert.deepEqual(validateEnum("bogus", "Platform", ["kindle", "nook"], ".status"), expected);
+
+  // The cached validateType path must be byte-identical to the standalone one.
+  const allEnums: EnumMap = {
+    Platform: { values: [{ name: "kindle" }, { name: "nook" }] },
+  };
+  assert.deepEqual(
+    validateType("bogus", { userDefined: "Platform" }, {}, allEnums, false, ".status"),
+    expected
+  );
+  console.log("✓ testValidateEnumErrorMessageUnchanged");
+}
+
+function testEnumMetadataIsCached() {
+  let valuesReads = 0;
+  const enumDef = {
+    get values() {
+      valuesReads++;
+      return [{ name: "a" }, { name: "b" }];
+    },
+  };
+  const allEnums: EnumMap = { Platform: enumDef };
+  const typeDef = { userDefined: "Platform" };
+
+  assert.deepEqual(validateType("a", typeDef, {}, allEnums), []);
+  assert.equal(valuesReads, 1);
+  // Re-validating the same enum definition must reuse the cached Set/joined string.
+  assert.deepEqual(validateType("b", typeDef, {}, allEnums), []);
+  assert.equal(valuesReads, 1, "enum def values should be read once per definition");
+  assert.deepEqual(validateType("c", typeDef, {}, allEnums), [
+    { path: "", message: "Invalid value for enum Platform: 'c'. Allowed values: a, b" },
+  ]);
+  assert.equal(valuesReads, 1);
+  console.log("✓ testEnumMetadataIsCached");
+}
+
+function testValidateStructInheritedFieldOverride() {
+  const allStructs: StructMap = {
+    Base: { fields: [{ name: "id", type: { builtIn: "string" } }] },
+    Child: {
+      extends: "Base",
+      fields: [
+        { name: "id", type: { builtIn: "int" } }, // overrides parent's string type
+        { name: "name", type: { builtIn: "string" } },
+      ],
+    },
+  };
+
+  // The inherited-but-overridden field is validated with the child's int type.
+  assert.deepEqual(
+    validateType({ id: 7, name: "A" }, { userDefined: "Child" }, allStructs, {}),
+    []
+  );
+  const errs = validateType({ id: "seven", name: "A" }, { userDefined: "Child" }, allStructs, {});
+  assert.equal(errs.length, 1);
+  assert.equal(errs[0].path, ".id");
+  assert.match(errs[0].message, /Expected number for int/);
+  console.log("✓ testValidateStructInheritedFieldOverride");
+}
+
 function testValidateStructSuccess() {
   const allStructs: StructMap = {
     User: {
@@ -394,6 +462,9 @@ testValidateMapValueValidationFails();
 testValidateEnumSuccess();
 testValidateEnumWrongType();
 testValidateEnumInvalidValue();
+testValidateEnumErrorMessageUnchanged();
+testEnumMetadataIsCached();
+testValidateStructInheritedFieldOverride();
 testValidateStructSuccess();
 testValidateStructMissingRequiredField();
 testValidateStructOptionalField();

@@ -276,7 +276,13 @@ export class Contract {
     paramDefs: FunctionDef["parameters"],
     givenCount: number
   ): void {
-    const requiredCount = paramDefs.filter((p) => !p.optional).length;
+    // Count in place: avoid allocating a filtered array on every request.
+    let requiredCount = 0;
+    for (const p of paramDefs) {
+      if (!p.optional) {
+        requiredCount++;
+      }
+    }
     if (givenCount < requiredCount || givenCount > paramDefs.length) {
       throw new RPCError(
         -32602,

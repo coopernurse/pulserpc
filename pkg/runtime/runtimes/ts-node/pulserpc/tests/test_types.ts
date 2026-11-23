@@ -85,6 +85,38 @@ function testGetStructFieldsOverrideParent() {
   console.log("✓ testGetStructFieldsOverrideParent");
 }
 
+function testGetStructFieldsCachedByIdentity() {
+  const allStructs: StructMap = {
+    Base: { fields: [{ name: "id", type: { builtIn: "string" } }] },
+    User: {
+      extends: "Base",
+      fields: [
+        { name: "id", type: { builtIn: "int" } }, // override parent
+        { name: "name", type: { builtIn: "string" } },
+      ],
+    },
+  };
+
+  // Repeated lookups return the same resolved array (cache reuse).
+  const first = getStructFields("User", allStructs);
+  const second = getStructFields("User", allStructs);
+  assert.strictEqual(first, second, "resolved fields should be cached and reused");
+  assert.strictEqual(getStructFields("Base", allStructs), getStructFields("Base", allStructs));
+
+  // The cache is keyed by the map object: a different map gets its own array.
+  const otherMap: StructMap = {
+    User: { fields: [{ name: "id", type: { builtIn: "int" } }] },
+  };
+  assert.notStrictEqual(getStructFields("User", otherMap), first);
+
+  // Inherited field overrides are still applied correctly through the cache.
+  assert.strictEqual(first.length, 2);
+  assert.strictEqual(first[0].name, "id");
+  assert.strictEqual(first[0].type.builtIn, "int");
+  assert.strictEqual(first[1].name, "name");
+  console.log("✓ testGetStructFieldsCachedByIdentity");
+}
+
 function testFindQualifiedTypesByBaseName() {
   // Generated idl.json keeps imported names qualified while local references
   // are unqualified; lookups must resolve both forms (invariant R6).
@@ -121,4 +153,5 @@ testAmbiguousBaseNameIsDeterministic();
 testGetStructFieldsSimple();
 testGetStructFieldsWithExtends();
 testGetStructFieldsOverrideParent();
+testGetStructFieldsCachedByIdentity();
 console.log("\nAll type tests passed!");
