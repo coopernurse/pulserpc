@@ -402,6 +402,16 @@ func (p *GoClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
 	if err != nil {
 		return err
 	}
+	// The embedded runtime tree contains upstream's own *_test.go files. They
+	// are not part of the generated package and some of them read files from
+	// the PulseRPC source checkout (e.g. the spec-consistency test), so
+	// shipping them makes `go test ./...` fail in a fresh generated module.
+	// Keep those tests upstream; generated output gets production files only.
+	for filename := range files {
+		if strings.HasSuffix(filename, "_test.go") {
+			delete(files, filename)
+		}
+	}
 
 	// Runtime is always at {dir}/pulserpc/
 	var runtimeDir string
@@ -853,6 +863,15 @@ func generateServerGo(idl *parser.IDL, idlJSON []byte, structMap map[string]*par
 	return sb.String()
 }
 
+// goInterfaceIdent returns the Go identifier for an IDL interface. Interfaces
+// declared in an imported .pulse file carry a namespace qualifier (e.g.
+// "alpha.Alpha"); that qualifier is part of the JSON-RPC method name but is not
+// a valid Go identifier. Identifier sites use the base name, while method
+// strings keep the qualified name so "alpha.Alpha.Ping" stays intact.
+func goInterfaceIdent(iface *parser.Interface) string {
+	return GetBaseName(iface.Name)
+}
+
 // writeInterfaceStubGo generates a Go interface for an IDL interface
 func writeInterfaceStubGo(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, namespace string, nsImports map[string]string, packageImportPath string) {
 	if iface.Comment != "" {
@@ -861,7 +880,7 @@ func writeInterfaceStubGo(sb *strings.Builder, iface *parser.Interface, structMa
 			fmt.Fprintf(sb, "// %s\n", line)
 		}
 	}
-	fmt.Fprintf(sb, "type %s interface {\n", iface.Name)
+	fmt.Fprintf(sb, "type %s interface {\n", goInterfaceIdent(iface))
 
 	for _, method := range iface.Methods {
 		methodName := snakeToCamelCase(method.Name)
@@ -1323,7 +1342,7 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 		}
 	}
 
-	clientName := iface.Name + "Client"
+	clientName := goInterfaceIdent(iface) + "Client"
 	fmt.Fprintf(sb, "// %s is a client for the %s interface\n", clientName, iface.Name)
 	fmt.Fprintf(sb, "type %s struct {\n", clientName)
 	sb.WriteString("	transport         Transport\n")
@@ -1415,7 +1434,7 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, namespace string, nsImports map[string]string, packageImportPath string) {
 	methodName := snakeToCamelCase(method.Name)
 	fmt.Fprintf(sb, "// %s calls %s.%s\n", methodName, iface.Name, method.Name)
-	fmt.Fprintf(sb, "func (c *%sClient) %s(", iface.Name, methodName)
+	fmt.Fprintf(sb, "func (c *%sClient) %s(", goInterfaceIdent(iface), methodName)
 
 	// Parameters
 	for i, param := range method.Parameters {
@@ -1695,7 +1714,7 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("	port := 8080\n")
 	sb.WriteString("	server := NewPulseRPCServer(\"0.0.0.0\", port)\n\n")
 	for _, iface := range idl.Interfaces {
-		implName := iface.Name + "Impl"
+		implName := goInterfaceIdent(iface) + "Impl"
 		fmt.Fprintf(&sb, "\tserver.Register(\"%s\", &%s{})\n", iface.Name, implName)
 	}
 	sb.WriteString("\n")
@@ -1721,7 +1740,7 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 
 // writeTestInterfaceImplGo generates a test implementation struct for an interface
 func writeTestInterfaceImplGo(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
-	implName := iface.Name + "Impl"
+	implName := goInterfaceIdent(iface) + "Impl"
 	fmt.Fprintf(sb, "type %s struct{}\n\n", implName)
 
 	// Generate method implementations
@@ -1733,7 +1752,7 @@ func writeTestInterfaceImplGo(sb *strings.Builder, iface *parser.Interface, stru
 // writeTestMethodImplGo generates a test method implementation
 func writeTestMethodImplGo(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
 	methodName := snakeToCamelCase(method.Name)
-	fmt.Fprintf(sb, "func (i *%sImpl) %s(", iface.Name, methodName)
+	fmt.Fprintf(sb, "func (i *%sImpl) %s(", goInterfaceIdent(iface), methodName)
 
 	// Parameters
 	for i, param := range method.Parameters {
@@ -1921,8 +1940,8 @@ func generateTestClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 
 	fmt.Fprintf(&sb, "	transport := NewHTTPTransport(serverURL, nil)\n")
 	for _, iface := range idl.Interfaces {
-		clientName := iface.Name + "Client"
-		clientVar := strings.ToLower(iface.Name) + "Client"
+		clientName := goInterfaceIdent(iface) + "Client"
+		clientVar := strings.ToLower(goInterfaceIdent(iface)) + "Client"
 		fmt.Fprintf(&sb, "	%s := New%s(transport)\n", clientVar, clientName)
 	}
 	sb.WriteString("\n")
@@ -1933,7 +1952,7 @@ func generateTestClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	// divergent IDL. This runs only when the generated test files are used.
 	if len(idl.Interfaces) > 0 {
 		first := idl.Interfaces[0]
-		fmt.Fprintf(&sb, "	divergentClient := New%sClient(divergentIDLTransport{})\n", first.Name)
+		fmt.Fprintf(&sb, "	divergentClient := New%sClient(divergentIDLTransport{})\n", goInterfaceIdent(first))
 		sb.WriteString("	if result := divergentClient.VerifyCompatibility(context.Background()); result.Compatible {\n")
 		sb.WriteString("		errors = append(errors, \"VerifyCompatibility accepted a divergent server IDL\")\n")
 		sb.WriteString("	} else if result.ServerChecksum != \"divergent-checksum\" {\n")
@@ -1943,7 +1962,7 @@ func generateTestClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 
 	// Generate test cases for each method
 	for _, iface := range idl.Interfaces {
-		clientVar := strings.ToLower(iface.Name) + "Client"
+		clientVar := strings.ToLower(goInterfaceIdent(iface)) + "Client"
 		for _, method := range iface.Methods {
 			writeTestClientCallGo(&sb, iface, method, clientVar, structMap, enumMap)
 		}
