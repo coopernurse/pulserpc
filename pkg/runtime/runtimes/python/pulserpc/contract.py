@@ -12,7 +12,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from .validation import validate_type
-from .rpctypes import VerificationResult, ContractDelta, Severity, ValidationError, ValidationResult
+from .rpctypes import (
+    VerificationResult,
+    ContractDelta,
+    Severity,
+    ValidationError,
+    ValidationResult,
+    _get_resolution_index,
+    get_struct_fields,
+)
 from .rpc import RPCError, INVALID_PARAMS, INTERNAL_ERROR
 
 
@@ -182,6 +190,25 @@ class Contract:
                         if key != 'type':
                             self.meta[key] = value
 
+        # Precompute immutable lookup metadata once.  The struct/enum tables and
+        # their derived field/allowed-value lists do not change for the lifetime
+        # of a Contract, so validation reuses them instead of re-resolving names
+        # and rebuilding inherited field lists for every top-level parameter.
+        self._struct_index = _get_resolution_index(self.structs)
+        self._enum_index = _get_resolution_index(self.enums)
+        self._indexes = (self._struct_index, self._enum_index)
+
+        self._enum_values: Dict[str, tuple] = {}
+        for enum_key, enum_def in self.enums.items():
+            allowed_values = [v['name'] for v in enum_def.get('values', [])]
+            self._enum_values[enum_key] = (frozenset(allowed_values), allowed_values)
+
+        self._fields: Dict[str, List[Dict[str, Any]]] = {}
+        for struct_key in self.structs:
+            self._fields[struct_key] = get_struct_fields(
+                struct_key, self.structs, _index=self._struct_index
+            )
+
     @classmethod
     def from_file(cls, path: str) -> "Contract":
         """Load a Contract from a JSON file path
@@ -242,7 +269,10 @@ class Contract:
             ['.username']
         """
         type_def = {"userDefined": type_name}
-        errors = validate_type(value, type_def, self.structs, self.enums)
+        errors = validate_type(value, type_def, self.structs, self.enums,
+                               _indexes=self._indexes,
+                               _enum_values=self._enum_values,
+                               _fields=self._fields)
         return build_validation_result(errors)
 
     def validate_request(self, iface_name: str, func_name: str,
@@ -289,7 +319,10 @@ class Contract:
             is_optional = param_def.get('optional', False)
 
             errors = validate_type(param_value, param_type, self.structs,
-                                  self.enums, is_optional)
+                                  self.enums, is_optional,
+                                  _indexes=self._indexes,
+                                  _enum_values=self._enum_values,
+                                  _fields=self._fields)
             for err in errors:
                 path = f"param[{i}]{err.path}" if err.path else f"param[{i}]"
                 all_errors.append(ValidationError(path=path, message=err.message))
@@ -340,7 +373,10 @@ class Contract:
         # Validate return type
         is_optional = func.get('returnOptional', False)
         errors = validate_type(result, return_type, self.structs,
-                              self.enums, is_optional)
+                              self.enums, is_optional,
+                              _indexes=self._indexes,
+                              _enum_values=self._enum_values,
+                              _fields=self._fields)
         if errors:
             raise RPCError(
                 INTERNAL_ERROR,
