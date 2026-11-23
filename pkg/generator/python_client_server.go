@@ -364,7 +364,7 @@ func generateClientPyForNamespace(nsTypes *NamespaceTypes, packageBase string) s
 		if len(iface.Methods) > 0 {
 			method := iface.Methods[0]
 			sb.WriteString("#\n")
-			sb.WriteString(fmt.Sprintf("# result = client.%s.%s(", iface.Name, method.Name))
+			sb.WriteString(fmt.Sprintf("# result = client.%s.%s(", pythonInterfaceIdent(iface), method.Name))
 			if len(method.Parameters) > 0 {
 				params := make([]string, 0, len(method.Parameters))
 				for _, param := range method.Parameters {
@@ -757,7 +757,7 @@ func writePydanticEnumModel(sb *strings.Builder, enum *parser.Enum) {
 		}
 	}
 
-	fmt.Fprintf(sb, "class %s(BaseModel):\n", enum.Name)
+	fmt.Fprintf(sb, "class %s(BaseModel):\n", GetBaseName(enum.Name))
 	sb.WriteString("    \"\"\"Pydantic model for enum\n\n")
 	sb.WriteString("    Values:\n")
 	for _, value := range enum.Values {
@@ -794,7 +794,7 @@ func writePydanticStructModel(sb *strings.Builder, structDef *parser.Struct) {
 		}
 	}
 
-	fmt.Fprintf(sb, "class %s(BaseModel):\n", structDef.Name)
+	fmt.Fprintf(sb, "class %s(BaseModel):\n", GetBaseName(structDef.Name))
 	if structDef.Comment != "" {
 		fmt.Fprintf(sb, "    \"\"\"%s\"\"\"\n", escapePythonDocstring(strings.TrimSpace(structDef.Comment)))
 	} else {
@@ -940,6 +940,16 @@ func writePydanticExampleValue(sb *strings.Builder, t *parser.Type) {
 	}
 }
 
+// pythonInterfaceIdent returns the Python identifier for an IDL interface.
+// Interfaces declared in an imported .pulse file carry a namespace qualifier
+// (e.g. "common.CommonOps"); that qualifier is part of the JSON-RPC method name
+// but is not valid in a Python identifier. Identifier sites use the base name,
+// while wire strings, IDL metadata and registration keys keep the qualified
+// name so "common.CommonOps.Ping" stays intact.
+func pythonInterfaceIdent(iface *parser.Interface) string {
+	return GetBaseName(iface.Name)
+}
+
 // writeInterfaceStub writes an abstract base class for an interface
 func writeInterfaceStub(sb *strings.Builder, iface *parser.Interface) {
 	if iface.Comment != "" {
@@ -948,7 +958,7 @@ func writeInterfaceStub(sb *strings.Builder, iface *parser.Interface) {
 			fmt.Fprintf(sb, "# %s\n", line)
 		}
 	}
-	fmt.Fprintf(sb, "class %s(abc.ABC):\n", iface.Name)
+	fmt.Fprintf(sb, "class %s(abc.ABC):\n", pythonInterfaceIdent(iface))
 	if iface.Comment != "" {
 		fmt.Fprintf(sb, "    \"\"\"%s\"\"\"\n", escapePythonDocstring(strings.TrimSpace(iface.Comment)))
 	}
@@ -1115,7 +1125,9 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 	sb.WriteString("    # Create Server instance\n")
 	sb.WriteString("    rpc_server = Server(contract)\n")
 	for _, iface := range nsTypes.Interfaces {
-		implName := iface.Name + "Impl"
+		implName := pythonInterfaceIdent(iface) + "Impl"
+		// The registration key must stay qualified: the runtime splits the
+		// wire method "common.CommonOps.Ping" and looks up "common.CommonOps".
 		fmt.Fprintf(&sb, "    rpc_server.add_handler(\"%s\", %s())\n", iface.Name, implName)
 	}
 	sb.WriteString("\n")
@@ -1129,8 +1141,8 @@ func generateTestServerPyForNamespace(nsTypes *NamespaceTypes, structMap map[str
 
 // writeTestInterfaceImpl generates a test implementation class for an interface
 func writeTestInterfaceImpl(sb *strings.Builder, iface *parser.Interface, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
-	implName := iface.Name + "Impl"
-	fmt.Fprintf(sb, "class %s(%s):\n", implName, iface.Name)
+	implName := pythonInterfaceIdent(iface) + "Impl"
+	fmt.Fprintf(sb, "class %s(%s):\n", implName, pythonInterfaceIdent(iface))
 	sb.WriteString("    \"\"\"Test implementation of ")
 	fmt.Fprintf(sb, "%s", iface.Name)
 	sb.WriteString(" interface\"\"\"\n\n")
@@ -1449,9 +1461,9 @@ func writeTestClientCall(sb *strings.Builder, iface *parser.Interface, method *p
 
 	// Generate method call - use interface name to access the interface proxy
 	if len(params) > 0 {
-		fmt.Fprintf(sb, "        result = %s.%s.%s(%s)\n", clientVar, iface.Name, method.Name, strings.Join(params, ", "))
+		fmt.Fprintf(sb, "        result = %s.%s.%s(%s)\n", clientVar, pythonInterfaceIdent(iface), method.Name, strings.Join(params, ", "))
 	} else {
-		fmt.Fprintf(sb, "        result = %s.%s.%s()\n", clientVar, iface.Name, method.Name)
+		fmt.Fprintf(sb, "        result = %s.%s.%s()\n", clientVar, pythonInterfaceIdent(iface), method.Name)
 	}
 
 	// Generate assertions based on method
@@ -1460,7 +1472,7 @@ func writeTestClientCall(sb *strings.Builder, iface *parser.Interface, method *p
 		sb.WriteString("        # Test normal return\n")
 		sb.WriteString("        assert result == \"test\", f\"Expected 'test', got {result}\"\n")
 		sb.WriteString("        # Test null return\n")
-		fmt.Fprintf(sb, "        result_null = %s.%s.echo(\"return-null\")\n", clientVar, iface.Name)
+		fmt.Fprintf(sb, "        result_null = %s.%s.echo(\"return-null\")\n", clientVar, pythonInterfaceIdent(iface))
 		sb.WriteString("        assert result_null is None, f\"Expected None, got {result_null}\"\n")
 	} else if methodNameLower == "add" {
 		sb.WriteString("        assert result == 5, f\"Expected 5, got {result}\"\n")
