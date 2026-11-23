@@ -26,6 +26,19 @@ func runCSharpGenerate(t *testing.T, idl *parser.IDL, outDir string) {
 	}
 }
 
+// runCSharpGenerateWithPackage runs the C# generator with an explicit -package base.
+func runCSharpGenerateWithPackage(t *testing.T, idl *parser.IDL, outDir, packageBase string) {
+	t.Helper()
+	fs := flag.NewFlagSet("csharp", flag.ContinueOnError)
+	fs.String("dir", outDir, "")
+	fs.String("package", packageBase, "")
+	fs.Bool("silent", true, "")
+	fs.Bool("generate-test-files", true, "")
+	if err := NewCSharpClientServer().Generate(idl, fs); err != nil {
+		t.Fatalf("Generate with -package %q: %v", packageBase, err)
+	}
+}
+
 // readTree returns relative path -> contents for every file under dir.
 func readTree(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
@@ -647,5 +660,101 @@ func TestCSharpGeneratedClientVerifiesAgainstFetchedIdl(t *testing.T) {
 		if !strings.Contains(code, want) {
 			t.Errorf("generated client missing verification behavior %q", want)
 		}
+	}
+}
+
+// D8: -package must qualify every generated namespace declaration, including
+// the shared sources emitted at the output root. A single bare
+// `namespace PulseRPC` would put Contract/Server/Client outside the rewritten
+// runtime namespace and break `using <base>.PulseRPC;` resolution.
+func TestCSharpPackageNamespaceAppliedToAllGeneratedFiles(t *testing.T) {
+	const base = "MyApp.Lib.Rpc"
+	const runtimeNS = base + ".PulseRPC"
+
+	idl := buildCSharpNamedResolutionIDL()
+	outDir := t.TempDir()
+	runCSharpGenerateWithPackage(t, idl, outDir, base)
+
+	tree := readTree(t, outDir)
+	csCount := 0
+	sawRuntimeImport := false
+	for rel, data := range tree {
+		if !strings.HasSuffix(rel, ".cs") {
+			continue
+		}
+		csCount++
+		code := string(data)
+		if strings.Contains(code, "\nnamespace PulseRPC\n") {
+			t.Errorf("%s still declares bare `namespace PulseRPC`", rel)
+		}
+		if strings.Contains(code, "\nusing PulseRPC;") {
+			t.Errorf("%s still imports bare `using PulseRPC;`", rel)
+		}
+		if strings.Contains(code, "using "+runtimeNS+";") {
+			sawRuntimeImport = true
+		}
+	}
+	if csCount == 0 {
+		t.Fatal("generator produced no .cs files")
+	}
+	if !sawRuntimeImport {
+		t.Errorf("no generated file imports the configured runtime namespace %q", runtimeNS)
+	}
+
+	// The root-level shared sources must all live in the configured runtime
+	// namespace, matching the copied/rewritten runtime sources.
+	for _, name := range []string{"Contract.cs", "Server.cs", "Client.cs"} {
+		data, ok := tree[name]
+		if !ok {
+			t.Fatalf("missing root file %s", name)
+		}
+		if !strings.Contains(string(data), "\nnamespace "+runtimeNS+"\n") {
+			t.Errorf("root file %s does not declare `namespace %s`:\n%s", name, runtimeNS, data)
+		}
+	}
+
+	// Namespace-scoped sources keep their namespace under the configured base.
+	appData, ok := tree["MyApp/Lib/Rpc/App/App.cs"]
+	if !ok {
+		t.Fatal("missing MyApp/Lib/Rpc/App/App.cs")
+	}
+	if !strings.Contains(string(appData), "\nnamespace "+base+".") {
+		t.Errorf("App.cs namespace is not scoped under %s:\n%s", base, appData)
+	}
+
+	// The runtime sources were copied into the package tree and rewritten to
+	// the same namespace, so the generated `using <base>.PulseRPC;` resolves.
+	runtimeData, ok := tree["MyApp/Lib/Rpc/PulseRPC/RPCError.cs"]
+	if !ok {
+		t.Fatal("missing MyApp/Lib/Rpc/PulseRPC/RPCError.cs")
+	}
+	if !strings.Contains(string(runtimeData), "namespace "+runtimeNS+"\n") {
+		t.Errorf("copied runtime source does not declare `namespace %s`:\n%s", runtimeNS, runtimeData)
+	}
+}
+
+// Preserve the no -package behavior: sources remain in the bare PulseRPC
+// namespace and the runtime stays at PulseRPC/.
+func TestCSharpNoPackageKeepsBareNamespace(t *testing.T) {
+	idl := buildCSharpNamedResolutionIDL()
+	outDir := t.TempDir()
+	runCSharpGenerate(t, idl, outDir)
+
+	tree := readTree(t, outDir)
+	for _, name := range []string{"Contract.cs", "Server.cs", "Client.cs"} {
+		data, ok := tree[name]
+		if !ok {
+			t.Fatalf("missing root file %s", name)
+		}
+		code := string(data)
+		if !strings.Contains(code, "\nnamespace PulseRPC\n") {
+			t.Errorf("root file %s lost bare `namespace PulseRPC`:\n%s", name, code)
+		}
+		if !strings.Contains(code, "\nusing PulseRPC;") {
+			t.Errorf("root file %s lost bare `using PulseRPC;`:\n%s", name, code)
+		}
+	}
+	if _, ok := tree["PulseRPC/RPCError.cs"]; !ok {
+		t.Error("runtime source was not copied to PulseRPC/ without -package")
 	}
 }
