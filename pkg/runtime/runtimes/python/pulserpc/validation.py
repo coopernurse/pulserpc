@@ -114,11 +114,20 @@ def validate_enum(
     value: Any,
     enum_name: str,
     allowed_values: List[str],
-    path: str = ""
+    path: str = "",
+    _allowed_set: Optional[frozenset] = None,
 ) -> List[ValidationError]:
+    """Validate an enum value.
+
+    ``_allowed_set`` is an optional precomputed frozenset for O(1) membership.
+    When it is omitted (the standalone/public case) the ordered list is used,
+    which keeps the original signature and behaviour intact.  Error text always
+    uses the ordered list.
+    """
     if not isinstance(value, str):
         return [_make_error(path, f"Expected string for enum {enum_name}, got {type(value).__name__}")]
-    if value not in allowed_values:
+    membership = allowed_values if _allowed_set is None else _allowed_set
+    if value not in membership:
         return [_make_error(path, f"Invalid value for enum {enum_name}: '{value}'. Allowed values: {allowed_values}")]
     return []
 
@@ -131,6 +140,8 @@ def validate_struct(
     all_enums: Dict[str, Any],
     path: str = "",
     _indexes: Optional[tuple] = None,
+    _fields: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    _enum_values: Optional[Dict[str, tuple]] = None,
 ) -> List[ValidationError]:
     if not isinstance(value, dict):
         return [_make_error(path, f"Expected dict for struct {struct_name}, got {type(value).__name__}")]
@@ -138,7 +149,11 @@ def validate_struct(
     if _indexes is None:
         _indexes = (_get_resolution_index(all_structs),
                     _get_resolution_index(all_enums))
-    fields = get_struct_fields(struct_name, all_structs, _index=_indexes[0])
+    if _fields is not None and struct_name in _fields:
+        # Precomputed by Contract.__init__: no recursive field rebuild here.
+        fields = _fields[struct_name]
+    else:
+        fields = get_struct_fields(struct_name, all_structs, _index=_indexes[0])
     errors: List[ValidationError] = []
 
     for field in fields:
@@ -164,7 +179,8 @@ def validate_struct(
             else:
                 errors.extend(
                     validate_type(field_value, field_type, all_structs, all_enums,
-                                  is_optional, field_path, _indexes)
+                                  is_optional, field_path, _indexes,
+                                  _enum_values, _fields)
                 )
 
     return errors
@@ -178,6 +194,8 @@ def validate_type(
     is_optional: bool = False,
     path: str = "",
     _indexes: Optional[tuple] = None,
+    _enum_values: Optional[Dict[str, tuple]] = None,
+    _fields: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> List[ValidationError]:
     if value is None:
         if is_optional:
@@ -196,18 +214,21 @@ def validate_type(
     elif type_def.get('array'):
         element_type = type_def['array']
         element_validator = lambda v, p: validate_type(
-            v, element_type, all_structs, all_enums, False, p, _indexes
+            v, element_type, all_structs, all_enums, False, p,
+            _indexes, _enum_values, _fields
         )
         return validate_array(value, element_validator, path)
     elif type_def.get('mapValue'):
         value_type = type_def['mapValue']
         value_validator = lambda v, p: validate_type(
-            v, value_type, all_structs, all_enums, False, p, _indexes
+            v, value_type, all_structs, all_enums, False, p,
+            _indexes, _enum_values, _fields
         )
         return validate_map(value, value_validator, path)
     elif type_def.get('userDefined'):
         # Resolve against prebuilt indexes instead of re-sorting both tables on
-        # every validation (review finding 2).
+        # every validation (review finding 2).  Contract passes all three cache
+        # objects; standalone callers still get the original lazy behaviour.
         if _indexes is None:
             _indexes = (_get_resolution_index(all_structs),
                         _get_resolution_index(all_enums))
@@ -216,12 +237,17 @@ def validate_type(
         if struct_key is not None:
             return validate_struct(
                 value, struct_key, all_structs[struct_key], all_structs,
-                all_enums, path, _indexes
+                all_enums, path, _indexes, _fields, _enum_values
             )
         enum_key = _resolve_with_index(user_type, all_enums, _indexes[1])
         if enum_key is not None:
-            allowed_values = [v['name'] for v in all_enums[enum_key].get('values', [])]
-            return validate_enum(value, enum_key, allowed_values, path)
+            if _enum_values is not None and enum_key in _enum_values:
+                # O(1) membership with the ordered list retained for error text.
+                allowed_set, allowed_values = _enum_values[enum_key]
+            else:
+                allowed_values = [v['name'] for v in all_enums[enum_key].get('values', [])]
+                allowed_set = frozenset(allowed_values)
+            return validate_enum(value, enum_key, allowed_values, path, allowed_set)
         return [_make_error(path, f"Unknown user-defined type: {user_type}")]
     else:
         return [_make_error(path, f"Invalid type definition: {type_def}")]

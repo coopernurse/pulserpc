@@ -198,47 +198,92 @@ def find_enum(enum_name: str, all_enums: Dict[str, Any],
     return all_enums[key] if key is not None else None
 
 
+# Resolved field lists are immutable for a Contract's lifetime, just like the
+# name indexes above.  Cache them per (definitions, resolved struct key) so
+# repeated validation does not rebuild the inherited field list.  The same
+# process-global locking rules apply (R21) because this cache is shared too.
+_FIELDS_CACHE_MAX = 256
+_FIELDS_CACHE_LOCK = threading.Lock()
+_fields_cache: "OrderedDict[tuple, tuple]" = OrderedDict()
+
+
 def get_struct_fields(struct_name: str, all_structs: Dict[str, Any],
                       _visited: Optional[set] = None,
                       _index: Optional[NameResolutionIndex] = None
                       ) -> List[Dict[str, Any]]:
-    """Recursively resolve struct extends to return all fields (parent + child)"""
+    """Recursively resolve struct extends to return all fields (parent + child).
+
+    The result is memoized per (definitions, resolved key).  The public
+    signature is unchanged; callers may pass a prebuilt ``_index`` to avoid
+    repeated cache lookups in hot loops.  A fresh outer list is returned on
+    each call so a caller cannot mutate the cached value.
+    """
     if _index is None:
         _index = _get_resolution_index(all_structs)
     key = _resolve_with_index(struct_name, all_structs, _index)
     if key is None:
         return []
 
-    # Guard against cyclic extends clauses (defensive: the parser also rejects them).
     if _visited is None:
-        _visited = set()
+        # Top-level call: serve from / store in the memo.  The index object is
+        # rebuilt when the definitions table changes size, so identity is a
+        # cheap and consistent invalidation check (same rule as the index cache).
+        cache_key = (id(all_structs), key)
+        with _FIELDS_CACHE_LOCK:
+            cached = _fields_cache.get(cache_key)
+            if cached is not None:
+                cached_defs, cached_index, fields = cached
+                if cached_defs is all_structs and cached_index is _index:
+                    _fields_cache.move_to_end(cache_key)
+                    return list(fields)
+
+        fields = _resolve_struct_fields(key, all_structs, set(), _index)
+        with _FIELDS_CACHE_LOCK:
+            _fields_cache[cache_key] = (all_structs, _index, fields)
+            _fields_cache.move_to_end(cache_key)
+            while len(_fields_cache) > _FIELDS_CACHE_MAX:
+                _fields_cache.popitem(last=False)
+        return list(fields)
+
+    # Recursive call: no memoization, the visited set is threaded explicitly.
+    return _resolve_struct_fields(key, all_structs, _visited, _index)
+
+
+def _resolve_struct_fields(key: str, all_structs: Dict[str, Any],
+                           _visited: set,
+                           _index: NameResolutionIndex) -> List[Dict[str, Any]]:
+    """Build the resolved field list for an already-resolved struct key.
+
+    A ``name -> position`` map makes parent-field overrides O(1) instead of a
+    linear scan per level, while preserving parent order and replacing an
+    override in place exactly as before.
+    """
     if key in _visited:
         return []
-    _visited = _visited | {key}
+    _visited = _visited | {key}  # Guard against cyclic extends clauses.
 
     struct_def = all_structs[key]
-    fields = []
-    
-    # Get parent fields first
+    fields: List[Dict[str, Any]] = []
+
+    # Get parent fields first.
     if struct_def.get('extends'):
-        parent_fields = get_struct_fields(
-            struct_def['extends'], all_structs, _visited, _index
-        )
-        fields.extend(parent_fields)
-    
-    # Add child fields (override parent if name conflict)
-    field_names = {f['name'] for f in fields}
+        parent_key = _resolve_with_index(struct_def['extends'], all_structs, _index)
+        if parent_key is not None:
+            fields.extend(
+                _resolve_struct_fields(parent_key, all_structs, _visited, _index)
+            )
+
+    # Add child fields, overriding parent fields in place by name.
+    field_positions = {f['name']: i for i, f in enumerate(fields)}
     for field in struct_def.get('fields', []):
-        if field['name'] not in field_names:
+        name = field['name']
+        position = field_positions.get(name)
+        if position is None:
+            field_positions[name] = len(fields)
             fields.append(field)
-            field_names.add(field['name'])
         else:
-            # Override parent field
-            for i, f in enumerate(fields):
-                if f['name'] == field['name']:
-                    fields[i] = field
-                    break
-    
+            fields[position] = field
+
     return fields
 
 
