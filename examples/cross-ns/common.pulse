@@ -1,0 +1,24 @@
+// Shared namespace for cross-namespace generator regression coverage.
+// app.pulse imports this file, so every generator must handle an interface,
+// struct and enum declared in another namespace.
+namespace common
+
+enum Mode {
+    on
+    off
+}
+
+struct Shared {
+    id      string
+    mode    Mode
+    tags    []string
+    note    string [optional]
+}
+
+// Declared in the imported namespace. Generators must use the base name for
+// generated identifiers, but keep the qualified name in JSON-RPC method
+// strings and IDL metadata.
+interface CommonOps {
+    Ping() string
+    Echo(item Shared) Shared
+}
