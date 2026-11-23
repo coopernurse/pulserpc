@@ -329,7 +329,8 @@ func (s *Server) handlePlaygroundFiles(w http.ResponseWriter, r *http.Request) {
 	// Get file contents
 	data, err := s.playgroundMgr.GetFile(sessionID, filePath)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read file: %v", err), http.StatusNotFound)
+		log.Printf("Failed to read file for session %s, path %s: %v", sessionID, filePath, err)
+		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
