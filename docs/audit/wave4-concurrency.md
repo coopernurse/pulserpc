@@ -73,3 +73,21 @@ remains STATIC-INSPECTION-ONLY and UNVERIFIED dynamically. This is precisely
 why the `go test -race` CI step above is recommended: CI images provide gcc,
 so the race detector will actually exercise the concurrent-validation path
 there. No stress test for C#/Java/Python/TS was run in this wave.
+
+## Orchestrator follow-up verification (read-only)
+
+- **Java caches:** `Types.java:26-27,87-88,167-168` use
+  `Collections.synchronizedMap(new WeakHashMap<>())` for `SORTED_KEYS`,
+  `ENUM_METADATA`, and `STRUCT_FIELDS`; each get-then-put is two synchronized
+  operations, so concurrent threads may redundantly build an equivalent
+  immutable value but cannot corrupt the map. `Server.methodCache` is a
+  `ConcurrentHashMap` populated with `putIfAbsent` in `addHandler`. No race.
+- **TS shared array:** the only production `getStructFields` call sites are
+  `ts-node/validation.ts:174` and `ts-cjs/validation.ts:164`, both `const fields = ...`
+  followed by read-only iteration. The shared-reference change is benign.
+- **C# method dictionary:** `AddHandler` (`Server.cs:64-73`) uses first-match over
+  `GetMethods(Public|Instance)`; generated handler classes have one method per IDL
+  function, so the old `GetMethod(..., IgnoreCase)` ambiguity case is unreachable
+  in generated code. The OrdinalIgnoreCase dictionary still covers the capitalized
+  alias.
+- Still owed: a CI `go test -race` run (local WSL lacks a C compiler).
