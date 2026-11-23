@@ -2,7 +2,7 @@
  * Validation functions for PulseRPC types.
  */
 
-import { findStruct, findEnum, getStructFields, StructMap, EnumMap, ValidationError } from "./types";
+import { findStruct, findEnum, getStructFields, StructMap, EnumMap, EnumDef, ValidationError } from "./types";
 
 function joinPath(parent: string, child: string): string {
   return parent ? `${parent}.${child}` : `.${child}`;
@@ -14,6 +14,36 @@ function arrayIndexPath(parent: string, index: number | string): string {
 
 function makeError(path: string, message: string): ValidationError {
   return { path, message };
+}
+
+interface EnumValueCache {
+  /** Names in declaration order; kept for the standalone validator's signature. */
+  allowedValues: string[];
+  /** O(1) membership check, replacing allowedValues.includes(value). */
+  allowedSet: Set<string>;
+  /** Error text joined once per enum definition instead of once per failure. */
+  allowedText: string;
+}
+
+/**
+ * Derived enum metadata is cached per definition object. IDL definitions are
+ * built once by the Contract parser and then treated as immutable; WeakMap
+ * keys avoid retaining discarded contracts.
+ */
+const enumValueCacheByDef = new WeakMap<object, EnumValueCache>();
+
+function getEnumValueCache(enumDef: EnumDef): EnumValueCache {
+  let cache = enumValueCacheByDef.get(enumDef);
+  if (cache === undefined) {
+    const allowedValues = enumDef.values.map((v: any) => v.name);
+    cache = {
+      allowedValues,
+      allowedSet: new Set(allowedValues),
+      allowedText: allowedValues.join(", "),
+    };
+    enumValueCacheByDef.set(enumDef, cache);
+  }
+  return cache;
 }
 
 export function validateString(value: any, path: string = ""): ValidationError[] {
@@ -104,13 +134,17 @@ export function validateEnum(
   value: any,
   enumName: string,
   allowedValues: string[],
-  path: string = ""
+  path: string = "",
+  // Internal fast path used by validateType; standalone callers omit it.
+  prepared?: EnumValueCache
 ): ValidationError[] {
   if (typeof value !== "string") {
     return [makeError(path, `Expected string for enum ${enumName}, got ${typeof value}`)];
   }
-  if (!allowedValues.includes(value)) {
-    return [makeError(path, `Invalid value for enum ${enumName}: '${value}'. Allowed values: ${allowedValues.join(", ")}`)];
+  const allowed = prepared ? prepared.allowedSet.has(value) : allowedValues.includes(value);
+  if (!allowed) {
+    const allowedText = prepared ? prepared.allowedText : allowedValues.join(", ");
+    return [makeError(path, `Invalid value for enum ${enumName}: '${value}'. Allowed values: ${allowedText}`)];
   }
   return [];
 }
@@ -205,8 +239,8 @@ export function validateType(
     } else {
       const enumDef = findEnum(userType, allEnums);
       if (enumDef) {
-        const allowedValues = enumDef.values.map((v: any) => v.name);
-        return validateEnum(value, userType, allowedValues, path);
+        const cache = getEnumValueCache(enumDef);
+        return validateEnum(value, userType, cache.allowedValues, path, cache);
       } else {
         return [makeError(path, `Unknown user-defined type: ${userType}`)];
       }

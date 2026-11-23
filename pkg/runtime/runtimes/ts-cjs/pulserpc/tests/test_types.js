@@ -129,6 +129,82 @@ function testGetStructFieldsOverrideParent() {
   console.log("✓ testGetStructFieldsOverrideParent");
 }
 
+function testGetStructFieldsInheritedOverrideChain() {
+  // Overrides keep the inherited slot/order but take the child's field object.
+  const allStructs = {
+    Grandparent: {
+      fields: [
+        { name: "id", type: { builtIn: "string" } },
+        { name: "legacy", type: { builtIn: "string" }, optional: true },
+      ],
+    },
+    Parent: {
+      extends: "Grandparent",
+      fields: [
+        { name: "id", type: { builtIn: "int" } },
+        { name: "age", type: { builtIn: "int" } },
+      ],
+    },
+    Child: {
+      extends: "Parent",
+      fields: [
+        { name: "age", type: { builtIn: "float" } },
+        { name: "name", type: { builtIn: "string" } },
+      ],
+    },
+  };
+  const fields = getStructFields("Child", allStructs);
+  assert.deepStrictEqual(
+    fields.map((f) => f.name),
+    ["id", "legacy", "age", "name"]
+  );
+  assert.strictEqual(fields[0], allStructs.Parent.fields[0]);
+  assert.strictEqual(fields[2], allStructs.Child.fields[0]);
+  assert.strictEqual(fields[3], allStructs.Child.fields[1]);
+  console.log("✓ testGetStructFieldsInheritedOverrideChain");
+}
+
+function testGetStructFieldsCachesResolvedFields() {
+  let childFieldReads = 0;
+  const childDef = {
+    extends: "Base",
+    fields: new Proxy([{ name: "name", type: { builtIn: "string" } }], {
+      get(target, prop, receiver) {
+        if (prop === Symbol.iterator) {
+          childFieldReads++;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    }),
+  };
+  const allStructs = {
+    Base: { fields: [{ name: "id", type: { builtIn: "string" } }] },
+    Child: childDef,
+  };
+
+  const first = getStructFields("Child", allStructs);
+  assert.strictEqual(childFieldReads, 1);
+  for (let i = 0; i < 50; i++) {
+    assert.strictEqual(getStructFields("Child", allStructs), first);
+  }
+  assert.strictEqual(childFieldReads, 1, "cached fields must not be recomputed");
+
+  // The cache key includes the type map: reusing the same definition in another
+  // map must resolve against that map's parent, not the cached child fields.
+  const otherStructs = {
+    Base: { fields: [{ name: "other", type: { builtIn: "string" } }] },
+    Child: childDef,
+  };
+  const other = getStructFields("Child", otherStructs);
+  assert.deepStrictEqual(
+    other.map((f) => f.name),
+    ["other", "name"]
+  );
+  assert.strictEqual(other, getStructFields("Child", otherStructs));
+  assert.strictEqual(childFieldReads, 2, "the other map builds its own entry once");
+  console.log("✓ testGetStructFieldsCachesResolvedFields");
+}
+
 function testAmbiguousBaseNameIsDeterministic() {
   // Ambiguity resolves to the first key in sorted order, matching Go, Java
   // and Python (invariant R6).
@@ -148,4 +224,6 @@ testFindByTypeNameCachesIndex();
 testGetStructFieldsSimple();
 testGetStructFieldsWithExtends();
 testGetStructFieldsOverrideParent();
+testGetStructFieldsInheritedOverrideChain();
+testGetStructFieldsCachesResolvedFields();
 console.log("\nAll type tests passed!");

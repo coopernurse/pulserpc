@@ -145,32 +145,64 @@ export function findEnum(enumName: string, allEnums: EnumMap): EnumDef | undefin
   return findByTypeName(enumName, allEnums);
 }
 
+interface StructFieldsIndex {
+  /** Resolved, inheritance-flattened fields per struct definition object. */
+  byDef: Map<StructDef, FieldDef[]>;
+}
+
+/**
+ * Cache of resolved field lists, keyed by the struct map and then by the
+ * definition object. Like the base-name index, this relies on definitions being
+ * immutable after the Contract parser builds them; WeakMap keys avoid retaining
+ * discarded contracts. Keeping the map in the key also isolates the same
+ * definition object used in two different type maps.
+ */
+const structFieldsCache = new WeakMap<object, StructFieldsIndex>();
+
+function getStructFieldsIndex(allStructs: StructMap): StructFieldsIndex {
+  let index = structFieldsCache.get(allStructs);
+  if (index === undefined) {
+    index = { byDef: new Map<StructDef, FieldDef[]>() };
+    structFieldsCache.set(allStructs, index);
+  }
+  return index;
+}
+
 export function getStructFields(structName: string, allStructs: StructMap): FieldDef[] {
   const structDef = findStruct(structName, allStructs);
   if (!structDef) {
     return [];
   }
 
+  const byDef = getStructFieldsIndex(allStructs).byDef;
+  const cached = byDef.get(structDef);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const fields: FieldDef[] = [];
+  /** Name -> position in `fields`, so overrides are O(1) instead of a scan. */
+  const fieldIndexes = new Map<string, number>();
 
   if (structDef.extends) {
     const parentFields = getStructFields(structDef.extends, allStructs);
-    fields.push(...parentFields);
-  }
-
-  const fieldNames = new Set(fields.map((f) => f.name));
-  for (const field of structDef.fields) {
-    if (!fieldNames.has(field.name)) {
+    for (const field of parentFields) {
+      fieldIndexes.set(field.name, fields.length);
       fields.push(field);
-      fieldNames.add(field.name);
-    } else {
-      const index = fields.findIndex((f) => f.name === field.name);
-      if (index !== -1) {
-        fields[index] = field;
-      }
     }
   }
 
+  for (const field of structDef.fields) {
+    const index = fieldIndexes.get(field.name);
+    if (index === undefined) {
+      fieldIndexes.set(field.name, fields.length);
+      fields.push(field);
+    } else {
+      fields[index] = field;
+    }
+  }
+
+  byDef.set(structDef, fields);
   return fields;
 }
 

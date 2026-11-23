@@ -243,7 +243,13 @@ export class Contract {
     paramDefs: Array<{ name: string; optional?: boolean }>,
     givenCount: number
   ): void {
-    const requiredCount = paramDefs.filter((p) => !p.optional).length;
+    // Count in place: filtering allocates a new array on every request.
+    let requiredCount = 0;
+    for (let i = 0; i < paramDefs.length; i++) {
+      if (!paramDefs[i].optional) {
+        requiredCount++;
+      }
+    }
     if (givenCount < requiredCount || givenCount > paramDefs.length) {
       throw new RPCError(
         -32602,
