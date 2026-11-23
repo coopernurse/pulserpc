@@ -728,7 +728,9 @@ func TestCSharpPackageNamespaceAppliedToAllGeneratedFiles(t *testing.T) {
 	if !ok {
 		t.Fatal("missing MyApp/Lib/Rpc/PulseRPC/RPCError.cs")
 	}
-	if !strings.Contains(string(runtimeData), "namespace "+runtimeNS+"\n") {
+	// Copied runtime files retain the source file's line endings (CRLF on
+	// Windows), unlike generated files which are written with LF.
+	if !strings.Contains(string(runtimeData), "namespace "+runtimeNS) {
 		t.Errorf("copied runtime source does not declare `namespace %s`:\n%s", runtimeNS, runtimeData)
 	}
 }
