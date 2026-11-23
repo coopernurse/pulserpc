@@ -656,7 +656,7 @@ func generateContractCs(idl *parser.IDL, structMap map[string]*parser.Struct, en
 	}
 	sb.WriteString("\n")
 
-	sb.WriteString("namespace PulseRPC\n")
+	sb.WriteString(fmt.Sprintf("namespace %s\n", paths.GetRuntimeImport()))
 	sb.WriteString("{\n")
 
 	// Merge ALL_STRUCTS and ALL_ENUMS from all namespaces
@@ -722,7 +722,7 @@ func generateServerCs(idl *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 	}
 	sb.WriteString("\n")
 
-	sb.WriteString("namespace PulseRPC\n")
+	sb.WriteString(fmt.Sprintf("namespace %s\n", paths.GetRuntimeImport()))
 	sb.WriteString("{\n")
 
 	// Generate PulseRPCServer class
@@ -1644,7 +1644,7 @@ func generateClientCs(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 	}
 	sb.WriteString("\n")
 
-	sb.WriteString("namespace PulseRPC\n")
+	sb.WriteString(fmt.Sprintf("namespace %s\n", paths.GetRuntimeImport()))
 	sb.WriteString("{\n")
 	sb.WriteString("    internal static class IdlHolder\n")
 	sb.WriteString("    {\n")
