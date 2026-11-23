@@ -7,7 +7,7 @@ require github.com/alecthomas/participle/v2 v2.1.4
 require (
 	github.com/getkin/kin-openapi v0.133.0
 	github.com/google/go-cmp v0.7.0
-	github.com/oklog/ulid/v2 v2.1.1
+	github.com/oklog/ulid/v2 v2.1.2
 	gopkg.in/yaml.v3 v3.0.1
 )
 
