@@ -1427,6 +1427,9 @@ func generateClientJava(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 		}
 	}
 
+	sb.WriteString("        // Run contract verification on bootstrap when requested (synchronous).\n")
+	sb.WriteString("        // No-op when verifyOnBootstrap was not selected.\n")
+	sb.WriteString("        this.bootstrap();\n")
 	sb.WriteString("    }\n\n")
 
 	sb.WriteString("    public Client withAuditor(ContractAuditor auditor) {\n")
@@ -1436,7 +1439,18 @@ func generateClientJava(_ *parser.IDL, namespaceMap map[string]*NamespaceTypes, 
 
 	sb.WriteString("    public Client verifyOnBootstrap() {\n")
 	sb.WriteString("        this.verifyOnBootstrap = true;\n")
+	sb.WriteString("        this.bootstrap();\n")
 	sb.WriteString("        return this;\n")
+	sb.WriteString("    }\n\n")
+
+	// The generated Client has no network bootstrap in its constructor, so the
+	// configuration chain is the client's bootstrap point. Run verification
+	// synchronously there using the existing verifyCompatibility() logic when
+	// the option was selected; do nothing otherwise.
+	sb.WriteString("    private void bootstrap() {\n")
+	sb.WriteString("        if (this.verifyOnBootstrap) {\n")
+	sb.WriteString("            verifyCompatibility();\n")
+	sb.WriteString("        }\n")
 	sb.WriteString("    }\n\n")
 
 	sb.WriteString("    public Client withServerIDL(Object idl) {\n")
