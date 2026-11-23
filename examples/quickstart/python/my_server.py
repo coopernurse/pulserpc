@@ -5,7 +5,14 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
 from checkout.server import CatalogService, CartService, OrderService
 from checkout.rpctypes import Err, ErrJsonRpc
-from pulserpc import Server, Contract, RPCError
+from pulserpc import (
+    Server,
+    Contract,
+    RPCError,
+    DEFAULT_MAX_BODY_SIZE,
+    BodyTooLargeError,
+    read_request_body,
+)
 import random
 import time
 
@@ -154,14 +161,26 @@ class OrderServiceImpl(OrderService):
 
 # Create JSON-RPC handler
 class PulseRPCHandler(BaseHTTPRequestHandler):
+    # Hard cap on the inbound request body so an oversized payload cannot be
+    # buffered into memory (R16/D5).  Shares the runtime's documented 1 MiB
+    # limit with the generated test handler.
+    MAX_BODY_SIZE = DEFAULT_MAX_BODY_SIZE
+
     def do_POST(self):
-        # Read request body
-        content_length = int(self.headers.get('Content-Length', 0))
-        if content_length == 0:
+        # Read request body with a size cap
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+        except (TypeError, ValueError):
+            content_length = -1
+        if content_length <= 0:
             self._send_error_response(None, -32700, "Parse error", "Empty request body")
             return
 
-        body = self.rfile.read(content_length)
+        try:
+            body = read_request_body(self.rfile, content_length, self.MAX_BODY_SIZE)
+        except BodyTooLargeError:
+            self._send_error_response(None, -32600, "Invalid Request", "Request body too large")
+            return
 
         # Parse JSON request
         try:
