@@ -46,6 +46,9 @@ jobs:
       - name: Multi-runtime conformance tests
         run: make test-all-runtimes
 
+      - name: Compare cross-runtime golden responses
+        run: python3 tests/integration/compare_golden.py
+
       - name: Dump Docker logs on failure
         if: failure()
         shell: bash
