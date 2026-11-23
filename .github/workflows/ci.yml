@@ -82,6 +82,13 @@ jobs:
       - name: integration harness
         run: go test ./tests/integration/... -count=1
 
+      # Advisory databases change daily; keep this non-blocking so a newly
+      # published advisory cannot turn CI red between Dependabot updates.
+      - name: npm audit (web UI)
+        continue-on-error: true
+        working-directory: pkg/webui
+        run: npm audit --audit-level=critical
+
   variants:
     name: Generator variant checks
     runs-on: ubuntu-latest
