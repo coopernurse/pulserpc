@@ -678,6 +678,34 @@ func findTypeNamespace(typeName string, structMap map[string]*parser.Struct, enu
 	return GetNamespaceFromType(typeName, "")
 }
 
+// repeatStatusType resolves the enum type assigned by the generated repeat()
+// test body. The body calls response.setStatus(...ok), so it must reference the
+// exact enum declared by the IDL, which may live in an imported namespace and
+// need not be named "Status". Looking it up on the response struct (including
+// inherited fields) avoids hardcoding a namespace-qualified type name.
+func repeatStatusType(returnType *parser.Type, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) *parser.Type {
+	if returnType != nil && returnType.IsUserDefined() {
+		if s := lookupJavaStruct(returnType.UserDefined, structMap); s != nil {
+			for _, f := range allJavaStructFields(s, structMap) {
+				if f.Name == "status" && f.Type != nil && f.Type.IsUserDefined() {
+					if e := lookupJavaEnum(f.Type.UserDefined, enumMap); e != nil {
+						return &parser.Type{UserDefined: e.Name}
+					}
+					return f.Type
+				}
+			}
+		}
+	}
+	// Fallback for IDLs where the response cannot be resolved: keep the old
+	// behavior rather than changing generated output for unrelated inputs.
+	for _, name := range []string{"Status", "inc.Status"} {
+		if e := lookupJavaEnum(name, enumMap); e != nil {
+			return &parser.Type{UserDefined: e.Name}
+		}
+	}
+	return &parser.Type{UserDefined: "Status"}
+}
+
 // addTypeImports adds necessary imports for a type
 func addTypeImports(t *parser.Type, basePackage string, currentPackage string, imports map[string]bool, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum) {
 	if t.IsUserDefined() {
@@ -1789,7 +1817,7 @@ func writeTestMethodBody(sb *strings.Builder, iface *parser.Interface, method *p
 			sb.WriteString("        }\n")
 			fmt.Fprintf(sb, "        %s response = new %s();\n", respType, respType)
 			sb.WriteString("        response.setStatus(")
-			statusEnumType := getJavaTypeWithPackage(&parser.Type{UserDefined: "inc.Status"}, enumMap, basePackage, packageName, structMap)
+			statusEnumType := getJavaTypeWithPackage(repeatStatusType(method.ReturnType, structMap, enumMap), enumMap, basePackage, packageName, structMap)
 			sb.WriteString(statusEnumType)
 			sb.WriteString(".ok);\n")
 			sb.WriteString("        response.setCount(req1.getCount());\n")
