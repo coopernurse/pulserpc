@@ -62,3 +62,21 @@ claim depending on those is marked UNVERIFIED.
 - All live runtime/HTTP probes (Docker unavailable locally).
 - Any code fix, config change, or new dependency (report-only wave).
 - Careful per-runtime server dispatch reading for S6/S3 (only a broad grep was performed).
+
+## Orchestrator follow-up verification (read-only)
+
+- **S4 CONFIRMED:** `.github/workflows/ci.yml` runs gofmt-on-changed-files,
+  `go vet`, `make test`, the integration harness, cross-generator checks, and
+  seven runtime unit jobs. There is no SAST, dependency-audit, or coverage step;
+  `make lint` (golangci-lint) is not a CI job.
+- **S6 live behavior:** `test_internal_errors.sh` is wired for all seven runtimes
+  in `test_all_runtimes.sh`, and the final push's CI Conformance run
+  (`45087679745`, commit `d57f9b2`) was green. The hard gate therefore passes
+  end-to-end in CI even though it could not be run locally here.
+- **S1-d CONFIRMED:** `pkg/webui/server.go:332` returns
+  `fmt.Sprintf("Failed to read file: %v", err)` with HTTP 404, echoing the
+  caller-supplied filename and raw OS error.
+- **S1 mitigation CONFIRMED:** `pkg/playground/files.go:18-43` rejects absolute,
+  volume-qualified, backslash-normalized, and `..`-escaping paths before
+  `os.ReadFile`. Symlink escape remains possible in principle but no generator
+  path that creates symlinks in a session dir was identified.
