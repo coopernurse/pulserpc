@@ -2,7 +2,7 @@
  * Validation functions for PulseRPC types
  */
 
-import { findStruct, findEnum, getStructFields, TypeDef, StructMap, EnumMap, ValidationError } from "./types.js";
+import { findStruct, findEnum, getStructFields, TypeDef, StructMap, EnumMap, EnumDef, ValidationError } from "./types.js";
 
 function joinPath(parent: string, child: string): string {
   return parent ? `${parent}.${child}` : `.${child}`;
@@ -98,6 +98,50 @@ export function validateMap(
     errors.push(...valueValidator(val, keyPath));
   }
   return errors;
+}
+
+interface EnumMeta {
+  /** Cached membership lookup: O(1) instead of Array.includes per value. */
+  allowedSet: Set<string>;
+  /** Cached error-message suffix: built once instead of joining on every error. */
+  allowedJoined: string;
+}
+
+/**
+ * Resolved enum metadata keyed by the enum definition object. IDL metadata is
+ * built once and treated as immutable, so the def object's identity doubles as
+ * the "did it change" sentinel (same pattern as baseNameIndexCache in types.ts).
+ * Weak keys avoid retaining discarded contracts.
+ */
+const enumMetaCache = new WeakMap<object, EnumMeta>();
+
+function getEnumMeta(enumDef: EnumDef): EnumMeta {
+  let meta = enumMetaCache.get(enumDef);
+  if (meta === undefined) {
+    const allowedValues = enumDef.values.map((v: any) => v.name);
+    meta = {
+      allowedSet: new Set(allowedValues),
+      allowedJoined: allowedValues.join(", "),
+    };
+    enumMetaCache.set(enumDef, meta);
+  }
+  return meta;
+}
+
+/** Internal fast path used by validateType; error text matches validateEnum exactly. */
+function validateEnumMeta(
+  value: any,
+  enumName: string,
+  meta: EnumMeta,
+  path: string
+): ValidationError[] {
+  if (typeof value !== "string") {
+    return [makeError(path, `Expected string for enum ${enumName}, got ${typeof value}`)];
+  }
+  if (!meta.allowedSet.has(value)) {
+    return [makeError(path, `Invalid value for enum ${enumName}: '${value}'. Allowed values: ${meta.allowedJoined}`)];
+  }
+  return [];
 }
 
 export function validateEnum(
@@ -205,8 +249,7 @@ export function validateType(
     } else {
       const enumDef = findEnum(userType, allEnums);
       if (enumDef) {
-        const allowedValues = enumDef.values.map((v: any) => v.name);
-        return validateEnum(value, userType, allowedValues, path);
+        return validateEnumMeta(value, userType, getEnumMeta(enumDef), path);
       } else {
         return [makeError(path, `Unknown user-defined type: ${userType}`)];
       }

@@ -128,7 +128,35 @@ export function findEnum(enumName: string, allEnums: EnumMap): EnumDef | undefin
   return findByTypeName(enumName, allEnums);
 }
 
+interface StructFieldsIndex {
+  /** Fully resolved (inherited + overridden) field list per struct lookup name. */
+  byName: Map<string, FieldDef[]>;
+}
+
+/**
+ * Cache of resolved struct fields, keyed by the types map object itself. Maps
+ * are built once by the Contract parser and then treated as immutable, so the
+ * map's identity doubles as the "did the map change" sentinel (mirrors
+ * baseNameIndexCache above). Weak keys avoid retaining discarded contracts.
+ */
+const structFieldsCache = new WeakMap<object, StructFieldsIndex>();
+
+function getStructFieldsIndex(allStructs: StructMap): StructFieldsIndex {
+  let index = structFieldsCache.get(allStructs);
+  if (index === undefined) {
+    index = { byName: new Map() };
+    structFieldsCache.set(allStructs, index);
+  }
+  return index;
+}
+
 export function getStructFields(structName: string, allStructs: StructMap): FieldDef[] {
+  const index = getStructFieldsIndex(allStructs);
+  const cached = index.byName.get(structName);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const structDef = findStruct(structName, allStructs);
   if (!structDef) {
     return [];
@@ -142,21 +170,24 @@ export function getStructFields(structName: string, allStructs: StructMap): Fiel
     fields.push(...parentFields);
   }
 
-  // Add child fields (override parent if name conflict)
-  const fieldNames = new Set(fields.map((f) => f.name));
+  // Add child fields (override parent if name conflict). The name->index map
+  // keeps override lookups O(1) while preserving the original field position.
+  const indexByName = new Map<string, number>();
+  for (let i = 0; i < fields.length; i++) {
+    indexByName.set(fields[i].name, i);
+  }
   for (const field of structDef.fields) {
-    if (!fieldNames.has(field.name)) {
+    const existingIndex = indexByName.get(field.name);
+    if (existingIndex === undefined) {
+      indexByName.set(field.name, fields.length);
       fields.push(field);
-      fieldNames.add(field.name);
     } else {
-      // Override parent field
-      const index = fields.findIndex((f) => f.name === field.name);
-      if (index !== -1) {
-        fields[index] = field;
-      }
+      // Override parent field in place.
+      fields[existingIndex] = field;
     }
   }
 
+  index.byName.set(structName, fields);
   return fields;
 }
 
