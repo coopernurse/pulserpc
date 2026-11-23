@@ -237,6 +237,40 @@ if [ "$probe_ok" = "1" ]; then
 fi
 record_result "Duplicate id/method keys yield a single consistent response" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
 
+# ---------------------------------------------------------------------------
+# Probe 2: numeric id > 2^53
+# ---------------------------------------------------------------------------
+echo -e "${BLUE}=== Large Numeric Id (> 2^53) ===${NC}"
+
+do_post '{"jsonrpc":"2.0","method":"A.echo","params":[1],"id":9007199254740993}'
+probe_ok=1
+probe_detail=""
+EXACT_ID="9007199254740993"
+# Documented lossy divergence: Go decodes ids into float64 and JS into a
+# Number; both round this value to 9007199254740992. Those runtimes are only
+# required to echo a well-formed numeric id, NOT the exact text, so the
+# rounded value is accepted (never hard-failed). Runtimes with arbitrary
+# precision (Python int, Java BigInteger, C# long) must echo the exact value.
+ROUNDED_ID="9007199254740992"
+if [ "$RESPONSE_STATUS" != "200" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}expected HTTP 200, got $RESPONSE_STATUS (possible crash/hang); "
+elif [ "$(json_type id)" != "number" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}echoed id must be a well-formed number, got '$(json_type id)'=$(json_get id); "
+else
+    echoed_id=$(json_get id)
+    case "$echoed_id" in
+        "$EXACT_ID") : ;;  # arbitrary precision preserved exactly
+        "$ROUNDED_ID") : ;;  # documented Go float64 / JS Number rounding
+        *)
+            probe_ok=0
+            probe_detail="${probe_detail}echoed id '$echoed_id' is neither exact nor the documented rounded value; "
+            ;;
+    esac
+fi
+record_result "Large numeric id echoed (exact or documented-lossy)" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
+
 echo ""
 echo -e "${BLUE}=== Test Summary ===${NC}"
 echo -e "Total tests: $((TESTS_PASSED + TESTS_FAILED))"
