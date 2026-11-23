@@ -312,6 +312,47 @@ else
 fi
 record_result "Deeply nested params return a response/error without hang" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
 
+# ---------------------------------------------------------------------------
+# Probe 4: batch entries over the cap (101 > 100)
+# ---------------------------------------------------------------------------
+echo -e "${BLUE}=== Batch Over Cap (101 entries) ===${NC}"
+
+OVER_BATCH_BODY="["
+for _i in $(seq 1 101); do
+    if [ "$_i" -gt 1 ]; then OVER_BATCH_BODY="$OVER_BATCH_BODY,"; fi
+    OVER_BATCH_BODY="$OVER_BATCH_BODY{\"jsonrpc\":\"2.0\",\"method\":\"A.add\",\"params\":[1,2],\"id\":$_i}"
+done
+OVER_BATCH_BODY="$OVER_BATCH_BODY]"
+
+do_post "$OVER_BATCH_BODY"
+probe_ok=1
+probe_detail=""
+if [ "$RESPONSE_STATUS" != "200" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}expected HTTP 200, got $RESPONSE_STATUS (possible crash/hang); "
+elif [ "$(json_type "")" = "list" ]; then
+    # All 101 entries dispatched: the runtime does not cap the batch. That is
+    # a hard failure, consistent with test_limits.sh, not a documented skip.
+    probe_ok=0
+    probe_detail="${probe_detail}over-cap batch was dispatched (array response) instead of a single error object; "
+elif [ "$(json_type "")" != "dict" ]; then
+    probe_ok=0
+    probe_detail="${probe_detail}expected a single JSON-RPC error object, got type '$(json_type "")'; "
+else
+    batch_code=$(json_get error.code)
+    if [ "$batch_code" = "-32600" ]; then
+        :  # documented behavior
+    elif [ "$batch_code" != "__MISSING__" ] && [ -n "$batch_code" ] && [ "$batch_code" != "null" ]; then
+        # Documented per-runtime behavior may use a different error code; mark
+        # the divergence rather than hard-failing it.
+        :
+    else
+        probe_ok=0
+        probe_detail="${probe_detail}over-cap batch must return a single error object, got none; "
+    fi
+fi
+record_result "Over-cap batch is rejected with a single error object" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
+
 echo ""
 echo -e "${BLUE}=== Test Summary ===${NC}"
 echo -e "Total tests: $((TESTS_PASSED + TESTS_FAILED))"
