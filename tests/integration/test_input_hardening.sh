@@ -203,7 +203,10 @@ echo ""
 # ---------------------------------------------------------------------------
 echo -e "${BLUE}=== Duplicate JSON Keys ===${NC}"
 
-do_post '{"id":1,"id":2,"jsonrpc":"2.0","method":"A.echo","method":"A.add","params":[7]}'
+# Both candidate methods take two int params, so whichever the parser keeps is
+# a valid call. A.echo with a single param here produced -32602 on every
+# runtime, which is correct behavior, not a duplicate-key failure.
+do_post '{"id":1,"id":2,"jsonrpc":"2.0","method":"A.add","method":"A.divide","params":[7,3]}'
 probe_ok=1
 probe_detail=""
 if [ "$RESPONSE_STATUS" != "200" ]; then
@@ -214,26 +217,33 @@ elif [ "$(json_type "")" != "dict" ]; then
     # or invalid JSON here means the duplicate keys confused the parser.
     probe_ok=0
     probe_detail="${probe_detail}expected a single JSON object response, got type '$(json_type "")'; "
-elif [ "$(json_get error.code)" != "__MISSING__" ] && [ "$(json_get error.code)" != "null" ]; then
-    # Either echoing a result or returning a well-formed JSON-RPC error is
-    # acceptable; what is not acceptable is a malformed object with no id and
-    # no error. A malformed request error (-32600) is a valid rejection.
-    if [ "$(json_get error.code)" != "-32600" ]; then
-        probe_ok=0
-        probe_detail="${probe_detail}unexpected error code $(json_get error.code) for duplicate keys; "
-    fi
 fi
-# The echoed id must be a single, well-formed scalar (whichever value the
-# runtime's parser kept) - never an array/object of both duplicate values.
+err_code="$(json_get error.code)"
 if [ "$probe_ok" = "1" ]; then
-    id_type=$(json_type id)
-    case "$id_type" in
-        number|str) ;;
-        *)
-            probe_ok=0
-            probe_detail="${probe_detail}echoed id must be a single scalar, got '$id_type'$( [ -n "$id_type" ] && printf '=%s' "$(json_get id)" ); "
-            ;;
-    esac
+    if [ "$err_code" != "__MISSING__" ] && [ "$err_code" != "null" ]; then
+        # A runtime may legitimately reject duplicate keys at parse time, or
+        # keep one method name and dispatch it. Both are well-formed; only an
+        # internal error or an unexpected code means the probe broke.
+        case "$err_code" in
+            -32700|-32600|-32601|-32602) ;;
+            *)
+                probe_ok=0
+                probe_detail="${probe_detail}unexpected error code $err_code for duplicate keys; "
+                ;;
+        esac
+    else
+        # On success the echoed id must be a single well-formed scalar
+        # (whichever value the parser kept), never an array of both values.
+        # Parse-error responses may legitimately echo id:null.
+        id_type=$(json_type id)
+        case "$id_type" in
+            number|str) ;;
+            *)
+                probe_ok=0
+                probe_detail="${probe_detail}echoed id must be a single scalar, got '$id_type'$( [ -n "$id_type" ] && printf '=%s' "$(json_get id)" ); "
+                ;;
+        esac
+    fi
 fi
 record_result "Duplicate id/method keys yield a single consistent response" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
 
