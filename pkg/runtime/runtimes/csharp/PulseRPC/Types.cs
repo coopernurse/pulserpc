@@ -69,45 +69,49 @@ namespace PulseRPC
             }
 
             var fields = new List<Dictionary<string, object>>();
+            // Name -> index keeps inherited-field overrides O(1) instead of
+            // scanning the accumulated field list for every child field.
+            var fieldIndex = new Dictionary<string, int>(StringComparer.Ordinal);
 
             // Get parent fields first
             if (structDef.TryGetValue("extends", out var extendsObj) && extendsObj is string parentName)
             {
-                var parentFields = GetStructFields(parentName, allStructs);
-                fields.AddRange(parentFields);
+                foreach (var parentField in GetStructFields(parentName, allStructs))
+                {
+                    AddOrReplace(fields, fieldIndex, parentField);
+                }
             }
 
             // Add child fields (override parent if name conflict)
-            var fieldNames = new HashSet<string>(fields.Select(f => f["name"].ToString() ?? ""));
             if (structDef.TryGetValue("fields", out var fieldsObj) && fieldsObj is System.Collections.IEnumerable structFieldsEnumerable)
             {
                 foreach (var fieldObj in structFieldsEnumerable)
                 {
                     if (fieldObj is Dictionary<string, object> field)
                     {
-                        var fieldName = field["name"].ToString() ?? "";
-                        if (!fieldNames.Contains(fieldName))
-                        {
-                            fields.Add(field);
-                            fieldNames.Add(fieldName);
-                        }
-                        else
-                        {
-                            // Override parent field
-                            for (int i = 0; i < fields.Count; i++)
-                            {
-                                if (fields[i]["name"].ToString() == fieldName)
-                                {
-                                    fields[i] = field;
-                                    break;
-                                }
-                            }
-                        }
+                        AddOrReplace(fields, fieldIndex, field);
                     }
                 }
             }
 
             return fields;
+        }
+
+        /// <summary>
+        /// Adds a field, or replaces an existing field with the same name in
+        /// O(1) using the maintained name -> index map.
+        /// </summary>
+        private static void AddOrReplace(List<Dictionary<string, object>> fields,
+            Dictionary<string, int> fieldIndex, Dictionary<string, object> field)
+        {
+            var fieldName = field.TryGetValue("name", out var nameObj) ? nameObj?.ToString() ?? "" : "";
+            if (fieldIndex.TryGetValue(fieldName, out var index))
+            {
+                fields[index] = field;
+                return;
+            }
+            fieldIndex[fieldName] = fields.Count;
+            fields.Add(field);
         }
     }
 }
