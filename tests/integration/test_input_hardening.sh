@@ -353,6 +353,45 @@ else
 fi
 record_result "Over-cap batch is rejected with a single error object" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
 
+# ---------------------------------------------------------------------------
+# Probe 5: oversized request body (> 1 MiB)
+# ---------------------------------------------------------------------------
+echo -e "${BLUE}=== Oversized Request Body (> 1 MiB) ===${NC}"
+
+if [ -n "$JSON_PY" ]; then
+    HUGE_BODY=$("$JSON_PY" -c 'import json; print(json.dumps({"jsonrpc": "2.0", "method": "A.add", "params": [1, 2], "id": 1, "pad": "A" * 1048576}, separators=(",", ":")))')
+else
+    HUGE_PAD=$(head -c 1048576 /dev/zero | tr '\0' 'A')
+    HUGE_BODY="{\"jsonrpc\":\"2.0\",\"method\":\"A.add\",\"params\":[1,2],\"id\":1,\"pad\":\"$HUGE_PAD\"}"
+fi
+
+# Allow a longer transport timeout so a slow rejection is not misread as a
+# hang; a genuine hang still trips --max-time and fails the probe.
+do_post "$HUGE_BODY" 60
+probe_ok=1
+probe_detail=""
+if [ "$RESPONSE_STATUS" = "413" ]; then
+    # Some HTTP front ends reject in the transport layer. Accept 413 only if
+    # it also carries a JSON-RPC error object.
+    if [ "$(json_get error.code)" = "__MISSING__" ] || [ -z "$(json_get error.code)" ]; then
+        probe_ok=0
+        probe_detail="${probe_detail}HTTP 413 without a JSON-RPC error object; "
+    fi
+elif [ "$RESPONSE_STATUS" = "200" ]; then
+    if [ "$(json_get error.code)" != "-32600" ]; then
+        probe_ok=0
+        if [ "$(json_type result)" != "__MISSING__" ]; then
+            probe_detail="${probe_detail}oversize body was accepted and dispatched (result returned) instead of cleanly rejected; "
+        else
+            probe_detail="${probe_detail}unexpected response for an oversize body (no -32600 and no result); "
+        fi
+    fi
+else
+    probe_ok=0
+    probe_detail="${probe_detail}expected HTTP 200 or 413, got $RESPONSE_STATUS (possible crash/hang); "
+fi
+record_result "Oversized request body is cleanly rejected" "$probe_ok" "${probe_detail}Response: $(printf '%s' "$RESPONSE_BODY" | cut -c1-300)"
+
 echo ""
 echo -e "${BLUE}=== Test Summary ===${NC}"
 echo -e "Total tests: $((TESTS_PASSED + TESTS_FAILED))"
