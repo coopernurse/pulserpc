@@ -164,9 +164,37 @@ and playground/security items are now closed. Remaining follow-ups are
 non-conformance concerns (e.g. C# `-package` namespace handling, generated Java
 `verifyOnBootstrap()` wiring).
 
+## Post-conformance performance pass
+
+Seven parallel reviews (one per runtime) found two universal inefficiencies:
+enum allowed-value sets and inherited struct field lists were rebuilt for every
+validated value, and the latter used an O(F²) override scan. Both are now
+precomputed once per contract in all seven runtimes with O(1) lookup. Runtime
+specific wins:
+
+- **Go:** response validation no longer round-trips typed structs through
+  `json.Marshal`/`Unmarshal` (`convertToMap` now uses reflection honoring JSON
+  tags); handler reflection is resolved once per call.
+- **Python:** both resolution indexes are built once in `Contract.__init__` and
+  threaded through validation, removing a global lock acquisition per param.
+- **Python 2:** namespaced user-defined types resolve via a precomputed
+  simple-name map instead of an O(S+E) `endswith` scan per value.
+- **ts-node / ts-cjs:** enum and struct metadata cached in `WeakMap`s; required
+  param counting no longer allocates a filter array per request.
+- **C#:** handler `MethodInfo`/`ParameterInfo` resolved at registration;
+  by-name params normalized in one case-insensitive dictionary; IDL entries
+  resolved once per call.
+- **Java:** handler method cache and single IDL resolution per call.
+
+All observable behavior (error codes/messages, validation results, wire format)
+is unchanged and pinned by new focused tests. Full local suites and both CI
+workflows are green.
+
 ## Sequencing
 
 1. Wave 1: four parallel worktrees (WP1–WP4) — done.
 2. Orchestrator merged, wired new scripts, pushed.
 3. CI Conformance arbitrated; fix-up wave applied and re-pushed.
 4. Wave 2: WP5–WP7, then update this document with final status.
+5. Wave 3: enum returns, client caps/timeouts, gap 9 — done.
+6. Post-conformance performance pass: seven parallel runtime reviews and fixes — done.
