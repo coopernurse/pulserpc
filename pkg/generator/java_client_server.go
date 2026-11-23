@@ -538,9 +538,12 @@ func generateInterfaceClient(iface *parser.Interface, packageName string, enumMa
 		}
 		sb.WriteString(") {\n")
 
-		// Method implementation
+		// Method implementation. Keep the namespace qualifier in the JSON-RPC
+		// method name (e.g. alpha.Alpha.Ping): the qualifier is not a valid Java
+		// identifier, but it is part of the wire protocol and distinguishes two
+		// interfaces that share a base name in different namespaces.
 		sb.WriteString("        try {\n")
-		fmt.Fprintf(&sb, "            String method = \"%s.%s\";\n", interfaceName, method.Name)
+		fmt.Fprintf(&sb, "            String method = \"%s.%s\";\n", iface.Name, method.Name)
 
 		// Build parameters array
 		sb.WriteString("            Object[] params = new Object[] { ")
@@ -1008,17 +1011,11 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("import java.util.*;\n")
 	sb.WriteString("import java.lang.reflect.*;\n\n")
 
-	// Add imports for interfaces
-	imports := make(map[string]bool)
-	for _, iface := range idl.Interfaces {
-		ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
-		if ifaceNamespace != "" {
-			ifacePackage := basePackage + "." + ifaceNamespace
-			ifaceName := GetBaseName(iface.Name)
-			imports[ifacePackage+"."+ifaceName] = true
-		}
-	}
-	writeSortedImports(&sb, imports)
+	// Do not emit single-type imports for generated interfaces: Server dispatches
+	// reflectively and never names those types, and two namespaces may declare
+	// interfaces with the same base name (which would make duplicate imports a
+	// Java compile error). The embedded IDL JSON is the only interface metadata
+	// this class needs.
 
 	sb.WriteString("public class Server {\n")
 	sb.WriteString("    // Embedded IDL JSON for pulserpc-idl RPC method\n")
@@ -1236,13 +1233,15 @@ func generateServerJava(idl *parser.IDL, _ map[string]*parser.Struct, namespaceM
 	sb.WriteString("                return errorEnvelope(-32603, \"Internal error\", null, id);\n")
 	sb.WriteString("            }\n")
 	sb.WriteString("        }\n\n")
-	sb.WriteString("        // Parse method name: interface.method\n")
-	sb.WriteString("        String[] parts = method.split(\"\\\\.\", 2);\n")
-	sb.WriteString("        if (parts.length != 2) {\n")
+	sb.WriteString("        // Parse method name: interface.method. Split on the LAST dot so a\n")
+	sb.WriteString("        // namespace-qualified interface (alpha.Alpha.Ping) resolves to\n")
+	sb.WriteString("        // interfaceName=alpha.Alpha, methodName=Ping.\n")
+	sb.WriteString("        int methodDot = method.lastIndexOf('.');\n")
+	sb.WriteString("        if (methodDot <= 0) {\n")
 	sb.WriteString("            return errorEnvelope(-32601, \"Invalid method format: \" + method, null, id);\n")
 	sb.WriteString("        }\n\n")
-	sb.WriteString("        String interfaceName = parts[0];\n")
-	sb.WriteString("        String methodName = parts[1];\n\n")
+	sb.WriteString("        String interfaceName = method.substring(0, methodDot);\n")
+	sb.WriteString("        String methodName = method.substring(methodDot + 1);\n\n")
 	sb.WriteString("        // Find interface handler\n")
 	sb.WriteString("        Object handler = interfaceHandlers.get(interfaceName);\n")
 	sb.WriteString("        if (handler == null) {\n")
@@ -1890,18 +1889,10 @@ func generateTestServerJava(idl *parser.IDL, jsonLib string, basePackage string,
 	sb.WriteString(fmt.Sprintf("package %s;\n\n", basePackage))
 	sb.WriteString("import com.bitmechanic.pulserpc.*;\n")
 
-	// Add imports for interface implementations
-	imports := make(map[string]bool)
-	for _, iface := range idl.Interfaces {
-		ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
-		ifacePackage := basePackage
-		if ifaceNamespace != "" {
-			ifacePackage = basePackage + "." + ifaceNamespace
-		}
-		implName := GetBaseName(iface.Name) + "Impl"
-		imports[ifacePackage+"."+implName] = true
-	}
-	writeSortedImports(&sb, imports)
+	// Interface implementations are referenced by their fully qualified names
+	// below, so no single-type imports are needed. Emitting them would be a Java
+	// compile error when two namespaces declare an interface with the same base
+	// name.
 
 	sb.WriteString("public class TestServer extends Server {\n")
 	sb.WriteString("    public TestServer(int port, JsonParser jsonParser) throws Exception {\n")
@@ -1926,8 +1917,9 @@ func generateTestServerJava(idl *parser.IDL, jsonLib string, basePackage string,
 			ifacePackage = basePackage + "." + ifaceNamespace
 		}
 		implName := GetBaseName(iface.Name) + "Impl"
-		interfaceName := GetBaseName(iface.Name)
-		fmt.Fprintf(&sb, "            server.register(\"%s\", new %s.%s());\n", interfaceName, ifacePackage, implName)
+		// Register under the namespace-qualified IDL name: the client sends that
+		// same name, and base names are not unique across namespaces.
+		fmt.Fprintf(&sb, "            server.register(\"%s\", new %s.%s());\n", iface.Name, ifacePackage, implName)
 	}
 
 	sb.WriteString("            server.start();\n")
@@ -1959,28 +1951,10 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 	sb.WriteString(fmt.Sprintf("package %s;\n\n", basePackage))
 	sb.WriteString("import com.bitmechanic.pulserpc.*;\n")
 
-	// Add imports for client classes
-	imports := make(map[string]bool)
-	for _, s := range idl.Structs {
-		typeNamespace := GetNamespaceFromType(s.Name, s.Namespace)
-		structPackage := basePackage
-		if typeNamespace != "" {
-			structPackage = basePackage + "." + typeNamespace
-		}
-		if structPackage != basePackage {
-			imports[structPackage+"."+GetBaseName(s.Name)] = true
-		}
-	}
-	for _, iface := range idl.Interfaces {
-		ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
-		ifacePackage := basePackage
-		if ifaceNamespace != "" {
-			ifacePackage = basePackage + "." + ifaceNamespace
-		}
-		clientName := GetBaseName(iface.Name) + "Client"
-		imports[ifacePackage+"."+clientName] = true
-	}
-	writeSortedImports(&sb, imports)
+	// Clients, structs and enums are all referenced by fully qualified names in
+	// the generated body, so single-type imports are unnecessary. Omitting them
+	// avoids duplicate-simple-name compile errors when two namespaces declare
+	// types with the same base name.
 
 	sb.WriteString("public class TestClient {\n")
 	sb.WriteString("//__PULSERPC_STRUCT_FACTORIES__\n")
@@ -1994,7 +1968,9 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 	sb.WriteString("        String baseUrl = args.length > 0 ? args[0] : \"http://localhost:8080\";\n")
 	sb.WriteString("        Transport transport = new HTTPTransport(baseUrl, jsonParser);\n\n")
 
-	// Create client instances and make test calls
+	// Create client instances and make test calls. Base names are not unique
+	// across namespaces, so keep generated local variable names distinct too.
+	usedClientVars := make(map[string]bool)
 	for _, iface := range idl.Interfaces {
 		ifaceNamespace := GetNamespaceFromType(iface.Name, iface.Namespace)
 		ifacePackage := basePackage
@@ -2003,6 +1979,18 @@ func generateTestClientJava(idl *parser.IDL, structMap map[string]*parser.Struct
 		}
 		clientName := GetBaseName(iface.Name) + "Client"
 		clientVar := strings.ToLower(GetBaseName(iface.Name)) + "Client"
+		if usedClientVars[clientVar] {
+			prefix := strings.ToLower(strings.ReplaceAll(ifaceNamespace, ".", "_"))
+			if prefix == "" {
+				prefix = "ns"
+			}
+			candidate := prefix + clientVar
+			for suffix := 2; usedClientVars[candidate]; suffix++ {
+				candidate = fmt.Sprintf("%s%d", prefix+clientVar, suffix)
+			}
+			clientVar = candidate
+		}
+		usedClientVars[clientVar] = true
 		fmt.Fprintf(&sb, "        %s %s = new %s.%s(transport, jsonParser);\n", ifacePackage+"."+clientName, clientVar, ifacePackage, clientName)
 
 		// Generate test calls for each method
