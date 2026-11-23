@@ -1583,8 +1583,39 @@ func writeVerifyCompatibilityMethod(sb *strings.Builder, clientName string) {
 	sb.WriteString("}\n")
 }
 
+// referencedTestServerNamespaces returns the sorted non-primary namespaces
+// referenced by interface signatures. These must be dot-imported by the
+// generated test server because its method implementations use bare type names.
+func referencedTestServerNamespaces(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, primaryNs string, namespaceMap map[string]*NamespaceTypes) []string {
+	refs := make(map[string]bool)
+	for _, iface := range idl.Interfaces {
+		for _, method := range iface.Methods {
+			for _, param := range method.Parameters {
+				findReferencedNamespacesInType(param.Type, structMap, enumMap, primaryNs, refs)
+			}
+			if method.ReturnType != nil {
+				findReferencedNamespacesInType(method.ReturnType, structMap, enumMap, primaryNs, refs)
+			}
+		}
+	}
+
+	names := make([]string, 0, len(refs))
+	for ns := range refs {
+		// Only import namespaces that actually exist in this IDL. When the
+		// caller does not supply a namespace map, trust the resolved names.
+		if namespaceMap != nil {
+			if _, ok := namespaceMap[ns]; !ok {
+				continue
+			}
+		}
+		names = append(names, ns)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // generateTestServerGo generates test_server.go with concrete implementations of all interfaces
-func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, primaryImportPath string, packageImportPath string, _ map[string]*NamespaceTypes, _ string, runtimeImportPath ...string) string {
+func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, primaryImportPath string, packageImportPath string, namespaceMap map[string]*NamespaceTypes, primaryNs string, runtimeImportPath ...string) string {
 	var sb strings.Builder
 
 	// The divide handler returns a declared RPCError, which lives in the
@@ -1614,7 +1645,13 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString(")\n\n")
 	fmt.Fprintf(&sb, "import (\n")
 	fmt.Fprintf(&sb, "\t. \"%s\"\n", primaryImportPath)
-	fmt.Fprintf(&sb, "\t. \"%s/inc\"\n", packageImportPath)
+	// Interface implementations use bare type names, so every non-primary
+	// namespace referenced by a signature must be dot-imported. The namespace
+	// name comes from the IDL (not a hardcoded "inc"), so any shared namespace
+	// works.
+	for _, refNs := range referencedTestServerNamespaces(idl, structMap, enumMap, primaryNs, namespaceMap) {
+		fmt.Fprintf(&sb, "\t. \"%s\"\n", path.Join(packageImportPath, refNs))
+	}
 	if hasDivide {
 		fmt.Fprintf(&sb, "\t\"%s\"\n", runtimePath)
 	}
