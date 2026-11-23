@@ -76,6 +76,9 @@ jobs:
       - name: make test
         run: make test
 
+      - name: go test -race
+        run: go test -race ./pkg/runtime/runtimes/go/... ./pkg/generator -count=1
+
       - name: integration harness
         run: go test ./tests/integration/... -count=1
 
