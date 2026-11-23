@@ -475,6 +475,163 @@ def test_validate_type_optional():
     print("  PASS: validate_type with optional types")
 
 
+def test_simple_name_lookup_with_namespaces():
+    """Unqualified user-defined names resolve to namespaced definitions."""
+    from contract import Contract
+    from validation import ValidationContext
+
+    structs = {
+        "a.b.Address": {
+            "name": "a.b.Address",
+            "fields": [{"name": "zip", "type": {"builtIn": "string"}}],
+        }
+    }
+    enums = {
+        "x.y.Color": {
+            "name": "x.y.Color",
+            "values": [{"name": "RED"}, {"name": "GREEN"}],
+        }
+    }
+    idl = {
+        "interfaces": [{
+            "name": "Svc",
+            "methods": [{
+                "name": "f",
+                "parameters": [
+                    {"name": "addr", "type": {"userDefined": "Address"}},
+                    {"name": "color", "type": {"userDefined": "Color"}},
+                ],
+            }],
+        }],
+        "structs": list(structs.values()),
+        "enums": list(enums.values()),
+    }
+    contract = Contract(idl)
+    ctx = ValidationContext(structs, enums)
+    assert ctx.struct_simple_names["Address"] == "a.b.Address"
+    assert ctx.enum_simple_names["Color"] == "x.y.Color"
+
+    # Cached path through Contract.
+    contract.validate_request("Svc", "f", [{"zip": "1"}, "RED"])
+    # Un-cached direct helper path.
+    validate_type({"zip": "1"}, {"userDefined": "Address"}, structs, enums)
+    validate_type("GREEN", {"userDefined": "Color"}, structs, enums)
+    # Fully qualified names still resolve via the exact-key lookup.
+    validate_type({"zip": "2"}, {"userDefined": "a.b.Address"}, structs, enums)
+    validate_type("RED", {"userDefined": "x.y.Color"}, structs, enums)
+
+
+def test_simple_name_duplicate_first_match_is_deterministic():
+    """Ambiguous simple names resolve to the first key, as the old scan did."""
+    from validation import ValidationContext
+
+    structs = {
+        "first.pkg.Shared": {
+            "name": "first.pkg.Shared",
+            "fields": [{"name": "a", "type": {"builtIn": "string"}}],
+        },
+        "second.pkg.Shared": {
+            "name": "second.pkg.Shared",
+            "fields": [{"name": "b", "type": {"builtIn": "int"}}],
+        },
+    }
+    ctx = ValidationContext(structs, {})
+    assert ctx.struct_simple_names["Shared"] == "first.pkg.Shared"
+
+    validate_type({"a": "ok"}, {"userDefined": "Shared"}, structs, {}, False, ctx)
+    try:
+        validate_type({"b": 1}, {"userDefined": "Shared"}, structs, {}, False, ctx)
+        assert False, "expected ValueError: 'a' is required by first.pkg.Shared"
+    except ValueError:
+        pass
+
+
+def test_enum_membership_error_text_with_cached_set():
+    """Frozenset membership must not change the ordered error text."""
+    from validation import ValidationContext
+
+    enums = {
+        "ns.Status": {
+            "name": "ns.Status",
+            "values": [{"name": "ON"}, {"name": "OFF"}, {"name": "UNKNOWN"}],
+        }
+    }
+    ctx = ValidationContext({}, enums)
+    ordered = ["ON", "OFF", "UNKNOWN"]
+    assert ctx.enum_values["ns.Status"] == ordered
+    assert ctx.enum_value_sets["ns.Status"] == frozenset(ordered)
+
+    validate_type("ON", {"userDefined": "Status"}, {}, enums, False, ctx)
+    try:
+        validate_type("BAD", {"userDefined": "Status"}, {}, enums, False, ctx)
+        assert False, "expected ValueError for invalid enum value"
+    except ValueError as exc:
+        text = str(exc)
+        assert "Invalid value for enum Status: 'BAD'" in text, text
+        assert "Allowed values: %s" % ordered in text, text
+
+    # Direct helper keeps the same text when given a precomputed set.
+    try:
+        validate_enum("BAD", "Status", ["ON", "OFF"], frozenset(["ON", "OFF"]))
+        assert False, "expected ValueError for invalid enum value"
+    except ValueError as exc:
+        assert "Allowed values: ['ON', 'OFF']" in str(exc), str(exc)
+
+
+def test_inherited_field_overrides():
+    """Child fields override inherited ones in place, including via cache."""
+    from contract import Contract
+    from validation import ValidationContext
+
+    structs = {
+        "Base": {
+            "name": "Base",
+            "fields": [
+                {"name": "id", "type": {"builtIn": "string"}},
+                {"name": "value", "type": {"builtIn": "string"}},
+                {"name": "extra", "type": {"builtIn": "string"}},
+            ],
+        },
+        "Child": {
+            "name": "Child",
+            "extends": "Base",
+            "fields": [
+                {"name": "value", "type": {"builtIn": "int"}},
+                {"name": "own", "type": {"builtIn": "bool"}},
+            ],
+        },
+    }
+    fields = get_struct_fields("Child", structs)
+    assert [f["name"] for f in fields] == ["id", "value", "extra", "own"]
+    assert fields[1]["type"] == {"builtIn": "int"}
+    assert ValidationContext(structs, {}).struct_fields["Child"] == fields
+
+    idl = {
+        "interfaces": [{
+            "name": "Svc",
+            "methods": [{
+                "name": "f",
+                "parameters": [{"name": "c", "type": {"userDefined": "Child"}}],
+            }],
+        }],
+        "structs": list(structs.values()),
+        "enums": [],
+    }
+    contract = Contract(idl)
+    contract.validate_request(
+        "Svc", "f", [{"id": "x", "value": 7, "extra": "e", "own": True}]
+    )
+    for bad in (
+        {"id": "x", "value": "not-int", "extra": "e", "own": True},
+        {"value": 7, "extra": "e", "own": True},
+    ):
+        try:
+            contract.validate_request("Svc", "f", [bad])
+            assert False, "expected RPCError for %r" % bad
+        except Exception:
+            pass
+
+
 def main():
     print("=" * 60)
     print("PulseRPC Python 2.7 Validation Tests")
