@@ -696,7 +696,7 @@ func (s *Server) invokeHandler(ctx context.Context, handlerValue reflect.Value, 
 
 	// Check if last result is an error
 	if len(result) > 0 {
-		if errVal := result[len(result)-1]; errVal.Type().Implements(reflect.TypeOf((*error)(nil)).Elem()) {
+		if errVal := result[len(result)-1]; errVal.Type().Implements(errorType) {
 			if !errVal.IsNil() {
 				return nil, errVal.Interface().(error)
 			}
