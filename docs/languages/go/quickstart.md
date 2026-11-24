@@ -105,7 +105,14 @@ mkdir -p cmd/server
 
 {% include quickstart/go-server.md %}
 
-> **Note**: The generated code uses build tags to separate server and client code. Use `-tags server_only` when building the server.
+> **Note**: Every generated handler method takes `ctx context.Context` as its
+> first parameter and returns an error (`(T, error)` for value-returning
+> methods, `error` otherwise). `Register` returns an error when a handler does
+> not match, so check it at startup. Handlers can honor cancellation and
+> deadlines through `ctx`.
+>
+> The generated code uses build tags to separate server and client code. Use
+> `-tags server_only` when building the server.
 
 ## 5. Build and Run Your Server
 
@@ -129,6 +136,9 @@ mkdir -p cmd/client
 ```
 
 {% include quickstart/go-client.md %}
+
+> **Note**: Generated client methods take a `context.Context` first
+> (`catalog.ListProducts(ctx)`), so a caller can cancel or bound each request.
 
 ## 7. Run Your Client
 
