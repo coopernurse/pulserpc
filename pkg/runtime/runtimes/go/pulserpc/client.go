@@ -29,7 +29,9 @@ type Client struct {
 	verifyOnBootstrap bool
 }
 
-// NewClient creates a new Client and bootstraps by fetching IDL from server
+// NewClient creates a new Client and bootstraps by fetching IDL from server.
+// Bootstrap uses context.Background(); per-call contexts are supplied to Call
+// and Notify.
 func NewClient(transport Transport, validateRequest bool, validateResponse bool, opts ...ClientOption) (*Client, error) {
 	c := &Client{
 		transport:        transport,
@@ -44,7 +46,7 @@ func NewClient(transport Transport, validateRequest bool, validateResponse bool,
 	}
 
 	// Bootstrap: fetch IDL from server
-	if err := c.bootstrap(); err != nil {
+	if err := c.bootstrap(context.Background()); err != nil {
 		return nil, err
 	}
 
@@ -57,9 +59,9 @@ func NewClient(transport Transport, validateRequest bool, validateResponse bool,
 }
 
 // bootstrap fetches the IDL from the server and creates interface proxies
-func (c *Client) bootstrap() error {
+func (c *Client) bootstrap(ctx context.Context) error {
 	// Make request to get IDL
-	resp, err := c.transport.Request("pulserpc-idl", nil)
+	resp, err := c.transport.Request(ctx, "pulserpc-idl", nil)
 	if err != nil {
 		return fmt.Errorf("failed to fetch IDL: %w", err)
 	}
@@ -98,10 +100,13 @@ func (c *Client) bootstrap() error {
 	return nil
 }
 
-// createMethodCaller creates a function that calls the RPC method
+// createMethodCaller creates a function that calls the RPC method. The
+// reflection-based proxy has no caller context, so it uses
+// context.Background(); callers that need cancellation should use Client.Call
+// or a generated typed client.
 func (c *Client) createMethodCaller(ifaceName, funcName string) func(params interface{}) interface{} {
 	return func(params interface{}) interface{} {
-		result, err := c.Call(ifaceName+"."+funcName, params)
+		result, err := c.Call(context.Background(), ifaceName+"."+funcName, params)
 		if err != nil {
 			panic(err)
 		}
@@ -109,8 +114,13 @@ func (c *Client) createMethodCaller(ifaceName, funcName string) func(params inte
 	}
 }
 
-// Call makes a JSON-RPC call
-func (c *Client) Call(method string, params interface{}) (interface{}, error) {
+// Call makes a JSON-RPC call with the supplied context. A nil context is
+// treated as context.Background().
+func (c *Client) Call(ctx context.Context, method string, params interface{}) (interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Validate request if enabled
 	if c.validateRequest && c.contract != nil {
 		ifaceName, funcName, err := parseMethodName(method)
@@ -137,7 +147,7 @@ func (c *Client) Call(method string, params interface{}) (interface{}, error) {
 	// concurrent calls never share an id (R20).
 	reqID := atomic.AddUint64(&c.requestID, 1)
 
-	response, err := c.sendRequest(reqID, method, params)
+	response, err := c.sendRequest(ctx, reqID, method, params)
 	if err != nil {
 		return nil, fmt.Errorf("transport request failed: %w", err)
 	}
@@ -187,18 +197,22 @@ func (c *Client) Call(method string, params interface{}) (interface{}, error) {
 // sendRequest routes a request through a transport that can carry the caller's
 // id (and omit it for notifications), falling back to the legacy Request
 // method for custom transports.
-func (c *Client) sendRequest(id interface{}, method string, params interface{}) (map[string]interface{}, error) {
+func (c *Client) sendRequest(ctx context.Context, id interface{}, method string, params interface{}) (map[string]interface{}, error) {
 	if transport, ok := c.transport.(RequestWithID); ok {
-		return transport.RequestWithID(method, params, id)
+		return transport.RequestWithID(ctx, method, params, id)
 	}
-	return c.transport.Request(method, params)
+	return c.transport.Request(ctx, method, params)
 }
 
 // Notify sends a JSON-RPC notification: a request with no id and no response.
-func (c *Client) Notify(method string, params interface{}) {
+// A nil context is treated as context.Background().
+func (c *Client) Notify(ctx context.Context, method string, params interface{}) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	// Notifications have no id and no caller-visible result; transport errors
 	// are intentionally ignored.
-	_, _ = c.sendRequest(nil, method, params)
+	_, _ = c.sendRequest(ctx, nil, method, params)
 }
 
 // GetInterface returns an interface proxy by name

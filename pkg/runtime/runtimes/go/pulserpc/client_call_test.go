@@ -1,6 +1,7 @@
 package pulserpc
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -11,11 +12,11 @@ type capturingTransport struct {
 	respond  func(request map[string]interface{}) map[string]interface{}
 }
 
-func (t *capturingTransport) Request(method string, params interface{}) (map[string]interface{}, error) {
-	return t.RequestWithID(method, params, 1)
+func (t *capturingTransport) Request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error) {
+	return t.RequestWithID(ctx, method, params, 1)
 }
 
-func (t *capturingTransport) RequestWithID(method string, params interface{}, id interface{}) (map[string]interface{}, error) {
+func (t *capturingTransport) RequestWithID(ctx context.Context, method string, params interface{}, id interface{}) (map[string]interface{}, error) {
 	request := map[string]interface{}{"jsonrpc": "2.0", "method": method}
 	if params != nil {
 		request["params"] = params
@@ -48,7 +49,7 @@ func TestNotifyOmitsID(t *testing.T) {
 	transport := &capturingTransport{}
 	client := &Client{transport: transport}
 
-	client.Notify("A.echo", []interface{}{"hello"})
+	client.Notify(context.Background(), "A.echo", []interface{}{"hello"})
 
 	if len(transport.requests) != 1 {
 		t.Fatalf("got %d requests, want 1", len(transport.requests))
@@ -68,7 +69,7 @@ func TestSequentialCallsUseDistinctIDs(t *testing.T) {
 	client := &Client{transport: transport}
 
 	for i := 0; i < 2; i++ {
-		if _, err := client.Call("A.add", []interface{}{1, 2}); err != nil {
+		if _, err := client.Call(context.Background(), "A.add", []interface{}{1, 2}); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
@@ -104,7 +105,7 @@ func TestClientRejectsMalformedEnvelope(t *testing.T) {
 				respond: func(map[string]interface{}) map[string]interface{} { return tc.response },
 			}
 			client := &Client{transport: transport}
-			if _, err := client.Call("A.add", []interface{}{1, 2}); err == nil {
+			if _, err := client.Call(context.Background(), "A.add", []interface{}{1, 2}); err == nil {
 				t.Errorf("expected an error for %s", tc.name)
 			}
 		})
@@ -120,7 +121,7 @@ func TestClientRejectsNullResultForRequiredReturn(t *testing.T) {
 	}
 	client := &Client{transport: transport, contract: testClientContract(t), validateResponse: true}
 
-	if _, err := client.Call("A.null_return", []interface{}{}); err == nil {
+	if _, err := client.Call(context.Background(), "A.null_return", []interface{}{}); err == nil {
 		t.Fatal("expected a response validation error for a null required result")
 	} else if fmt.Sprint(err) == "" {
 		t.Fatal("empty validation error")

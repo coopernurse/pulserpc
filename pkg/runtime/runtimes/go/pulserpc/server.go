@@ -1,6 +1,7 @@
 package pulserpc
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,10 +16,33 @@ import (
 // and are serialized straight to the client by the generated HTTP adapter.
 const internalErrorMessage = "Internal error"
 
+// contextType is the interface type every generated handler method must accept
+// as its first parameter.
+var contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
+
+// errorType is the built-in error interface returned by every generated
+// handler method.
+var errorType = reflect.TypeOf((*error)(nil)).Elem()
+
+// Middleware is an RPC middleware hook. It runs once per JSON-RPC request
+// (per batch member), after envelope validation and before pulserpc-idl
+// handling, parameter validation, and dispatch.
+//
+// The response argument is always nil on entry. Returning a non-nil response
+// short-circuits dispatch and is sent as the final JSON-RPC response (it is
+// discarded for notifications). Returning a non-nil context or request replaces
+// the value used for dispatch.
+type Middleware func(
+	ctx context.Context,
+	request map[string]interface{},
+	response map[string]interface{},
+) (context.Context, map[string]interface{}, map[string]interface{})
+
 // Server represents a JSON-RPC 2.0 server with handler registration and optional validation
 type Server struct {
 	contract          *Contract
 	handlers          map[string]interface{}
+	middleware        []Middleware
 	validateRequests  bool
 	validateResponses bool
 }
@@ -28,24 +52,168 @@ func NewServer(contract *Contract, validateRequests bool, validateResponses bool
 	return &Server{
 		contract:          contract,
 		handlers:          make(map[string]interface{}),
+		middleware:        nil,
 		validateRequests:  validateRequests,
 		validateResponses: validateResponses,
 	}
 }
 
-// AddHandler registers a handler instance for an interface
-func (s *Server) AddHandler(ifaceName string, handler interface{}) {
-	s.handlers[ifaceName] = handler
+// UseRPC registers an RPC middleware hook. Hooks run in registration order.
+func (s *Server) UseRPC(mw Middleware) {
+	if mw != nil {
+		s.middleware = append(s.middleware, mw)
+	}
 }
 
-// Call processes a single JSON-RPC request and returns a JSON-RPC response
+// AddHandler registers a handler instance for an interface.
+//
+// Every handler method that implements a method of the registered interface
+// must accept a leading context.Context and return the declared error shape:
+// (T, error) for value-returning methods and error for void methods. Methods
+// unrelated to the interface are ignored. A rejected handler is not stored.
+// When the server has no contract (or the contract does not declare the
+// interface), every exported handler method is validated instead.
+func (s *Server) AddHandler(ifaceName string, handler interface{}) error {
+	if handler == nil {
+		return fmt.Errorf("handler for interface %s is nil", ifaceName)
+	}
+	if err := s.validateHandler(ifaceName, handler); err != nil {
+		return err
+	}
+	s.handlers[ifaceName] = handler
+	return nil
+}
+
+// handlerShape describes the declared return shape of an interface method.
+type handlerShape int
+
+const (
+	// handlerShapeAny accepts either (T, error) or error. It is used when no
+	// IDL contract is available to distinguish value-returning methods.
+	handlerShapeAny handlerShape = iota
+	handlerShapeValue
+	handlerShapeVoid
+)
+
+// validateHandler checks a handler against the registered interface methods.
+func (s *Server) validateHandler(ifaceName string, handler interface{}) error {
+	handlerValue := reflect.ValueOf(handler)
+
+	var iface *Interface
+	if s.contract != nil {
+		iface = s.contract.GetInterface(ifaceName)
+	}
+	if iface == nil {
+		// Without an IDL interface there is no declared shape to compare
+		// against; still require the context/error convention on every
+		// exported method so a misconfigured handler fails at startup.
+		for i := 0; i < handlerValue.NumMethod(); i++ {
+			name := handlerValue.Type().Method(i).Name
+			// handlerValue.Method(i) is bound, so its type does not include
+			// the receiver.
+			if err := validateHandlerMethod(ifaceName, name, handlerValue.Method(i).Type(), handlerShapeAny); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	methodNames := make([]string, 0, len(iface.Functions))
+	for name := range iface.Functions {
+		methodNames = append(methodNames, name)
+	}
+	sort.Strings(methodNames)
+	for _, name := range methodNames {
+		methodType, ok := findHandlerMethodType(handlerValue, name)
+		if !ok {
+			return fmt.Errorf("handler for interface %s is missing method %s", ifaceName, name)
+		}
+		if err := validateHandlerMethod(ifaceName, name, methodType, shapeForFunction(iface.Functions[name])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// shapeForFunction derives the declared return shape from IDL metadata. A
+// missing return type or a void built-in means the method returns only error.
+func shapeForFunction(fnDef FunctionDef) handlerShape {
+	if fnDef == nil {
+		return handlerShapeAny
+	}
+	returnType, ok := fnDef["returnType"].(map[string]interface{})
+	if !ok {
+		return handlerShapeVoid
+	}
+	if builtIn, ok := returnType["builtIn"].(string); ok && builtIn == "void" {
+		return handlerShapeVoid
+	}
+	return handlerShapeValue
+}
+
+// findHandlerMethodType resolves the Go method for an IDL method name using the
+// same name fallbacks as dispatch.
+func findHandlerMethodType(handlerValue reflect.Value, name string) (reflect.Type, bool) {
+	method := handlerValue.MethodByName(name)
+	if !method.IsValid() {
+		method = findMethodByName(handlerValue, name)
+	}
+	if !method.IsValid() {
+		return nil, false
+	}
+	return method.Type(), true
+}
+
+// validateHandlerMethod enforces the leading-context and error-result contract.
+func validateHandlerMethod(ifaceName, methodName string, methodType reflect.Type, shape handlerShape) error {
+	if methodType.NumIn() == 0 || methodType.In(0) != contextType {
+		return fmt.Errorf("handler method %s.%s must accept context.Context as its first parameter", ifaceName, methodName)
+	}
+
+	numOut := methodType.NumOut()
+	if numOut == 0 || methodType.Out(numOut-1) != errorType {
+		return fmt.Errorf("handler method %s.%s must return error as its last result", ifaceName, methodName)
+	}
+
+	switch shape {
+	case handlerShapeVoid:
+		if numOut != 1 {
+			return fmt.Errorf("handler method %s.%s must return exactly error for a void method", ifaceName, methodName)
+		}
+	case handlerShapeValue:
+		if numOut != 2 {
+			return fmt.Errorf("handler method %s.%s must return (value, error)", ifaceName, methodName)
+		}
+	case handlerShapeAny:
+		if numOut > 2 {
+			return fmt.Errorf("handler method %s.%s must return error or (value, error)", ifaceName, methodName)
+		}
+	}
+	return nil
+}
+
+// Call processes a single JSON-RPC request with a background context and
+// returns a JSON-RPC response. It is the convenience form of CallWithContext.
+// Returns nil for notifications (requests without 'id').
+func (s *Server) Call(request map[string]interface{}) map[string]interface{} {
+	return s.CallWithContext(context.Background(), request)
+}
+
+// CallWithContext processes a single JSON-RPC request with the supplied context
+// and returns a JSON-RPC response. The context is passed to every handler
+// method; a nil context is treated as context.Background().
+//
 // Returns nil for notifications (requests without 'id').
 //
 // Notification status is determined once, up front, and honored by every
 // return path: JSON-RPC notifications must never receive a response, not even
 // an error one. Reflection panics caused by malformed request data are also
 // contained here so an HTTP handler survives them.
-func (s *Server) Call(request map[string]interface{}) (response map[string]interface{}) {
+func (s *Server) CallWithContext(ctx context.Context, request map[string]interface{}) (response map[string]interface{}) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var reqID interface{}
 	if request != nil {
 		reqID = request["id"]
@@ -85,6 +253,24 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 
 	// Check for method
 	method, ok := request["method"].(string)
+	if !ok || method == "" {
+		return s.respondError(isNotification, nil, -32600, "Invalid Request", "Method must be a string")
+	}
+
+	// Run RPC middleware once per request, after envelope validation and
+	// before pulserpc-idl handling, parameter validation, and dispatch. A
+	// non-nil response short-circuits dispatch.
+	ctx, request, shortCircuit := s.applyMiddleware(ctx, request)
+	if shortCircuit != nil {
+		if isNotification {
+			return nil
+		}
+		return shortCircuit
+	}
+
+	// Middleware may have rewritten the request. Re-read the method so a
+	// rewriting hook still controls dispatch.
+	method, ok = request["method"].(string)
 	if !ok || method == "" {
 		return s.respondError(isNotification, nil, -32600, "Invalid Request", "Method must be a string")
 	}
@@ -156,7 +342,7 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 	}
 
 	// Invoke handler method with the reflect.Value resolved above.
-	result, err := s.invokeHandler(handlerValue, funcName, funcValue, namedParams, fnDef)
+	result, err := s.invokeHandler(ctx, handlerValue, funcName, funcValue, namedParams, fnDef)
 	if err != nil {
 		// Check if it's an RPCError
 		if rpcErr, ok := err.(*RPCError); ok {
@@ -182,6 +368,25 @@ func (s *Server) Call(request map[string]interface{}) (response map[string]inter
 	}
 
 	return s.respondSuccess(isNotification, reqID, result)
+}
+
+// applyMiddleware runs the registered RPC hooks in order. A non-nil context or
+// request returned by a hook replaces the value passed to the next hook. The
+// first non-nil response short-circuits the chain.
+func (s *Server) applyMiddleware(ctx context.Context, request map[string]interface{}) (context.Context, map[string]interface{}, map[string]interface{}) {
+	for _, mw := range s.middleware {
+		nextCtx, nextRequest, shortCircuit := mw(ctx, request, nil)
+		if nextCtx != nil {
+			ctx = nextCtx
+		}
+		if nextRequest != nil {
+			request = nextRequest
+		}
+		if shortCircuit != nil {
+			return ctx, request, shortCircuit
+		}
+	}
+	return ctx, request, nil
 }
 
 // respondError suppresses error replies for notifications (no id requested).
@@ -402,11 +607,16 @@ func (s *Server) positionalToNamedParams(ifaceName, funcName string, positionalP
 	return result, nil
 }
 
-// invokeHandler invokes a handler method with the given named parameters
-// fnDef is the function definition from the contract, used to get param names and types
-// resolved is the method value already found by Call; fallbacks only run when
-// it is invalid.
-func (s *Server) invokeHandler(handlerValue reflect.Value, funcName string, resolved reflect.Value, params map[string]interface{}, fnDef FunctionDef) (interface{}, error) {
+// invokeHandler invokes a handler method with the given context and named
+// parameters. fnDef is the function definition from the contract, used to get
+// param names and types; resolved is the method value already found by Call;
+// fallbacks only run when it is invalid.
+//
+// A leading context.Context parameter is supplied from ctx and is never part of
+// the wire contract: IDL parameter metadata is offset by one when present, and
+// arity/validation stay IDL-only. A handler method without a leading context is
+// rejected defensively; registration should make this unreachable.
+func (s *Server) invokeHandler(ctx context.Context, handlerValue reflect.Value, funcName string, resolved reflect.Value, params map[string]interface{}, fnDef FunctionDef) (interface{}, error) {
 	method := resolved
 	if !method.IsValid() {
 		// Covers capitalized and snake_case variants.
@@ -420,6 +630,14 @@ func (s *Server) invokeHandler(handlerValue reflect.Value, funcName string, reso
 	methodType := method.Type()
 	numIn := methodType.NumIn()
 
+	hasContext := numIn > 0 && methodType.In(0) == contextType
+	if !hasContext {
+		return nil, fmt.Errorf("handler method %s does not accept a leading context.Context", funcName)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Get parameter definitions from function def
 	var paramDefs []interface{}
 	if fnDef != nil {
@@ -428,18 +646,22 @@ func (s *Server) invokeHandler(handlerValue reflect.Value, funcName string, reso
 		}
 	}
 
-	// Build call arguments
+	// Build call arguments. Index 0 is always the context; IDL parameters start
+	// at index 1 and their metadata is offset accordingly.
 	args := make([]reflect.Value, 0, numIn)
+	args = append(args, reflect.ValueOf(ctx))
+	paramOffset := 1
 
-	for i := 0; i < numIn; i++ {
+	for i := paramOffset; i < numIn; i++ {
 		paramType := methodType.In(i)
 
 		// Try to get the parameter by name from paramDefs
 		var argValue reflect.Value
 		found := false
 
-		if i < len(paramDefs) {
-			if pd, ok := paramDefs[i].(map[string]interface{}); ok {
+		defIndex := i - paramOffset
+		if defIndex < len(paramDefs) {
+			if pd, ok := paramDefs[defIndex].(map[string]interface{}); ok {
 				paramName, _ := pd["name"].(string)
 				if paramName != "" {
 					if v, ok := params[paramName]; ok {

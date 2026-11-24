@@ -2,6 +2,7 @@ package pulserpc
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,7 +41,7 @@ func TestRuntimeHTTPTransportTimesOutSlowServer(t *testing.T) {
 	// The default is 30 s (asserted above); inject a short one for this test.
 	transport.Client = &http.Client{Timeout: 50 * time.Millisecond}
 
-	_, err := transport.RequestWithID("Svc.ping", []interface{}{}, 1)
+	_, err := transport.RequestWithID(context.Background(), "Svc.ping", []interface{}{}, 1)
 	if err == nil {
 		t.Fatal("expected a timeout error from a server that sleeps past the client timeout")
 	}
@@ -65,7 +66,7 @@ func TestRuntimeHTTPTransportSendsCustomHeaders(t *testing.T) {
 	defer server.Close()
 
 	transport := NewHTTPTransport(server.URL+"/", map[string]string{"X-Api-Key": "secret"})
-	response, err := transport.RequestWithID("Svc.ping", []interface{}{}, 1)
+	response, err := transport.RequestWithID(context.Background(), "Svc.ping", []interface{}{}, 1)
 	if err != nil {
 		t.Fatalf("RequestWithID: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestRuntimeHTTPTransportRejectsOversizedResponse(t *testing.T) {
 	defer server.Close()
 
 	transport := NewHTTPTransport(server.URL, nil)
-	_, err := transport.RequestWithID("Svc.ping", []interface{}{}, 1)
+	_, err := transport.RequestWithID(context.Background(), "Svc.ping", []interface{}{}, 1)
 	if err == nil {
 		t.Fatal("expected an error for a response larger than maxResponseSize")
 	}
@@ -111,5 +112,70 @@ func TestReadCappedBody(t *testing.T) {
 	}
 	if string(data) != "12345678" {
 		t.Errorf("data = %q, want 12345678", data)
+	}
+}
+
+// A cancelled caller context aborts an in-flight HTTP request.
+func TestRuntimeHTTPTransportCancellationAbortsCall(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+	}))
+	// Close the server only after the handler is allowed to return, otherwise
+	// httptest.Server.Close waits for the blocked handler forever.
+	defer func() {
+		close(release)
+		server.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	transport := NewHTTPTransport(server.URL, nil)
+	done := make(chan error, 1)
+	go func() {
+		_, err := transport.RequestWithID(ctx, "Svc.ping", []interface{}{}, 1)
+		done <- err
+	}()
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("cancelled context did not abort the HTTP request")
+	}
+	if err == nil {
+		t.Fatal("expected a cancelled context to abort the HTTP request")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "context canceled") {
+		t.Errorf("error = %v, want a context canceled error", err)
+	}
+}
+
+// A caller deadline bounds the HTTP request and aborts it when exceeded.
+func TestRuntimeHTTPTransportDeadlineAbortsCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"ok"}`))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	transport := NewHTTPTransport(server.URL, nil)
+	_, err := transport.RequestWithID(ctx, "Svc.ping", []interface{}{}, 1)
+	if err == nil {
+		t.Fatal("expected the caller deadline to abort the HTTP request")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "deadline exceeded") {
+		t.Errorf("error = %v, want a deadline exceeded error", err)
 	}
 }

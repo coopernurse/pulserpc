@@ -2,6 +2,7 @@ package pulserpc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -34,14 +35,18 @@ const testContractIDL = `{
 
 type testHandler struct{}
 
-func (testHandler) Add(a, b int) int         { return a + b }
-func (testHandler) Echo(value string) string { return value }
-func (testHandler) NullReturn() interface{}  { return nil }
-func (testHandler) Panics() string           { panic("handler exploded") }
-func (testHandler) Fails() (string, error)   { return "", errors.New("secret-token-abc123") }
-func (testHandler) Leaks() (string, error)   { return "", secretError{"secret-token-abc123"} }
-func (testHandler) BadEnum() string          { return "secret-token-abc123" }
-func (testHandler) Nothing() error           { return nil }
+func (testHandler) Add(ctx context.Context, a, b int) (int, error)         { return a + b, nil }
+func (testHandler) Echo(ctx context.Context, value string) (string, error) { return value, nil }
+func (testHandler) NullReturn(ctx context.Context) (interface{}, error)    { return nil, nil }
+func (testHandler) Panics(ctx context.Context) (string, error)             { panic("handler exploded") }
+func (testHandler) Fails(ctx context.Context) (string, error) {
+	return "", errors.New("secret-token-abc123")
+}
+func (testHandler) Leaks(ctx context.Context) (string, error) {
+	return "", secretError{"secret-token-abc123"}
+}
+func (testHandler) BadEnum(ctx context.Context) (string, error) { return "secret-token-abc123", nil }
+func (testHandler) Nothing(ctx context.Context) error           { return nil }
 
 // secretError is a handler error whose text carries a sentinel value. Only its
 // type may appear in logs.
@@ -56,7 +61,9 @@ func newTestServer(t *testing.T, validateRequests, validateResponses bool) *Serv
 		t.Fatalf("unmarshal IDL: %v", err)
 	}
 	server := NewServer(NewContract(idl), validateRequests, validateResponses)
-	server.AddHandler("A", testHandler{})
+	if err := server.AddHandler("A", testHandler{}); err != nil {
+		t.Fatalf("AddHandler: %v", err)
+	}
 	return server
 }
 

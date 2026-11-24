@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -44,11 +45,11 @@ type scriptedTransport struct {
 	respond func(method string, id interface{}) map[string]interface{}
 }
 
-func (t *scriptedTransport) Request(method string, params interface{}) (map[string]interface{}, error) {
-	return t.RequestWithID(method, params, 1)
+func (t *scriptedTransport) Request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error) {
+	return t.RequestWithID(ctx, method, params, 1)
 }
 
-func (t *scriptedTransport) RequestWithID(method string, params interface{}, id interface{}) (map[string]interface{}, error) {
+func (t *scriptedTransport) RequestWithID(ctx context.Context, method string, params interface{}, id interface{}) (map[string]interface{}, error) {
 	if method == "pulserpc-idl" {
 		var idl interface{}
 		if err := json.Unmarshal([]byte(clientConformanceIDL), &idl); err != nil {
@@ -140,7 +141,7 @@ func TestClientConformance(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewClient: %v", err)
 			}
-			_, err = client.Call(tc.method, tc.params)
+			_, err = client.Call(context.Background(), tc.method, tc.params)
 			if tc.wantErr && err == nil {
 				t.Errorf("expected the malformed envelope to be rejected")
 			}
