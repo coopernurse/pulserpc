@@ -877,6 +877,7 @@ func generateServerGo(idl *parser.IDL, idlJSON []byte, structMap map[string]*par
 
 	// Write imports
 	sb.WriteString("import (\n")
+	sb.WriteString("	\"context\"\n")
 	sb.WriteString("	\"encoding/json\"\n")
 	sb.WriteString("	\"errors\"\n")
 	sb.WriteString("	\"fmt\"\n")
@@ -963,26 +964,23 @@ func writeInterfaceStubGo(sb *strings.Builder, iface *parser.Interface, structMa
 
 	for _, method := range iface.Methods {
 		methodName := snakeToCamelCase(method.Name)
-		fmt.Fprintf(sb, "	%s(", methodName)
+		fmt.Fprintf(sb, "	%s(ctx context.Context", methodName)
 
 		// Parameters
-		for i, param := range method.Parameters {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
+		for _, param := range method.Parameters {
+			sb.WriteString(", ")
 			paramType := getGoTypeWithNamespace(param.Type, structMap, enumMap, false, namespace, nsImports, packageImportPath)
 			fmt.Fprintf(sb, "%s %s", goParamIdent(param.Name), paramType)
 		}
 		sb.WriteString(") ")
 
-		// Return type
+		// Return type: always expose the Go-idiomatic error result.
 		if method.ReturnType != nil {
 			returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
-			sb.WriteString(returnType)
+			fmt.Fprintf(sb, "(%s, error)\n", returnType)
 		} else {
-			sb.WriteString("error")
+			sb.WriteString("error\n")
 		}
-		sb.WriteString("\n")
 	}
 
 	sb.WriteString("}\n\n")
@@ -991,13 +989,20 @@ func writeInterfaceStubGo(sb *strings.Builder, iface *parser.Interface, structMa
 // writePulseRPCServerGo generates the PulseRPCServer struct and methods
 // Refactored to use pulserpc.Server instead of inline implementation
 func writePulseRPCServerGo(sb *strings.Builder) {
+	sb.WriteString("// HTTPMiddleware runs at the very top of handleRequest, before the method\n")
+	sb.WriteString("// and body checks. It can read headers, derive the context used for the\n")
+	sb.WriteString("// JSON-RPC call, or write an HTTP response and return false to stop\n")
+	sb.WriteString("// processing. Returning a nil context falls back to r.Context().\n")
+	sb.WriteString("type HTTPMiddleware func(w http.ResponseWriter, r *http.Request) (context.Context, bool)\n\n")
+
 	sb.WriteString("// PulseRPCServer is an HTTP server for JSON-RPC 2.0 requests\n")
 	sb.WriteString("// This implementation uses the pulserpc.Server runtime class\n")
 	sb.WriteString("type PulseRPCServer struct {\n")
-	sb.WriteString("	host     string\n")
-	sb.WriteString("	port     int\n")
-	sb.WriteString("	rpcServer *pulserpc.Server\n")
-	sb.WriteString("	server   *http.Server\n")
+	sb.WriteString("	host           string\n")
+	sb.WriteString("	port           int\n")
+	sb.WriteString("	rpcServer      *pulserpc.Server\n")
+	sb.WriteString("	server         *http.Server\n")
+	sb.WriteString("	httpMiddleware []HTTPMiddleware\n")
 	sb.WriteString("}\n\n")
 
 	sb.WriteString("// NewPulseRPCServer creates a new PulseRPCServer\n")
@@ -1021,14 +1026,36 @@ func writePulseRPCServerGo(sb *strings.Builder) {
 	sb.WriteString("	}\n")
 	sb.WriteString("}\n\n")
 
-	sb.WriteString("// Register registers an interface implementation\n")
-	sb.WriteString("func (s *PulseRPCServer) Register(interfaceName string, implementation interface{}) {\n")
-	sb.WriteString("	s.rpcServer.AddHandler(interfaceName, implementation)\n")
+	sb.WriteString("// Register registers an interface implementation. It returns an error when\n")
+	sb.WriteString("// a handler method does not accept a leading context.Context or does not\n")
+	sb.WriteString("// return the declared error shape.\n")
+	sb.WriteString("func (s *PulseRPCServer) Register(interfaceName string, implementation interface{}) error {\n")
+	sb.WriteString("	return s.rpcServer.AddHandler(interfaceName, implementation)\n")
 	sb.WriteString("}\n\n")
 
-	sb.WriteString("// Call processes a JSON-RPC request and returns a response\n")
+	sb.WriteString("// UseHTTP registers an HTTP middleware hook. Hooks run in registration order\n")
+	sb.WriteString("// at the top of handleRequest, before the method and body checks.\n")
+	sb.WriteString("func (s *PulseRPCServer) UseHTTP(mw HTTPMiddleware) {\n")
+	sb.WriteString("	if mw != nil {\n")
+	sb.WriteString("		s.httpMiddleware = append(s.httpMiddleware, mw)\n")
+	sb.WriteString("	}\n")
+	sb.WriteString("}\n\n")
+
+	sb.WriteString("// UseRPC registers an RPC middleware hook. Hooks run once per JSON-RPC\n")
+	sb.WriteString("// request (per batch member), after envelope validation and before\n")
+	sb.WriteString("// parameter validation and dispatch.\n")
+	sb.WriteString("func (s *PulseRPCServer) UseRPC(mw pulserpc.Middleware) {\n")
+	sb.WriteString("	s.rpcServer.UseRPC(mw)\n")
+	sb.WriteString("}\n\n")
+
+	sb.WriteString("// Call processes a JSON-RPC request with a background context and returns a response\n")
 	sb.WriteString("func (s *PulseRPCServer) Call(request map[string]interface{}) map[string]interface{} {\n")
 	sb.WriteString("	return s.rpcServer.Call(request)\n")
+	sb.WriteString("}\n\n")
+
+	sb.WriteString("// CallWithContext processes a JSON-RPC request with the supplied context\n")
+	sb.WriteString("func (s *PulseRPCServer) CallWithContext(ctx context.Context, request map[string]interface{}) map[string]interface{} {\n")
+	sb.WriteString("	return s.rpcServer.CallWithContext(ctx, request)\n")
 	sb.WriteString("}\n\n")
 
 	sb.WriteString("// ServeForever starts the HTTP server and serves forever\n")
@@ -1066,8 +1093,22 @@ func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
 	sb.WriteString("const maxBatchSize = 100\n")
 	sb.WriteString("const maxBatchResponseSize = 10 * 1024 * 1024 // 10 MiB\n\n")
 
-	sb.WriteString("// handleRequest handles HTTP requests by delegating to pulserpc.Server.Call()\n")
+	sb.WriteString("// handleRequest handles HTTP requests by delegating to pulserpc.Server.CallWithContext()\n")
 	sb.WriteString("func (s *PulseRPCServer) handleRequest(w http.ResponseWriter, r *http.Request) {\n")
+	sb.WriteString("	// HTTP middleware runs first, before the method check and body read. A\n")
+	sb.WriteString("	// middleware that writes a response and returns false owns the response;\n")
+	sb.WriteString("	// the adapter writes nothing further.\n")
+	sb.WriteString("	ctx := r.Context()\n")
+	sb.WriteString("	for _, mw := range s.httpMiddleware {\n")
+	sb.WriteString("		nextCtx, cont := mw(w, r)\n")
+	sb.WriteString("		if nextCtx != nil {\n")
+	sb.WriteString("			ctx = nextCtx\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("		if !cont {\n")
+	sb.WriteString("			return\n")
+	sb.WriteString("		}\n")
+	sb.WriteString("	}\n\n")
+
 	sb.WriteString("	if r.Method != http.MethodPost {\n")
 	sb.WriteString("		// D3: non-POST requests return HTTP 405 with a JSON-RPC error body.\n")
 	sb.WriteString("		w.Header().Set(\"Content-Type\", \"application/json\")\n")
@@ -1113,7 +1154,11 @@ func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
 	sb.WriteString("				responses = append(responses, errorResponse(nil, -32600, \"Invalid Request\", nil))\n")
 	sb.WriteString("				continue\n")
 	sb.WriteString("			}\n")
-	sb.WriteString("			resp := s.rpcServer.Call(reqMap)\n")
+	sb.WriteString("			// Each batch member gets a child of the HTTP-derived context so\n")
+	sb.WriteString("			// one member cannot cancel its siblings.\n")
+	sb.WriteString("			memberCtx, cancel := context.WithCancel(ctx)\n")
+	sb.WriteString("			resp := s.rpcServer.CallWithContext(memberCtx, reqMap)\n")
+	sb.WriteString("			cancel()\n")
 	sb.WriteString("			if resp != nil {\n")
 	sb.WriteString("				responses = append(responses, resp)\n")
 	sb.WriteString("			}\n")
@@ -1138,9 +1183,9 @@ func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
 	sb.WriteString("		return\n")
 	sb.WriteString("	}\n\n")
 
-	sb.WriteString("	// Handle single request using pulserpc.Server.Call()\n")
+	sb.WriteString("	// Handle single request using pulserpc.Server.CallWithContext()\n")
 	sb.WriteString("	if reqMap, ok := requestData.(map[string]interface{}); ok {\n")
-	sb.WriteString("		response := s.rpcServer.Call(reqMap)\n")
+	sb.WriteString("		response := s.rpcServer.CallWithContext(ctx, reqMap)\n")
 	sb.WriteString("		if response == nil {\n")
 	sb.WriteString("			// Notification - no response expected\n")
 	sb.WriteString("			w.WriteHeader(http.StatusNoContent)\n")
@@ -1294,12 +1339,12 @@ func writeClientOptions(sb *strings.Builder) {
 func writeTransportInterfaceGo(sb *strings.Builder) {
 	sb.WriteString("// Transport is an interface for making JSON-RPC 2.0 calls\n")
 	sb.WriteString("type Transport interface {\n")
-	sb.WriteString("	Call(method string, params []interface{}) (map[string]interface{}, error)\n")
+	sb.WriteString("	Call(ctx context.Context, method string, params []interface{}) (map[string]interface{}, error)\n")
 	sb.WriteString("}\n\n")
 	sb.WriteString("// NotifyTransport is an optional capability for sending notifications.\n")
 	sb.WriteString("// A notification is a request without an id and receives no response.\n")
 	sb.WriteString("type NotifyTransport interface {\n")
-	sb.WriteString("	Notify(method string, params []interface{}) error\n")
+	sb.WriteString("	Notify(ctx context.Context, method string, params []interface{}) error\n")
 	sb.WriteString("}\n\n")
 }
 
@@ -1331,18 +1376,21 @@ func writeHTTPTransportGo(sb *strings.Builder) {
 	sb.WriteString("}\n\n")
 
 	sb.WriteString("// Call performs a JSON-RPC 2.0 call over HTTP with a unique id.\n")
-	sb.WriteString("func (t *HTTPTransport) Call(method string, params []interface{}) (map[string]interface{}, error) {\n")
-	sb.WriteString("	return t.call(method, params, fmt.Sprintf(\"%d\", atomic.AddUint64(&t.requestID, 1)))\n")
+	sb.WriteString("func (t *HTTPTransport) Call(ctx context.Context, method string, params []interface{}) (map[string]interface{}, error) {\n")
+	sb.WriteString("	return t.call(ctx, method, params, fmt.Sprintf(\"%d\", atomic.AddUint64(&t.requestID, 1)))\n")
 	sb.WriteString("}\n\n")
 
 	sb.WriteString("// Notify sends a notification over HTTP: no id member, no response expected.\n")
-	sb.WriteString("func (t *HTTPTransport) Notify(method string, params []interface{}) error {\n")
-	sb.WriteString("	_, err := t.call(method, params, nil)\n")
+	sb.WriteString("func (t *HTTPTransport) Notify(ctx context.Context, method string, params []interface{}) error {\n")
+	sb.WriteString("	_, err := t.call(ctx, method, params, nil)\n")
 	sb.WriteString("	return err\n")
 	sb.WriteString("}\n\n")
 
 	sb.WriteString("// call builds and sends one JSON-RPC request. A nil id omits the id member.\n")
-	sb.WriteString("func (t *HTTPTransport) call(method string, params []interface{}, id interface{}) (map[string]interface{}, error) {\n")
+	sb.WriteString("func (t *HTTPTransport) call(ctx context.Context, method string, params []interface{}, id interface{}) (map[string]interface{}, error) {\n")
+	sb.WriteString("	if ctx == nil {\n")
+	sb.WriteString("		ctx = context.Background()\n")
+	sb.WriteString("	}\n")
 	sb.WriteString("	request := map[string]interface{}{\n")
 	sb.WriteString("		\"jsonrpc\": \"2.0\",\n")
 	sb.WriteString("		\"method\":  method,\n")
@@ -1357,7 +1405,7 @@ func writeHTTPTransportGo(sb *strings.Builder) {
 	sb.WriteString("		return nil, fmt.Errorf(\"failed to marshal request: %w\", err)\n")
 	sb.WriteString("	}\n\n")
 
-	sb.WriteString("	req, err := http.NewRequest(\"POST\", t.baseURL, bytes.NewBuffer(jsonData))\n")
+	sb.WriteString("	req, err := http.NewRequestWithContext(ctx, \"POST\", t.baseURL, bytes.NewBuffer(jsonData))\n")
 	sb.WriteString("	if err != nil {\n")
 	sb.WriteString("		return nil, fmt.Errorf(\"failed to create request: %w\", err)\n")
 	sb.WriteString("	}\n\n")
@@ -1484,21 +1532,22 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	// set. The generated client has no network bootstrap in its constructor, so
 	// the first call is the earliest safe point to fetch the server IDL.
 	fmt.Fprintf(sb, "// ensureBootstrapVerification verifies the contract once before the first RPC\n")
-	fmt.Fprintf(sb, "// call when VerifyOnBootstrap() was supplied.\n")
-	fmt.Fprintf(sb, "func (c *%s) ensureBootstrapVerification() {\n", clientName)
+	fmt.Fprintf(sb, "// call when VerifyOnBootstrap() was supplied. The caller context bounds the\n")
+	fmt.Fprintf(sb, "// IDL fetch.\n")
+	fmt.Fprintf(sb, "func (c *%s) ensureBootstrapVerification(ctx context.Context) {\n", clientName)
 	sb.WriteString("	if !c.verifyOnBootstrap {\n")
 	sb.WriteString("		return\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("	c.verifyOnce.Do(func() {\n")
-	sb.WriteString("		c.VerifyCompatibility(context.Background())\n")
+	sb.WriteString("		c.VerifyCompatibility(ctx)\n")
 	sb.WriteString("	})\n")
 	sb.WriteString("}\n\n")
 
 	// Notify sends a request without an id through transports that support it.
 	fmt.Fprintf(sb, "// Notify sends a JSON-RPC notification to %s.\n", iface.Name)
-	fmt.Fprintf(sb, "func (c *%s) Notify(method string, params []interface{}) error {\n", clientName)
+	fmt.Fprintf(sb, "func (c *%s) Notify(ctx context.Context, method string, params []interface{}) error {\n", clientName)
 	sb.WriteString("	if transport, ok := c.transport.(NotifyTransport); ok {\n")
-	sb.WriteString("		return transport.Notify(method, params)\n")
+	sb.WriteString("		return transport.Notify(ctx, method, params)\n")
 	sb.WriteString("	}\n")
 	sb.WriteString("	return fmt.Errorf(\"transport does not support notifications\")\n")
 	sb.WriteString("}\n\n")
@@ -1513,13 +1562,11 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, namespace string, nsImports map[string]string, packageImportPath string, idl ...*parser.IDL) {
 	methodName := snakeToCamelCase(method.Name)
 	fmt.Fprintf(sb, "// %s calls %s.%s\n", methodName, iface.Name, method.Name)
-	fmt.Fprintf(sb, "func (c *%sClient) %s(", goInterfaceIdent(iface, idl...), methodName)
+	fmt.Fprintf(sb, "func (c *%sClient) %s(ctx context.Context", goInterfaceIdent(iface, idl...), methodName)
 
 	// Parameters
-	for i, param := range method.Parameters {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
+	for _, param := range method.Parameters {
+		sb.WriteString(", ")
 		paramType := getGoTypeWithNamespace(param.Type, structMap, enumMap, false, namespace, nsImports, packageImportPath)
 		fmt.Fprintf(sb, "%s %s", goParamIdent(param.Name), paramType)
 	}
@@ -1558,7 +1605,7 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 	sb.WriteString("\t}\n\n")
 
 	// Verify the contract once before the first RPC when VerifyOnBootstrap() is set.
-	sb.WriteString("\tc.ensureBootstrapVerification()\n\n")
+	sb.WriteString("\tc.ensureBootstrapVerification(ctx)\n\n")
 
 	// The generated validation flags must actually gate IDL validation.
 	fmt.Fprintf(sb, "\tif c.validateRequests && c.contract != nil {\n")
@@ -1568,7 +1615,7 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 
 	// Call transport
 	fmt.Fprintf(sb, "\tmethodName := \"%s.%s\"\n", iface.Name, method.Name)
-	sb.WriteString("\tresponse, err := c.transport.Call(methodName, params)\n")
+	sb.WriteString("\tresponse, err := c.transport.Call(ctx, methodName, params)\n")
 	sb.WriteString("\tif err != nil {\n")
 	writeErrorReturn("err")
 	sb.WriteString("\t}\n\n")
@@ -1625,7 +1672,7 @@ func writeVerifyCompatibilityMethod(sb *strings.Builder, clientName string) {
 	sb.WriteString("	// Info-level \"removed\" deltas, which would look compatible.\n")
 	sb.WriteString("	var fetchErr error\n")
 	sb.WriteString("	if c.serverIDL == nil && c.transport != nil {\n")
-	sb.WriteString("		resp, err := c.transport.Call(\"pulserpc-idl\", []interface{}{})\n")
+	sb.WriteString("		resp, err := c.transport.Call(ctx, \"pulserpc-idl\", []interface{}{})\n")
 	sb.WriteString("		switch {\n")
 	sb.WriteString("		case err != nil:\n")
 	sb.WriteString("			fetchErr = err\n")
@@ -1762,6 +1809,9 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("// Test server implementation for integration testing\n\n")
 	sb.WriteString("package main\n\n")
 	sb.WriteString("import (\n")
+	if len(idl.Interfaces) > 0 {
+		sb.WriteString("	\"context\"\n")
+	}
 	sb.WriteString("	\"fmt\"\n")
 	if usesMath {
 		sb.WriteString("	\"math\"\n")
@@ -1831,13 +1881,11 @@ func writeTestInterfaceImplGo(sb *strings.Builder, iface *parser.Interface, stru
 // writeTestMethodImplGo generates a test method implementation
 func writeTestMethodImplGo(sb *strings.Builder, iface *parser.Interface, method *parser.Method, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, idl ...*parser.IDL) {
 	methodName := snakeToCamelCase(method.Name)
-	fmt.Fprintf(sb, "func (i *%sImpl) %s(", goInterfaceIdent(iface, idl...), methodName)
+	fmt.Fprintf(sb, "func (i *%sImpl) %s(ctx context.Context", goInterfaceIdent(iface, idl...), methodName)
 
 	// Parameters
-	for i, param := range method.Parameters {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
+	for _, param := range method.Parameters {
+		sb.WriteString(", ")
 		paramType := mapTypeToGoType(param.Type, structMap, enumMap, false)
 		fmt.Fprintf(sb, "%s %s", goParamIdent(param.Name), paramType)
 	}
@@ -1948,9 +1996,7 @@ func generateTestClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("package main\n\n")
 	sb.WriteString("import (\n")
 	sb.WriteString("	\"bytes\"\n")
-	if len(idl.Interfaces) > 0 {
-		sb.WriteString("	\"context\"\n")
-	}
+	sb.WriteString("	\"context\"\n")
 	sb.WriteString("	\"fmt\"\n")
 	sb.WriteString("	\"net/http\"\n")
 	sb.WriteString("	\"os\"\n")
@@ -1968,7 +2014,7 @@ func generateTestClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("// divergentIDLTransport is a stub transport that reports a server IDL\n")
 	sb.WriteString("// different from this client's embedded IDL (R31).\n")
 	sb.WriteString("type divergentIDLTransport struct{}\n\n")
-	sb.WriteString("func (divergentIDLTransport) Call(method string, params []interface{}) (map[string]interface{}, error) {\n")
+	sb.WriteString("func (divergentIDLTransport) Call(ctx context.Context, method string, params []interface{}) (map[string]interface{}, error) {\n")
 	sb.WriteString("	if method != \"pulserpc-idl\" {\n")
 	sb.WriteString("		return nil, fmt.Errorf(\"unexpected method %s\", method)\n")
 	sb.WriteString("	}\n")
@@ -2081,17 +2127,25 @@ func writeTestClientCallGo(sb *strings.Builder, iface *parser.Interface, method 
 		params = append(params, paramValue)
 	}
 
-	// Generate method call
+	// Generate method call, always passing a context as the first argument.
 	methodName := snakeToCamelCase(method.Name)
-	if len(params) > 0 {
-		fmt.Fprintf(sb, "		result, err := %s.%s(%s)\n", clientVar, methodName, strings.Join(params, ", "))
+	callArgs := append([]string{"context.Background()"}, params...)
+	if method.ReturnType != nil {
+		fmt.Fprintf(sb, "		result, err := %s.%s(%s)\n", clientVar, methodName, strings.Join(callArgs, ", "))
 	} else {
-		fmt.Fprintf(sb, "		result, err := %s.%s()\n", clientVar, methodName)
+		fmt.Fprintf(sb, "		err := %s.%s(%s)\n", clientVar, methodName, strings.Join(callArgs, ", "))
 	}
 	sb.WriteString("		if err != nil {\n")
 	fmt.Fprintf(sb, "			errors = append(errors, fmt.Sprintf(\"%s failed: %%v\", err))\n", testName)
 	sb.WriteString("			return\n")
 	sb.WriteString("		}\n")
+
+	if method.ReturnType == nil {
+		// Void methods return only error; there is no result to assert.
+		fmt.Fprintf(sb, "		fmt.Printf(\"✓ %s passed\\n\")\n", testName)
+		sb.WriteString("	}()\n\n")
+		return
+	}
 
 	// Generate assertions
 	methodNameLower := strings.ToLower(method.Name)
@@ -2101,7 +2155,7 @@ func writeTestClientCallGo(sb *strings.Builder, iface *parser.Interface, method 
 		sb.WriteString("			return\n")
 		sb.WriteString("		}\n")
 		sb.WriteString("		// Test null return\n")
-		fmt.Fprintf(sb, "		resultNull, _ := %s.Echo(\"return-null\")\n", clientVar)
+		fmt.Fprintf(sb, "		resultNull, _ := %s.Echo(context.Background(), \"return-null\")\n", clientVar)
 		sb.WriteString("		if resultNull != nil {\n")
 		fmt.Fprintf(sb, "			errors = append(errors, fmt.Sprintf(\"%s (null): expected nil, got %%v\", resultNull))\n", testName)
 		sb.WriteString("			return\n")

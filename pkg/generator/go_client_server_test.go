@@ -83,7 +83,7 @@ func TestGoGeneratedTransportNotificationAndIDs(t *testing.T) {
 
 	for _, marker := range []string{
 		"func (t *HTTPTransport) Notify(",
-		"t.call(method, params, nil)",
+		"t.call(ctx, method, params, nil)",
 		"if id != nil {\n\t\trequest[\"id\"] = id\n\t}",
 		"atomic.AddUint64(&t.requestID, 1)",
 		"pulserpc.ValidateResponseEnvelope(response, id)",
