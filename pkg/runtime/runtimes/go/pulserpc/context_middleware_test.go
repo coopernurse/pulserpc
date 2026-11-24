@@ -368,6 +368,34 @@ func TestRPCMiddlewareRunsPerBatchMember(t *testing.T) {
 	}
 }
 
+// Middleware runs before pulserpc-idl handling, so it can protect the IDL
+// endpoint from unauthenticated callers.
+func TestRPCMiddlewareRunsBeforeIDLHandling(t *testing.T) {
+	server := newContextTestServer(t)
+	server.UseRPC(func(ctx context.Context, request map[string]interface{}, response map[string]interface{}) (context.Context, map[string]interface{}, map[string]interface{}) {
+		return ctx, request, map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      request["id"],
+			"error":   map[string]interface{}{"code": -32001, "message": "blocked"},
+		}
+	})
+
+	response := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "pulserpc-idl",
+		"id":      1,
+	})
+	if response == nil {
+		t.Fatal("expected a response")
+	}
+	if code := errorCode(t, response); code != -32001 {
+		t.Errorf("code = %d, want the middleware response -32001", code)
+	}
+	if _, hasResult := response["result"]; hasResult {
+		t.Error("middleware allowed the IDL result through")
+	}
+}
+
 // registrationIDL is a one-method contract for registration checks.
 const registrationIDL = `{
 	"interfaces": [{
