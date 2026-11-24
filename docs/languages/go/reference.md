@@ -164,7 +164,7 @@ func (s *CatalogService) GetProduct(ctx context.Context, productId string) (*che
 
 // Start server
 func main() {
-    server := checkout.NewServer("0.0.0.0", 8080)
+    server := checkout.NewPulseRPCServer("0.0.0.0", 8080)
     // Register validates the handler shape: a leading context.Context and the
     // declared error result. Check the error so a misconfigured server fails
     // at startup instead of on the first request.
@@ -332,7 +332,7 @@ PulseRPC automatically validates:
 ```go
 // This will return error (-32602) if validation fails
 ctx := context.Background()
-cart, err := cartService.AddToCart(ctx, &checkout.AddToCartRequest{
+cart, err := cartService.AddToCart(ctx, checkout.AddToCartRequest{
     ProductId: "prod001",
     Quantity:  2,
 })
@@ -441,7 +441,7 @@ func (s *CartService) GetCart(ctx context.Context, cartId string) (*checkout.Car
     return s.carts[cartId], nil
 }
 
-func (s *CartService) AddToCart(ctx context.Context, req *checkout.AddToCartRequest) (*checkout.Cart, error) {
+func (s *CartService) AddToCart(ctx context.Context, req checkout.AddToCartRequest) (checkout.Cart, error) {
     s.mu.Lock()
     defer s.mu.Unlock()
     // ... modify s.carts
