@@ -217,7 +217,9 @@ func enumSetFromDef(def EnumDef) *enumValueSet {
 	return newEnumValueSet(valuesList)
 }
 
-func validateStructE(value interface{}, structName string, structDef StructDef, resolver *typeResolver, path string) []ValidationError {
+type nullFieldPolicy func(structName, fieldName string) bool
+
+func validateStructE(value interface{}, structName string, structDef StructDef, resolver *typeResolver, path string, rejectNull nullFieldPolicy) []ValidationError {
 	dict, ok := value.(map[string]interface{})
 	if !ok {
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected map for struct %s, got %T", structName, value)}}
@@ -254,7 +256,7 @@ func validateStructE(value interface{}, structName string, structDef StructDef, 
 			continue
 		}
 		if fieldValue == nil {
-			if !isOptional {
+			if !isOptional || rejectNull != nil && rejectNull(declaredStructName(structDef, structName), fieldName) {
 				errs = append(errs, ValidationError{Path: fieldPath, Message: fmt.Sprintf("field '%s' in struct %s cannot be nil", fieldName, structName)})
 			}
 			continue
@@ -264,13 +266,25 @@ func validateStructE(value interface{}, structName string, structDef StructDef, 
 			errs = append(errs, ValidationError{Path: fieldPath, Message: fmt.Sprintf("invalid field type definition for field '%s' in struct %s", fieldName, structName)})
 			continue
 		}
-		sub := validateTypeE(fieldValue, typeDef, resolver, false, fieldPath)
+		sub := validateTypeE(fieldValue, typeDef, resolver, false, fieldPath, rejectNull)
 		errs = append(errs, sub...)
 	}
 	return errs
 }
 
-func validateTypeE(value interface{}, typeDef map[string]interface{}, resolver *typeResolver, isOptional bool, path string) []ValidationError {
+func declaredStructName(def StructDef, fallback string) string {
+	name, _ := def["name"].(string)
+	if name == "" {
+		return fallback
+	}
+	namespace, _ := def["namespace"].(string)
+	if namespace != "" && !strings.Contains(name, ".") {
+		return namespace + "." + name
+	}
+	return name
+}
+
+func validateTypeE(value interface{}, typeDef map[string]interface{}, resolver *typeResolver, isOptional bool, path string, rejectNull nullFieldPolicy) []ValidationError {
 	if value == nil {
 		if isOptional {
 			return nil
@@ -299,7 +313,7 @@ func validateTypeE(value interface{}, typeDef map[string]interface{}, resolver *
 			return []ValidationError{{Path: path, Message: "invalid array type definition"}}
 		}
 		elementValidator := func(v interface{}, p string) []ValidationError {
-			return validateTypeE(v, elementType, resolver, false, p)
+			return validateTypeE(v, elementType, resolver, false, p, rejectNull)
 		}
 		return ValidateArrayE(value, elementValidator, path)
 	}
@@ -310,7 +324,7 @@ func validateTypeE(value interface{}, typeDef map[string]interface{}, resolver *
 			return []ValidationError{{Path: path, Message: "invalid map type definition"}}
 		}
 		valueValidator := func(v interface{}, p string) []ValidationError {
-			return validateTypeE(v, valueType, resolver, false, p)
+			return validateTypeE(v, valueType, resolver, false, p, rejectNull)
 		}
 		return ValidateMapE(value, valueValidator, path)
 	}
@@ -318,7 +332,7 @@ func validateTypeE(value interface{}, typeDef map[string]interface{}, resolver *
 	if userDefined, ok := typeDef["userDefined"].(string); ok {
 		structDef := resolver.structs.resolve(userDefined)
 		if structDef != nil {
-			return validateStructE(value, userDefined, structDef, resolver, path)
+			return validateStructE(value, userDefined, structDef, resolver, path, rejectNull)
 		}
 		enumDef := resolver.enums.resolve(userDefined)
 		if enumDef != nil {
@@ -397,13 +411,13 @@ func ValidateEnum(value interface{}, enumName string, allowedValues []string) er
 	return nil
 }
 func ValidateStruct(value interface{}, structName string, structDef StructDef, allStructs StructMap, allEnums EnumMap) error {
-	if e := validateStructE(value, structName, structDef, newTypeResolver(allStructs, allEnums), ""); len(e) > 0 {
+	if e := validateStructE(value, structName, structDef, newTypeResolver(allStructs, allEnums), "", nil); len(e) > 0 {
 		return fmt.Errorf("%s", e[0].Message)
 	}
 	return nil
 }
 func ValidateType(value interface{}, typeDef map[string]interface{}, allStructs StructMap, allEnums EnumMap, isOptional bool) error {
-	if e := validateTypeE(value, typeDef, newTypeResolver(allStructs, allEnums), isOptional, ""); len(e) > 0 {
+	if e := validateTypeE(value, typeDef, newTypeResolver(allStructs, allEnums), isOptional, "", nil); len(e) > 0 {
 		return fmt.Errorf("%s", e[0].Message)
 	}
 	return nil

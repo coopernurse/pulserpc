@@ -210,6 +210,10 @@ func (c *Contract) FindEnum(enumName string) EnumDef {
 
 // ValidateRequest validates request parameters against the IDL
 func (c *Contract) ValidateRequest(ifaceName string, funcName string, params []interface{}) error {
+	return c.validateRequest(ifaceName, funcName, params, nil)
+}
+
+func (c *Contract) validateRequest(ifaceName string, funcName string, params []interface{}, rejectNull nullFieldPolicy) error {
 	iface := c.GetInterface(ifaceName)
 	if iface == nil {
 		return fmt.Errorf("unknown interface: '%s'", ifaceName)
@@ -250,7 +254,7 @@ func (c *Contract) ValidateRequest(ifaceName string, funcName string, params []i
 			isOptional = opt
 		}
 
-		errs := validateTypeE(paramValue, paramType, c.typeResolver(), isOptional, fmt.Sprintf("param[%d]", i))
+		errs := validateTypeE(paramValue, paramType, c.typeResolver(), isOptional, fmt.Sprintf("param[%d]", i), rejectNull)
 		allErrors = append(allErrors, errs...)
 	}
 
@@ -307,7 +311,7 @@ func (c *Contract) ValidateResponse(ifaceName string, funcName string, result in
 		isOptional = opt
 	}
 
-	errs := validateTypeE(result, returnType, c.typeResolver(), isOptional, "")
+	errs := validateTypeE(result, returnType, c.typeResolver(), isOptional, "", nil)
 	if len(errs) > 0 {
 		vr := NewValidationResult(errs)
 		return NewRPCErrorWithData(-32603, fmt.Sprintf("function '%s.%s' invalid response", ifaceName, funcName), vr.ToMap())

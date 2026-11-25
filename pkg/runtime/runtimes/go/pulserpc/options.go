@@ -59,6 +59,11 @@ type ServerConfig struct {
 	// params, recursively through pointers, slices, arrays, maps, and embedded
 	// structs. Unknown top-level JSON-RPC envelope members are still ignored.
 	RejectUnknownRequestFields bool
+	// RejectNullRequestField can reject an explicit null for an optional IDL
+	// struct field during request validation. It receives the declared struct
+	// name (including its namespace when declared) and the exact IDL field key.
+	// Omitted fields, responses, and direct Contract validation are unaffected.
+	RejectNullRequestField func(structName, fieldName string) bool
 	// MapError maps argument decode and validation failures to an RPCError.
 	// Returning nil falls back to the normal JSON-RPC error. Envelope protocol
 	// errors (invalid jsonrpc/method/id, named-param rejection) are never

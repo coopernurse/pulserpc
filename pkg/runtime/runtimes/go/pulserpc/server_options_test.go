@@ -27,7 +27,7 @@ const optionsTestIDL = `{
 	}],
 	"structs": [
 		{"name":"OptMeta","fields":[{"name":"note","type":{"builtIn":"string"}}]},
-		{"name":"OptItem","fields":[
+		{"name":"OptItem","namespace":"admin.example","fields":[
 			{"name":"name","type":{"builtIn":"string"}},
 			{"name":"count","type":{"builtIn":"int"}},
 			{"name":"meta","type":{"userDefined":"OptMeta"}},
@@ -607,4 +607,47 @@ func TestMapMethodErrorSelectsMethodAndFallsThrough(t *testing.T) {
 		t.Errorf("both mappers declined: got %d, want -32602", got)
 	}
 
+}
+
+func TestRejectNullRequestFieldDistinguishesOmittedFromNull(t *testing.T) {
+	config := DefaultServerConfig()
+	config.RejectNullRequestField = func(structName, fieldName string) bool {
+		return structName == "admin.example.OptItem" && fieldName == "child"
+	}
+	server, _ := newOptionsServer(t, config)
+	for _, test := range []struct {
+		name  string
+		child any
+	}{
+		{"object", map[string]any{"note": "valid"}},
+		{"null", nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			item := fullItemMap()
+			item["child"] = test.child
+			response := server.Call(itemRequest(item))
+			if test.child == nil {
+				if got := errorCode(t, response); got != -32602 {
+					t.Fatalf("explicit null: got %d, want -32602", got)
+				}
+				if err := server.contract.ValidateRequest("Opt", "meta", []any{item}); err != nil {
+					t.Fatalf("direct validation used server policy: %v", err)
+				}
+			} else if response["result"] != "widget" {
+				t.Fatalf("valid object: got %#v", response)
+			}
+		})
+	}
+	item := fullItemMap()
+	delete(item, "child")
+	if response := server.Call(itemRequest(item)); response["result"] != "widget" {
+		t.Fatalf("omitted optional field: got %#v", response)
+	}
+
+	config.RejectNullRequestField = func(string, string) bool { return false }
+	other, _ := newOptionsServer(t, config)
+	item["child"] = nil
+	if response := other.Call(itemRequest(item)); response["result"] != "widget" {
+		t.Fatalf("unselected optional field: got %#v", response)
+	}
 }
