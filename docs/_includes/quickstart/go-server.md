@@ -160,7 +160,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, request checkout.CreateO
 		PaymentMethod:   request.PaymentMethod,
 		Status:          checkout.OrderStatusPending,
 		Total:           cart.Subtotal,
-		CreatedAt:       int(time.Now().Unix()), // Convert int64 to int
+		CreatedAt:       time.Now().Unix(),
 	}
 	s.orders[orderId] = order
 

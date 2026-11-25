@@ -3,6 +3,7 @@ package pulserpc
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -44,7 +45,7 @@ type OptMeta struct {
 
 type OptItem struct {
 	Name     string             `json:"name"`
-	Count    int                `json:"count"`
+	Count    int64              `json:"count"`
 	Meta     OptMeta            `json:"meta"`
 	Child    *OptMeta           `json:"child"`
 	Children []OptMeta          `json:"children"`
@@ -65,7 +66,7 @@ func (h *optionsHandler) Echo(ctx context.Context, value string) (string, error)
 	return value, nil
 }
 
-func (h *optionsHandler) Add(ctx context.Context, a, b int) (int, error) {
+func (h *optionsHandler) Add(ctx context.Context, a, b int64) (int64, error) {
 	return a + b, nil
 }
 
@@ -120,7 +121,7 @@ func TestDefaultServerConfigIsLenient(t *testing.T) {
 		"params":  map[string]interface{}{"a": 2, "b": 3},
 		"id":      1,
 	})
-	if named["result"] != 5 {
+	if named["result"] != int64(5) {
 		t.Fatalf("named params result = %#v, want 5", named["result"])
 	}
 
@@ -379,8 +380,17 @@ func TestJSONNumberParams(t *testing.T) {
 		"jsonrpc": "2.0", "method": "Opt.add",
 		"params": []interface{}{json.Number("2"), json.Number("3")}, "id": 1,
 	})
-	if response["result"] != 5 {
+	if response["result"] != int64(5) {
 		t.Fatalf("json.Number int params result = %#v, want 5", response["result"])
+	}
+
+	// The full int64 range converts exactly.
+	response = server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "Opt.add",
+		"params": []interface{}{json.Number("9223372036854775807"), json.Number("0")}, "id": 1,
+	})
+	if response["result"] != int64(math.MaxInt64) {
+		t.Fatalf("max int64 json.Number result = %#v, want %d", response["result"], int64(math.MaxInt64))
 	}
 
 	response = server.Call(map[string]interface{}{
@@ -392,8 +402,9 @@ func TestJSONNumberParams(t *testing.T) {
 	}
 
 	for name, number := range map[string]string{
-		"fractional":   "1.5",
-		"out of range": "4294967296",
+		"fractional":        "1.5",
+		"above int64 range": "9223372036854775808",
+		"below int64 range": "-9223372036854775809",
 	} {
 		response = server.Call(map[string]interface{}{
 			"jsonrpc": "2.0", "method": "Opt.add",
@@ -405,8 +416,22 @@ func TestJSONNumberParams(t *testing.T) {
 	}
 }
 
+// A large int64 result decoded by the client stays json.Number; response
+// validation must accept it as an int rather than treating it as a string.
+func TestValidateResponseAcceptsLargeJSONNumberInt(t *testing.T) {
+	server, _ := newOptionsServer(t, DefaultServerConfig())
+	if err := server.contract.ValidateResponse("Opt", "add", json.Number("9223372036854775807")); err != nil {
+		t.Fatalf("ValidateResponse rejected a large json.Number int: %v", err)
+	}
+	if err := server.contract.ValidateResponse("Opt", "add", json.Number("9223372036854775808")); err == nil {
+		t.Fatal("ValidateResponse accepted an out-of-range json.Number int")
+	}
+}
+
 // The adapter keeps the top-level id as json.Number and normalizes params (and
-// nested maps, including a param literally named "id") to float64.
+// nested maps, including a param literally named "id") to float64 where the
+// conversion is exact. Integers above 2^53 stay json.Number so they are not
+// corrupted.
 func TestNormalizeRequestNumbersPreservesOnlyRequestID(t *testing.T) {
 	request := map[string]interface{}{
 		"id":     json.Number("9007199254740993"),
@@ -426,6 +451,14 @@ func TestNormalizeRequestNumbersPreservesOnlyRequestID(t *testing.T) {
 		t.Fatalf("nested id = %T, want float64", nested["id"])
 	}
 
+	for _, text := range []string{"9007199254740993", "9223372036854775807", "-9223372036854775808", "9223372036854775808"} {
+		large := map[string]interface{}{"params": []interface{}{json.Number(text)}}
+		NormalizeRequestNumbers(large)
+		if got := large["params"].([]interface{})[0]; got != json.Number(text) {
+			t.Fatalf("large param %s = %T(%v), want json.Number", text, got, got)
+		}
+	}
+
 	batch := []interface{}{map[string]interface{}{"id": json.Number("3"), "params": []interface{}{json.Number("4")}}}
 	NormalizeRequestNumbers(batch)
 	member := batch[0].(map[string]interface{})
@@ -437,8 +470,8 @@ func TestNormalizeRequestNumbersPreservesOnlyRequestID(t *testing.T) {
 	}
 }
 
-// Client responses keep an exact id while result/error numbers retain the
-// v0.4.0 float64 shape.
+// Client responses keep an exact id while result/error numbers stay float64
+// where the conversion is exact. Large integers stay json.Number.
 func TestDecodeResponsePreservesIDAndNormalizesResult(t *testing.T) {
 	response, err := DecodeResponse([]byte(`{"jsonrpc":"2.0","id":9007199254740993,"result":{"n":9007199254740993}}`))
 	if err != nil {
@@ -448,9 +481,18 @@ func TestDecodeResponsePreservesIDAndNormalizesResult(t *testing.T) {
 		t.Fatalf("id = %T, want json.Number", response["id"])
 	}
 	n := response["result"].(map[string]interface{})["n"]
-	if _, ok := n.(float64); !ok {
-		t.Fatalf("result number = %T, want float64", n)
+	if _, ok := n.(json.Number); !ok {
+		t.Fatalf("large result number = %T, want json.Number", n)
 	}
+
+	small, err := DecodeResponse([]byte(`{"jsonrpc":"2.0","id":1,"result":{"n":42}}`))
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if _, ok := small["result"].(map[string]interface{})["n"].(float64); !ok {
+		t.Fatalf("small result number = %T, want float64", small["result"].(map[string]interface{})["n"])
+	}
+
 	if _, err := DecodeResponse([]byte("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}\n")); err != nil {
 		t.Fatalf("DecodeResponse rejected trailing whitespace: %v", err)
 	}
@@ -466,6 +508,35 @@ func TestJSONNumberDoesNotConvertToString(t *testing.T) {
 	converted := server.convertValueToType(reflect.ValueOf(json.Number("123")), reflect.TypeOf(""))
 	if converted.Kind() != reflect.String || converted.String() != "" {
 		t.Fatalf("json.Number -> string = %#v, want empty string", converted.Interface())
+	}
+}
+
+// json.Number conversion covers the full int64 range and refuses integer text
+// outside it instead of rounding through float64.
+func TestConvertJSONNumberInt64Bounds(t *testing.T) {
+	server := &Server{}
+	target := reflect.TypeOf(int64(0))
+
+	for _, tc := range []struct {
+		text string
+		want int64
+	}{
+		{"9223372036854775807", math.MaxInt64},
+		{"-9223372036854775808", math.MinInt64},
+		{"9007199254740993", 9007199254740993},
+		{"5.0", 5},
+	} {
+		got := server.convertValueToType(reflect.ValueOf(json.Number(tc.text)), target)
+		if got.Kind() != reflect.Int64 || got.Int() != tc.want {
+			t.Errorf("json.Number(%q) -> %v, want int64 %d", tc.text, got.Interface(), tc.want)
+		}
+	}
+
+	for _, text := range []string{"9223372036854775808", "-9223372036854775809", "9223372036854775807.0"} {
+		got := server.convertValueToType(reflect.ValueOf(json.Number(text)), target)
+		if got.Int() != 0 {
+			t.Errorf("json.Number(%q) -> %v, want the int64 zero value", text, got.Interface())
+		}
 	}
 }
 

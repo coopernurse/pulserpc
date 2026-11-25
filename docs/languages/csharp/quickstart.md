@@ -56,7 +56,7 @@ This creates:
 Generated code enforces the cross-runtime wire limits: POST only (405 plus a
 JSON-RPC error body otherwise), 1 MiB request bodies, 10 MiB client responses,
 100-entry batches, a 30-second client timeout, and redacted internal errors.
-Optional IDL built-ins map to `int?`, `bool?`, `double?`, and `string?`. See
+Optional IDL built-ins map to `long?`, `bool?`, `double?`, and `string?`. See
 [Wire Compatibility and Limits](reference.html#wire-compatibility-and-limits).
 
 **Pro tip:** Organize your generated code into a `Shared/` directory to keep things tidy:

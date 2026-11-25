@@ -105,18 +105,28 @@ def test_int_validation():
     except TypeError:
         pass
 
-    # D1/R25: IDL int is signed 32-bit, inclusive at both boundaries.
-    validate_int(-2147483648)
-    validate_int(2147483647)
-    validate_int(-2147483648.0)
-    validate_int(2147483647.0)
-    for out_of_range in (2147483648, -2147483649, 2 ** 63, -(2 ** 63),
-                         2147483648.0, -2147483649.0):
+    # D1/R25: IDL int is signed 64-bit, inclusive at both boundaries.
+    validate_int(-(2 ** 63))
+    validate_int(2 ** 63 - 1)
+    validate_int(float(-(2 ** 63)))
+    # Former 32-bit overflow values are now valid.
+    for wide_value in (2 ** 31, 2 ** 32, -(2 ** 31) - 1):
+        validate_int(wide_value)
+    # 2^63 - 1 as a float rounds up to 2^63 and is rejected; the integer form
+    # above is accepted.
+    for out_of_range in (2 ** 63, -(2 ** 63) - 1, 2 ** 64,
+                          float(2 ** 63), -(2 ** 63) - 2048.0, 1e300):
         try:
             validate_int(out_of_range)
             assert False, "Should have raised TypeError for %r" % (out_of_range,)
         except TypeError as exc:
-            assert "signed 32-bit" in str(exc), str(exc)
+            assert "signed 64-bit" in str(exc), str(exc)
+
+    try:
+        validate_int(float(2 ** 63 - 1))
+        assert False, "Should have raised TypeError for 2^63-1 as a float"
+    except TypeError as exc:
+        assert "signed 64-bit" in str(exc), str(exc)
 
     print("  PASS: Int validation")
 

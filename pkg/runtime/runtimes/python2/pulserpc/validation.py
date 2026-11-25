@@ -49,16 +49,16 @@ _string_types = (str, type(u""))
 _large_int = 2 ** 100
 _int_types = (int,) if isinstance(_large_int, int) else (int, type(_large_int))
 
-# IDL `int` is a signed 32-bit integer (D1/R25).  Python 2 integers are
+# IDL `int` is a signed 64-bit integer (D1/R25).  Python 2 integers are
 # arbitrary precision (`long`), so the range must be enforced by validation.
-INT_MIN = -2147483648
-INT_MAX = 2147483647
+INT_MIN = -2 ** 63
+INT_MAX = 2 ** 63 - 1
 
 
 def _check_int_range(value):
     if value < INT_MIN or value > INT_MAX:
         raise TypeError(
-            "Expected int in signed 32-bit range [%d, %d], got %s"
+            "Expected int in signed 64-bit range [%d, %d], got %s"
             % (INT_MIN, INT_MAX, value)
         )
 

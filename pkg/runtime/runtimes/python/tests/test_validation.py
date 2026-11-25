@@ -70,27 +70,36 @@ class TestBuiltInTypes:
             assert len(errs) == 1
             assert "Expected int" in errs[0].message
 
-    def test_validate_int_accepts_signed_32_bit_boundaries(self):
-        # D1/R25: IDL int is signed 32-bit; the boundaries are inclusive.
-        assert validate_int(-2147483648) == []
-        assert validate_int(2147483647) == []
-        assert validate_int(-2147483648.0) == []
-        assert validate_int(2147483647.0) == []
+    def test_validate_int_accepts_signed_64_bit_boundaries(self):
+        # D1/R25: IDL int is signed 64-bit; the boundaries are inclusive.
+        assert validate_int(-(2 ** 63)) == []
+        assert validate_int(2 ** 63 - 1) == []
+        assert validate_int(float(-(2 ** 63))) == []
+        # 2^63 - 1 as a float rounds up to 2^63, which is out of range, while
+        # the integer form is valid.
+        assert len(validate_int(float(2 ** 63 - 1))) == 1
+
+    def test_validate_int_accepts_values_above_32_bit(self):
+        # The range widened from 32-bit to 64-bit; former overflow values are
+        # now valid inputs.
+        for value in (2 ** 31, 2 ** 32, -(2 ** 31) - 1, 2 ** 63 - 1):
+            assert validate_int(value) == []
 
     def test_validate_int_rejects_out_of_range_values(self):
         # Python integers are arbitrary precision, so the range must be
         # enforced by validation rather than by the native type.
-        for value in (2147483648, -2147483649, 2 ** 63, -(2 ** 63)):
+        for value in (2 ** 63, -(2 ** 63) - 1, 2 ** 64):
             errs = validate_int(value)
             assert len(errs) == 1
             assert "Expected int" in errs[0].message
-            assert "signed 32-bit" in errs[0].message
+            assert "signed 64-bit" in errs[0].message
 
-        # Integral floats outside the range are rejected as well.
-        for value in (2147483648.0, -2147483649.0):
+        # Python floats beyond 2^63 are exact for many magnitudes (2^63 itself
+        # is exact) and must be rejected; 1e300 is integral but out of range.
+        for value in (float(2 ** 63), -(2 ** 63) - 2048.0, 1e300):
             errs = validate_int(value)
             assert len(errs) == 1
-            assert "signed 32-bit" in errs[0].message
+            assert "signed 64-bit" in errs[0].message
     
     def test_validate_float_success(self):
         validate_float(3.14)

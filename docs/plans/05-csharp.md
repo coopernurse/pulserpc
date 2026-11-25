@@ -46,7 +46,7 @@ Read [README.md](README.md) for D1–D16. Do not edit shared harness scripts.
 
 ### R24 / R25 — id type and int range
 - Server: reject boolean/object/array ids with `-32600`.
-- `Validation.ValidateInt`: reject values outside signed 32-bit. Update tests.
+- `Validation.ValidateInt`: reject values outside signed 64-bit. Update tests.
 
 ### M19 / M20 — batches and params
 - Non-object batch entries: already checked; add a test.

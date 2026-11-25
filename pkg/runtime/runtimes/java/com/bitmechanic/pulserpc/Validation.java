@@ -24,44 +24,34 @@ public class Validation {
 
     public static List<ValidationError> validateInt(Object value, String path) {
         List<ValidationError> errs = new ArrayList<>();
-        if (value instanceof Integer) {
-            return checkIntRange(((Integer) value).longValue(), path, errs);
+        if (value instanceof Integer || value instanceof Long) {
+            // Integer and Long already fit in the signed 64-bit range.
+            return errs;
         }
-        if (value instanceof Double) {
-            double d = (Double) value;
-            if (d == Math.floor(d) && !Double.isInfinite(d) && !Double.isNaN(d)
-                    && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
-                return checkIntRange((long) d, path, errs);
+        if (value instanceof Double || value instanceof Float) {
+            double d = ((Number) value).doubleValue();
+            if (Double.isInfinite(d) || Double.isNaN(d) || d != Math.floor(d)) {
+                errs.add(new ValidationError(path, "Expected int, got non-integral float " + d));
+                return errs;
             }
-        }
-        if (value instanceof Long) {
-            long l = (Long) value;
-            if (l >= Integer.MIN_VALUE && l <= Integer.MAX_VALUE) {
-                return checkIntRange(l, path, errs);
+            // 2^63 is exactly representable as a double and is out of range, so
+            // the upper bound is exclusive. Long.MIN_VALUE (-2^63) is in range.
+            if (d < (double) Long.MIN_VALUE || d >= INT_MAX_EXCLUSIVE) {
+                errs.add(new ValidationError(path, "Expected int in signed 64-bit range [" + Long.MIN_VALUE + ", " + Long.MAX_VALUE + "], got " + d));
             }
+            return errs;
         }
         if (value instanceof Boolean) {
             errs.add(new ValidationError(path, "Expected int, got bool"));
             return errs;
         }
-        if (value instanceof Float) {
-            // treat like double
-            double d = ((Float) value).doubleValue();
-            if (d == Math.floor(d) && !Double.isInfinite(d) && !Double.isNaN(d)
-                    && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
-                return checkIntRange((long) d, path, errs);
-            }
-        }
         errs.add(new ValidationError(path, "Expected int, got " + getTypeName(value)));
         return errs;
     }
 
-    private static List<ValidationError> checkIntRange(long v, String path, List<ValidationError> errs) {
-        if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
-            errs.add(new ValidationError(path, "Expected int in signed 32-bit range [" + Integer.MIN_VALUE + ", " + Integer.MAX_VALUE + "], got " + v));
-        }
-        return errs;
-    }
+    // 2^63 as a double. Long.MAX_VALUE rounds up to this value as a double, so
+    // the upper bound is compared exclusively to keep 2^63 itself out of range.
+    private static final double INT_MAX_EXCLUSIVE = 9223372036854775808.0;
 
     public static List<ValidationError> validateFloat(Object value, String path) {
         List<ValidationError> errs = new ArrayList<>();

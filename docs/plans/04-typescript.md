@@ -43,7 +43,7 @@ and many sources; keep them in sync.
 
 ### R24 / R25 — id type and int range
 - Servers reject boolean/object/array ids with `-32600`.
-- `validateInt` (both runtimes): reject integral values outside signed 32-bit.
+- `validateInt` (both runtimes): reject integral values outside signed 64-bit.
   Update tests.
 
 ### M19 / M20 — batches and params

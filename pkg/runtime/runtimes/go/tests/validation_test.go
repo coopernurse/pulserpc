@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -259,13 +260,17 @@ func TestValidateType(t *testing.T) {
 	}
 }
 
-// R25/D1: IDL int is signed 32-bit. In-range whole numbers pass; out-of-range
+// R25/D1: IDL int is signed 64-bit. In-range whole numbers pass; out-of-range
 // integral values, fractions, NaN/Inf, and bools fail.
 func TestValidateIntRange(t *testing.T) {
 	valid := []interface{}{
-		int(math.MinInt32), int(math.MaxInt32),
-		int64(math.MinInt32), int64(math.MaxInt32),
-		float64(math.MinInt32), float64(math.MaxInt32),
+		int(0), int64(0),
+		int64(math.MinInt64), int64(math.MaxInt64),
+		float64(math.MinInt64), // -2^63 is exactly representable
+		json.Number("9223372036854775807"),
+		json.Number("-9223372036854775808"),
+		json.Number("9007199254740993"),
+		json.Number("2"),
 	}
 	for _, value := range valid {
 		if err := pulserpc.ValidateInt(value); err != nil {
@@ -274,9 +279,12 @@ func TestValidateIntRange(t *testing.T) {
 	}
 
 	invalid := []interface{}{
-		int64(math.MaxInt32) + 1, int64(math.MinInt32) - 1,
-		float64(math.MaxInt32) + 1, float64(math.MinInt32) - 1,
-		int64(math.MaxInt32) * 2,
+		// float64(math.MaxInt64) rounds to 2^63, which is out of range.
+		float64(math.MaxInt64),
+		float64(math.MinInt64) * 2,
+		json.Number("9223372036854775808"),
+		json.Number("-9223372036854775809"),
+		json.Number("1e400"),
 		1.5, -1.5,
 		math.NaN(), math.Inf(1), math.Inf(-1),
 		true,

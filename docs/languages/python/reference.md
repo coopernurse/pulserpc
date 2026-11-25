@@ -10,7 +10,7 @@ layout: default
 | IDL Type | Python Type | Example |
 |----------|-------------|---------|
 | `string` | `str` | `"hello"` |
-| `int` | `int` (signed 32-bit) | `42` |
+| `int` | `int` (signed 64-bit) | `42` |
 | `float` | `float` (IEEE-754 double) | `3.14` |
 | `bool` | `bool` | `True`, `False` |
 | `[]Type` | `list` | `[1, 2, 3]` |
@@ -20,9 +20,10 @@ layout: default
 | `T [optional]` | `None` or type | `None` or value |
 
 > **`int` range (D1/R25):** validation accepts integral JSON numbers in
-> `[-2147483648, 2147483647]`. Python's native `int` is arbitrary precision, so
-> out-of-range values are rejected explicitly. Enums are always wire strings
-> (declared value names), never ordinals, and `float` is an IEEE-754 double.
+> `[-9223372036854775808, 9223372036854775807]` (signed 64-bit). Python's native
+> `int` is arbitrary precision, so out-of-range values are rejected explicitly.
+> Enums are always wire strings (declared value names), never ordinals, and
+> `float` is an IEEE-754 double.
 
 ## Structs as Dictionaries
 

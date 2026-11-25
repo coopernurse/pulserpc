@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Xunit;
 using PulseRPC;
 
@@ -27,6 +28,25 @@ namespace PulseRPC.Tests
             Validation.ValidateInt(0);
             Validation.ValidateInt(42);
             Validation.ValidateInt(-100);
+            // IDL int is signed 64-bit.
+            Validation.ValidateInt(int.MaxValue);
+            Validation.ValidateInt(int.MinValue);
+            Validation.ValidateInt(long.MaxValue);
+            Validation.ValidateInt(long.MinValue);
+            Validation.ValidateInt(2147483648L);
+            Validation.ValidateInt(2147483648.0);
+            Validation.ValidateInt(4.0E18);
+            Validation.ValidateInt(-9223372036854775808.0);
+        }
+
+        [Fact]
+        public void OutOfRangeIntegerJsonElementIsRejectedAsIntButAcceptedAsFloat()
+        {
+            using var doc = JsonDocument.Parse("9223372036854775808");
+            JsonElement value = doc.RootElement;
+
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(value));
+            Validation.ValidateFloat(value);
         }
 
         [Fact]
@@ -34,6 +54,13 @@ namespace PulseRPC.Tests
         {
             Assert.Throws<ArgumentException>(() => Validation.ValidateInt("123"));
             Assert.Throws<ArgumentException>(() => Validation.ValidateInt(3.14));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(true));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(double.NaN));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(double.PositiveInfinity));
+            // 2^63 is one past long.MaxValue, and -2^63 is the inclusive minimum.
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(9223372036854775808.0));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(9.223372036854776E18));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(-1.0E19));
         }
 
         [Fact]

@@ -10,16 +10,16 @@ layout: default
 | IDL Type | C# Type | Example |
 |----------|---------|---------|
 | `string` | `string` | `"hello"` |
-| `int` | `int` (signed 32-bit) | `42` |
+| `int` | `long` (signed 64-bit) | `42L` |
 | `float` | `double` | `3.14` |
 | `bool` | `bool` | `true`, `false` |
-| `[]Type` | `List<Type>` | `new List<int> { 1, 2, 3 }` |
+| `[]Type` | `List<Type>` | `new List<long> { 1, 2, 3 }` |
 | `map[string]Type` | `Dictionary<string, Type>` | `new Dictionary<string, Type>` |
 | `Enum` | `enum` | `OrderStatus.Pending` |
 | `Struct` | Class with properties | `new Product { ... }` |
 | `T [optional]` | `T?` for built-ins; `Nullable<T>`/class for user types | `null` |
 
-Optional built-ins are nullable: `int?`, `bool?`, `double?`, `string?`. Generated
+Optional built-ins are nullable: `long?`, `bool?`, `double?`, `string?`. Generated
 files begin with `#nullable enable` so `string?` is meaningful.
 
 ## Generated Classes
@@ -70,10 +70,11 @@ if (product.ImageUrl != null) {
 
 Generated C# clients and servers implement the cross-runtime invariants:
 
-- **`int` is signed 32-bit (D1).** Valid values are integral numbers in
-  `[-2147483648, 2147483647]`. Fractional, `NaN`/`Infinity`, bool, and
-  out-of-range values are rejected with `-32602`. This is a breaking change
-  from earlier builds that accepted 64-bit `long` values.
+- **`int` is signed 64-bit (D1).** Valid values are integral numbers in
+  `[-9223372036854775808, 9223372036854775807]`. Fractional, `NaN`/`Infinity`,
+  bool, and out-of-range values are rejected with `-32602`.
+  `Validation.IntMin`/`IntMax` now hold the int64 bounds;
+  `Validation.Int32Min`/`Int32Max` retain the old signed 32-bit bounds.
 - **Only POST is accepted (D3).** Any other HTTP method receives `405` with a
   JSON-RPC error body:
   `{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request - only POST allowed"},"id":null}`.
@@ -88,7 +89,7 @@ Generated C# clients and servers implement the cross-runtime invariants:
   raises an `RPCError`), and batches at **100** entries
   (`-32600 "Batch exceeds maximum size"`). An empty batch returns a single
   `-32600` object.
-- **Optional built-ins are nullable (D7).** `int?`, `bool?`, `double?`,
+- **Optional built-ins are nullable (D7).** `long?`, `bool?`, `double?`,
   `string?`; generated files enable nullable reference types.
 - **Transport defaults.** `HttpTransport` sets a **30 second** request timeout,
   accepts optional custom headers, and trims a trailing `/` from the base URL.

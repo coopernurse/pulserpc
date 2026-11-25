@@ -134,12 +134,26 @@ func DecodeResponse(data []byte) (map[string]interface{}, error) {
 	return response, nil
 }
 
-// normalizeJSONNumbers converts json.Number values to float64 recursively. It is
-// used for request params, response results, and error data so middleware and
-// handlers see the same Go types as v0.4.0.
+// normalizeJSONNumbers converts json.Number values to float64 recursively when
+// the integer is in the JavaScript safe-integer range. It is used for request
+// params, response results, and error data so middleware and handlers see the
+// same Go types as v0.4.0. Larger int64 values stay json.Number; converting
+// them would lose precision (and JSON float formatting can rewrite even an
+// exactly representable value such as MinInt64).
 func normalizeJSONNumbers(value interface{}) interface{} {
 	switch v := value.(type) {
 	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			if intFitsFloatExactly(i) {
+				return float64(i)
+			}
+			return v
+		}
+		// Integer-form text outside int64 cannot be represented exactly as a
+		// float64 either; keep the exact text.
+		if isIntegerFormJSONNumber(v) {
+			return v
+		}
 		if f, err := v.Float64(); err == nil {
 			return f
 		}

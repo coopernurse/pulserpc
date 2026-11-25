@@ -9,12 +9,18 @@ PulseRPC supports a rich type system for defining your service contracts.
 
 ## Built-in Types
 
-| IDL Type | Description | Go | Java | Python | TypeScript |
-|----------|-------------|-----|------|--------|-----------|
-| `string` | Text/UTF-8 strings | `string` | `String` | `str` | `string` |
-| `int` | Signed 32-bit integers (`[-2147483648, 2147483647]`) | `int` | `int`/`Integer` | `int` | `number` |
-| `float` | 64-bit floating point | `float64` | `Double` | `float` | `number` |
-| `bool` | Boolean values | `bool` | `Boolean` | `bool` | `boolean` |
+| IDL Type | Description | Go | Java | C# | Python | TypeScript |
+|----------|-------------|-----|------|----|--------|-----------|
+| `string` | Text/UTF-8 strings | `string` | `String` | `string` | `str` | `string` |
+| `int` | Signed 64-bit integers (`[-9223372036854775808, 9223372036854775807]`) | `int64` | `long`/`Long` | `long` | `int` | `number` (safe integers only) |
+| `float` | 64-bit floating point | `float64` | `double`/`Double` | `double` | `float` | `number` |
+| `bool` | Boolean values | `bool` | `boolean`/`Boolean` | `bool` | `bool` | `boolean` |
+
+> **`int` is signed 64-bit (D1).** Java, C#, Go, and Python runtimes support the
+> full range. TypeScript types `int` as `number`, and JavaScript numbers can
+> represent integers exactly only up to 2^53-1 (`9007199254740991`), so the
+> TypeScript runtime validates the safe-integer range. This is a breaking change
+> from the earlier signed 32-bit `int`.
 
 ## Arrays
 

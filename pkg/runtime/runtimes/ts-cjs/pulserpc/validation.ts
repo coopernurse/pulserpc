@@ -54,11 +54,19 @@ export function validateString(value: any, path: string = ""): ValidationError[]
 }
 
 /**
- * IDL `int` is a signed 32-bit integer (D1/R25). TypeScript numbers are
- * IEEE-754 doubles, so the validator must enforce the range explicitly;
- * generated native types may be wider than the wire range.
+ * IDL `int` is a signed 64-bit integer on the wire (D1/R25). TypeScript
+ * numbers are IEEE-754 doubles and cannot represent the full int64 range
+ * exactly, so the validator accepts only integers in JavaScript's safe
+ * integer range [-(2^53 - 1), 2^53 - 1] and rejects wider values instead of
+ * silently rounding them. This is a TypeScript/JavaScript runtime limitation,
+ * not a change to the wire type.
  */
+export const INT64_SAFE_MIN = Number.MIN_SAFE_INTEGER;
+export const INT64_SAFE_MAX = Number.MAX_SAFE_INTEGER;
+
+/** @deprecated IDL `int` is signed 64-bit; use INT64_SAFE_MIN. */
 export const INT32_MIN = -2147483648;
+/** @deprecated IDL `int` is signed 64-bit; use INT64_SAFE_MAX. */
 export const INT32_MAX = 2147483647;
 
 export function validateInt(value: any, path: string = ""): ValidationError[] {
@@ -74,8 +82,13 @@ export function validateInt(value: any, path: string = ""): ValidationError[] {
   if (!Number.isInteger(value)) {
     return [makeError(path, `Expected integer, got number with fractional component: ${value}`)];
   }
-  if (value < INT32_MIN || value > INT32_MAX) {
-    return [makeError(path, `Expected signed 32-bit integer, got out-of-range value: ${value}`)];
+  if (!Number.isSafeInteger(value)) {
+    return [makeError(
+      path,
+      `Expected signed 64-bit integer within JavaScript's safe integer range ` +
+        `[${INT64_SAFE_MIN}, ${INT64_SAFE_MAX}], got ${value}: JavaScript numbers ` +
+        `cannot represent the full int64 range exactly`,
+    )];
   }
   return [];
 }

@@ -341,21 +341,33 @@ namespace PulseRPC.Tests
 
     public class InvariantValidationTests
     {
-        // R25/D1: IDL int is signed 32-bit.
+        // R25/D1: IDL int is signed 64-bit.
         [Fact]
-        public void ValidateInt_EnforcesSigned32BitRange()
+        public void ValidateInt_EnforcesSigned64BitRange()
         {
             Validation.ValidateInt(int.MaxValue);
             Validation.ValidateInt(int.MinValue);
+            Validation.ValidateInt(long.MaxValue);
+            Validation.ValidateInt(long.MinValue);
             Validation.ValidateInt(2147483647L);
             Validation.ValidateInt(-2147483648L);
+            Validation.ValidateInt(2147483648L);
+            Validation.ValidateInt(-2147483649L);
             Validation.ValidateInt(2147483647.0);
             Validation.ValidateInt(-2147483648.0);
+            Validation.ValidateInt(2147483648.0);
+            Validation.ValidateInt(4.0E18);
+            // -2^63 is exactly representable as a double and is in range.
+            Validation.ValidateInt(-9223372036854775808.0);
 
-            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(2147483648L));
-            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(-2147483649L));
-            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(2147483648.0));
-            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(-2147483649.0));
+            // 2^63 is one past long.MaxValue and is out of range.
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(9223372036854775808.0));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(9.223372036854776E18));
+            // Below long.MinValue (-2^63).
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(-1.0E19));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(double.PositiveInfinity));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(double.NegativeInfinity));
+            Assert.Throws<ArgumentException>(() => Validation.ValidateInt(double.NaN));
             Assert.Throws<ArgumentException>(() => Validation.ValidateInt(true));
         }
     }

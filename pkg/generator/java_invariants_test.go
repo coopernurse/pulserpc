@@ -210,16 +210,16 @@ func TestJavaOptionalBuiltInsAreBoxed(t *testing.T) {
 	base := filepath.Join(dir, "src", "main", "java", "com", "example", "rpc", "metrics")
 	sample := readFileString(t, filepath.Join(base, "Sample.java"))
 	for _, want := range []string{
-		"private int reqInt;",
+		"private long reqInt;",
 		"private boolean reqBool;",
 		"private double reqFloat;",
 		"private String reqString;",
-		"private Integer optInt;",
+		"private Long optInt;",
 		"private Boolean optBool;",
 		"private Double optFloat;",
 		"private String optString;",
-		"public Integer getOptInt()",
-		"public void setOptInt(Integer optInt)",
+		"public Long getOptInt()",
+		"public void setOptInt(Long optInt)",
 		"public Boolean getOptBool()",
 		"public Double getOptFloat()",
 	} {
@@ -230,8 +230,8 @@ func TestJavaOptionalBuiltInsAreBoxed(t *testing.T) {
 
 	iface := readFileString(t, filepath.Join(base, "Probe.java"))
 	for _, want := range []string{
-		"public int requiredCount();",
-		"public Integer optionalCount();",
+		"public long requiredCount();",
+		"public Long optionalCount();",
 		"public Boolean optionalFlag();",
 		"public Double optionalRatio();",
 	} {
@@ -241,7 +241,7 @@ func TestJavaOptionalBuiltInsAreBoxed(t *testing.T) {
 	}
 
 	client := readFileString(t, filepath.Join(base, "ProbeClient.java"))
-	if !strings.Contains(client, "public Integer optionalCount()") {
+	if !strings.Contains(client, "public Long optionalCount()") {
 		t.Errorf("ProbeClient.java should box the optional return type:\n%s", client)
 	}
 }
@@ -335,10 +335,74 @@ public class TypeToken<T> {
 		"com/google/gson/JsonElement.java": `package com.google.gson;
 
 public class JsonElement {
+    public boolean isJsonNull() { return false; }
+    public boolean isJsonObject() { return false; }
+    public JsonObject getAsJsonObject() { return null; }
+    public boolean isJsonArray() { return false; }
+    public JsonArray getAsJsonArray() { return null; }
+    public JsonPrimitive getAsJsonPrimitive() { return null; }
+}
+`,
+		"com/google/gson/JsonArray.java": `package com.google.gson;
+
+public class JsonArray implements Iterable<JsonElement> {
+    public int size() { return 0; }
+    public java.util.Iterator<JsonElement> iterator() { return java.util.Collections.emptyIterator(); }
+}
+`,
+		"com/google/gson/JsonObject.java": `package com.google.gson;
+
+public class JsonObject {
+    public java.util.Set<java.util.Map.Entry<String, JsonElement>> entrySet() {
+        return java.util.Collections.emptySet();
+    }
+}
+`,
+		"com/google/gson/JsonPrimitive.java": `package com.google.gson;
+
+public class JsonPrimitive extends JsonElement {
+    public boolean isBoolean() { return false; }
+    public boolean getAsBoolean() { return false; }
+    public boolean isString() { return false; }
+    public String getAsString() { return ""; }
+    public boolean isNumber() { return false; }
+    public double getAsDouble() { return 0; }
+}
+`,
+		"com/google/gson/JsonParser.java": `package com.google.gson;
+
+public class JsonParser {
+    public static JsonElement parseString(String json) { return null; }
+}
+`,
+		"com/google/gson/stream/JsonToken.java": `package com.google.gson.stream;
+
+public enum JsonToken {
+    BEGIN_ARRAY, END_ARRAY, BEGIN_OBJECT, END_OBJECT, NAME, STRING, NUMBER,
+    BOOLEAN, NULL, END_DOCUMENT
+}
+`,
+		"com/google/gson/stream/JsonReader.java": `package com.google.gson.stream;
+
+import java.io.IOException;
+
+public class JsonReader {
+    public JsonToken peek() { return JsonToken.NULL; }
+    public void setLenient(boolean lenient) { }
+    public void beginObject() throws IOException { }
+    public void endObject() throws IOException { }
+    public void beginArray() throws IOException { }
+    public void endArray() throws IOException { }
+    public boolean hasNext() { return false; }
+    public String nextName() throws IOException { return ""; }
+    public String nextString() throws IOException { return ""; }
+    public boolean nextBoolean() throws IOException { return false; }
+    public void nextNull() throws IOException { }
 }
 `,
 		"com/google/gson/Gson.java": `package com.google.gson;
 
+import com.google.gson.stream.JsonReader;
 import java.lang.reflect.Type;
 
 public class Gson {
@@ -346,6 +410,7 @@ public class Gson {
     public <T> T fromJson(String json, Class<T> clazz) { return null; }
     public <T> T fromJson(JsonElement json, Class<T> clazz) { return null; }
     public <T> T fromJson(String json, Type type) { return null; }
+    public JsonReader newJsonReader(java.io.Reader reader) { return new JsonReader(); }
 }
 `,
 		"com/google/gson/GsonBuilder.java": `package com.google.gson;

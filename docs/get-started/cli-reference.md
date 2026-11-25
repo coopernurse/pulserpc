@@ -61,6 +61,7 @@ pulserpc [flags] <idl-file>
 |------|------|-------------|
 | `-go-module` | string | Override Go module path for pulserpc imports. Auto-detected from `go.mod` if not specified. |
 | `-inline-runtime` | bool | Place runtime files inline with generated code. Useful for playground/testing environments. |
+| `-omit-empty` | bool | Add `omitempty` to every generated Go struct field, not just optional fields. Default: `false` (optional fields only). |
 
 #### Java Plugin (`java-client-server`)
 

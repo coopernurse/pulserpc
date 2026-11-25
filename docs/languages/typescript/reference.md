@@ -10,7 +10,7 @@ layout: default
 | IDL Type | TypeScript Type | Example |
 |----------|-----------------|---------|
 | `string` | `string` | `"hello"` |
-| `int` | `number` (signed 32-bit, validated) | `42` |
+| `int` | `number` (signed 64-bit on the wire; safe-integer range validated) | `42` |
 | `float` | `number` (IEEE-754 double) | `3.14` |
 | `bool` | `boolean` | `true`, `false` |
 | `[]Type` | `Type[]` | `[1, 2, 3]` |
@@ -485,12 +485,33 @@ runtimes and to the generated test server.
 
 ### Integer range (D1)
 
-IDL `int` is a **signed 32-bit** integer: `-2147483648` through
-`2147483647`. TypeScript types both `int` and `float` as `number`, so
-validation enforces the range at runtime. Fractional values, `NaN`,
-`Infinity`, booleans, and values outside the range are rejected with
-`-32602`. This is a documented breaking change from earlier releases, which
-accepted any integral JavaScript number.
+IDL `int` is a **signed 64-bit** integer on the wire:
+`-9223372036854775808` through `9223372036854775807`.
+
+TypeScript types both `int` and `float` as `number`, and JavaScript numbers are
+IEEE-754 doubles that cannot represent every 64-bit integer exactly. Rather than
+silently rounding, both TypeScript runtimes accept only integers in JavaScript's
+safe-integer range, `[-9007199254740991, 9007199254740991]` (±(2^53 − 1),
+`Number.MIN_SAFE_INTEGER`..`Number.MAX_SAFE_INTEGER`). Larger integral values are
+rejected with `-32602` and a message explaining that JavaScript cannot represent
+the full int64 range exactly. The bounds are exported as `INT64_SAFE_MIN` and
+`INT64_SAFE_MAX`. The old `INT32_MIN`/`INT32_MAX` exports remain as deprecated
+aliases so existing imports keep compiling.
+
+This is a TypeScript/JavaScript runtime limitation, not a change to the wire
+type: Go, Java, C#, and Python accept the full signed 64-bit range, so keep
+`int` values within ±(2^53 − 1) when a TypeScript client or server is involved.
+Fractional values, `NaN`, `Infinity`, and booleans are also rejected with
+`-32602`. This is a breaking change from earlier releases, which used a signed
+32-bit range.
+
+```typescript
+validateInt(2 ** 31);              // []      valid (previously rejected as int32)
+validateInt(2 ** 32);              // []      valid
+validateInt(2 ** 53 - 1);          // []      largest exactly representable integer
+validateInt(2 ** 53);              // [error] outside the safe-integer range
+validateInt(2 ** 63 - 1);          // [error] int64 max; not exact as a number
+```
 
 `float` remains an IEEE-754 double (`number`); enums are their declared
 string names on the wire, never ordinals.

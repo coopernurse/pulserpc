@@ -1111,9 +1111,17 @@ func convertJSONNumber(num json.Number, targetType reflect.Type) (reflect.Value,
 		if parsed, err := num.Int64(); err == nil {
 			i = parsed
 		} else {
+			// An integer-form number that does not fit int64 is out of range.
+			// Parsing it as a float could round it back into range.
+			if isIntegerFormJSONNumber(num) {
+				return reflect.Value{}, false
+			}
 			// Accept whole-valued decimals such as "5.0".
 			f, ferr := num.Float64()
 			if ferr != nil {
+				return reflect.Value{}, false
+			}
+			if f < minInt64AsFloat || f >= maxInt64FloatExclusive {
 				return reflect.Value{}, false
 			}
 			i = int64(f)

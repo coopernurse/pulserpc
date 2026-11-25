@@ -62,7 +62,8 @@ This creates:
 Generated servers enforce a 1 MiB request body and 100-entry batch limit,
 accept only `POST`, treat `id: null` as a notification, and never echo
 exception detail on internal errors. `int` values are validated against the
-signed 32-bit range. See the [TypeScript Reference](reference.html#wire-behavior-and-limits)
+signed 64-bit wire range, limited to JavaScript's safe integers on the
+TypeScript side. See the [TypeScript Reference](reference.html#wire-behavior-and-limits)
 for the exact wire shapes and limits.
 
 The IDL is written to `idl.json` next to the generated files for the

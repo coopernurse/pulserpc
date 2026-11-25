@@ -26,6 +26,21 @@ func runCSharpGenerate(t *testing.T, idl *parser.IDL, outDir string) {
 	}
 }
 
+// Integer-form JSON numbers outside int64 must not be rounded through a
+// double, which could put them back inside the valid range.
+func TestCSharpInt64OutOfRangeIntegerIsNotRounded(t *testing.T) {
+	idl := parseTestIDL(t, "namespace test\ninterface A { add(a int, b int) int }\n")
+	dir := t.TempDir()
+	runCSharpGenerate(t, idl, dir)
+	for _, content := range readTree(t, dir) {
+		if strings.Contains(string(content), "var raw = element.GetRawText();") &&
+			strings.Contains(string(content), "return element;\n") {
+			return
+		}
+	}
+	t.Fatal("generated C# adapter still rounds out-of-range integers through a double")
+}
+
 // runCSharpGenerateWithPackage runs the C# generator with an explicit -package base.
 func runCSharpGenerateWithPackage(t *testing.T, idl *parser.IDL, outDir, packageBase string) {
 	t.Helper()
@@ -389,12 +404,12 @@ interface Svc {
 
 	for _, want := range []string{
 		"#nullable enable",
-		"public int? OptInt { get; set; }",
+		"public long? OptInt { get; set; }",
 		"public bool? OptBool { get; set; }",
 		"public double? OptFloat { get; set; }",
 		"public string? OptString { get; set; }",
 		"public List<string>? OptList { get; set; }",
-		"public Dictionary<string, int>? OptMap { get; set; }",
+		"public Dictionary<string, long>? OptMap { get; set; }",
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("generated Types.cs missing %q\n%s", want, code)
@@ -411,22 +426,22 @@ func TestCSharpOptionalCollectionsAreNullableInBothMappers(t *testing.T) {
 	if got := mapTypeToCsType(listType, nil, nil, true); got != "List<string>?" {
 		t.Errorf("mapTypeToCsType(optional []string) = %q, want List<string>?", got)
 	}
-	if got := mapTypeToCsType(mapType, nil, nil, true); got != "Dictionary<string, int>?" {
-		t.Errorf("mapTypeToCsType(optional map[string]int) = %q, want Dictionary<string, int>?", got)
+	if got := mapTypeToCsType(mapType, nil, nil, true); got != "Dictionary<string, long>?" {
+		t.Errorf("mapTypeToCsType(optional map[string]int) = %q, want Dictionary<string, long>?", got)
 	}
 	if got := mapTypeToCsTypeWithNamespace(listType, nil, nil, true, "", nil); got != "List<string>?" {
 		t.Errorf("mapTypeToCsTypeWithNamespace(optional []string) = %q, want List<string>?", got)
 	}
-	if got := mapTypeToCsTypeWithNamespace(mapType, nil, nil, true, "", nil); got != "Dictionary<string, int>?" {
-		t.Errorf("mapTypeToCsTypeWithNamespace(optional map[string]int) = %q, want Dictionary<string, int>?", got)
+	if got := mapTypeToCsTypeWithNamespace(mapType, nil, nil, true, "", nil); got != "Dictionary<string, long>?" {
+		t.Errorf("mapTypeToCsTypeWithNamespace(optional map[string]int) = %q, want Dictionary<string, long>?", got)
 	}
 
 	// Non-optional collections stay non-nullable.
 	if got := mapTypeToCsType(listType, nil, nil, false); got != "List<string>" {
 		t.Errorf("mapTypeToCsType([]string) = %q, want List<string>", got)
 	}
-	if got := mapTypeToCsType(mapType, nil, nil, false); got != "Dictionary<string, int>" {
-		t.Errorf("mapTypeToCsType(map[string]int) = %q, want Dictionary<string, int>", got)
+	if got := mapTypeToCsType(mapType, nil, nil, false); got != "Dictionary<string, long>" {
+		t.Errorf("mapTypeToCsType(map[string]int) = %q, want Dictionary<string, long>", got)
 	}
 }
 
