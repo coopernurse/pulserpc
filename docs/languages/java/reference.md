@@ -361,9 +361,10 @@ fit), while decimal/exponent forms remain `Double`. Middleware or application
 code that previously cast raw map values directly to `Double` should use
 `Number` (`longValue()`/`doubleValue()`) instead. Jackson already returns
 `Integer`/`Long`/`BigInteger` for integral numbers. The raw
-`Object`/`Map`/`List` path uses the runtime's streaming tree reader for int64
-precision, so custom Gson `Object` type adapters are not applied to those raw
-targets; typed targets still use the configured `Gson` instance.
+`Object`/`Map`/`List` path (including `Map<String, Object>` and
+`List<Object>`) uses the runtime's streaming tree reader for int64 precision,
+so custom Gson `Object` type adapters are not applied to those raw targets;
+typed targets still use the configured `Gson` instance.
 
 ## Validation
 
