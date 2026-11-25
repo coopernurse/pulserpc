@@ -297,6 +297,14 @@ func TestMapErrorPhasesAndFallback(t *testing.T) {
 		t.Fatalf("unknown field code = %d, want 4101", code)
 	}
 
+	// Decode failure: parameter count mismatch.
+	response = server.Call(map[string]interface{}{
+		"jsonrpc": "2.0", "method": "Opt.add", "params": []interface{}{1}, "id": 1,
+	})
+	if code := errorCode(t, response); code != 4101 {
+		t.Fatalf("count mismatch code = %d, want 4101", code)
+	}
+
 	// Validation failure.
 	response = server.Call(map[string]interface{}{
 		"jsonrpc": "2.0", "method": "Opt.add", "params": []interface{}{"bad", 2}, "id": 1,
@@ -309,7 +317,7 @@ func TestMapErrorPhasesAndFallback(t *testing.T) {
 		t.Errorf("mapped message = %#v, want Invalid input", errObj["message"])
 	}
 
-	want := []ErrorPhase{ErrorPhaseDecodeParams, ErrorPhaseDecodeParams, ErrorPhaseValidateParams}
+	want := []ErrorPhase{ErrorPhaseDecodeParams, ErrorPhaseDecodeParams, ErrorPhaseDecodeParams, ErrorPhaseValidateParams}
 	if len(phases) != len(want) {
 		t.Fatalf("phases = %#v, want %#v", phases, want)
 	}
