@@ -47,6 +47,9 @@ func (p *GoClientServer) RegisterFlags(fs *flag.FlagSet) {
 	if fs.Lookup("omit-empty") == nil {
 		fs.Bool("omit-empty", false, "Add omitempty to every generated Go struct field (default: optional fields only)")
 	}
+	if fs.Lookup("preserve-empty-optional-arrays") == nil {
+		fs.Bool("preserve-empty-optional-arrays", false, "Use omitzero on optional Go slice fields to emit non-nil empty arrays (Go 1.24+)")
+	}
 }
 
 // writeIDLJSONGo writes the IDL metadata as JSON to idl.json and returns the
@@ -161,9 +164,12 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		return silentFlag != nil && silentFlag.Value.String() == "true"
 	}
 
-	omitEmpty := false
+	jsonOptions := goJSONOptions{}
 	if f := fs.Lookup("omit-empty"); f != nil {
-		omitEmpty = f.Value.String() == "true"
+		jsonOptions.omitEmpty = f.Value.String() == "true"
+	}
+	if f := fs.Lookup("preserve-empty-optional-arrays"); f != nil {
+		jsonOptions.preserveEmptyOptionalArrays = f.Value.String() == "true"
 	}
 
 	// Access the -dir flag value
@@ -262,7 +268,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			return fmt.Errorf("failed to create namespace directory: %w", err)
 		}
 
-		namespaceCode := generateNamespaceGo(namespace, types, structMap, enumMap, packageImportPath, omitEmpty)
+		namespaceCode := generateNamespaceGo(namespace, types, structMap, enumMap, packageImportPath, jsonOptions)
 		namespacePath := filepath.Join(namespaceDir, namespace+".go")
 		if err := os.WriteFile(namespacePath, []byte(namespaceCode), 0644); err != nil {
 			return fmt.Errorf("failed to write %s/%s.go: %w", namespace, namespace, err)
@@ -740,9 +746,13 @@ func namespaceForMatchingKey[T any](typeName string, defs map[string]T) (string,
 	return smallest[:strings.IndexByte(smallest, '.')], true
 }
 
-// generateNamespaceGo generates a Go file for a single namespace. omitEmpty
-// controls whether required struct fields also receive the omitempty JSON tag.
-func generateNamespaceGo(namespace string, types *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, packageImportPath string, omitEmpty bool) string {
+type goJSONOptions struct {
+	omitEmpty                   bool
+	preserveEmptyOptionalArrays bool
+}
+
+// generateNamespaceGo generates a Go file for a single namespace.
+func generateNamespaceGo(namespace string, types *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, packageImportPath string, jsonOptions goJSONOptions) string {
 	// Find referenced namespaces for cross-namespace imports
 	referencedNamespaces := getReferencedNamespaces(types, structMap, enumMap, namespace)
 
@@ -759,7 +769,7 @@ func generateNamespaceGo(namespace string, types *NamespaceTypes, structMap map[
 	var body strings.Builder
 	generateEnumTypesGo(&body, types.Enums)
 	body.WriteString("\n")
-	generateStructTypesGo(&body, namespace, types.Structs, structMap, enumMap, nsImports, packageImportPath, omitEmpty)
+	generateStructTypesGo(&body, namespace, types.Structs, structMap, enumMap, nsImports, packageImportPath, jsonOptions)
 	body.WriteString("\n")
 
 	var sb strings.Builder
@@ -823,7 +833,7 @@ func generateEnumTypesGo(sb *strings.Builder, enums []*parser.Enum) {
 }
 
 // generateStructTypesGo generates Go struct types for all structs in the namespace
-func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*parser.Struct, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, nsImports map[string]string, packageImportPath string, omitEmpty bool) {
+func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*parser.Struct, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, nsImports map[string]string, packageImportPath string, jsonOptions goJSONOptions) {
 	for _, s := range structs {
 		if s.Comment != "" {
 			lines := strings.Split(strings.TrimSpace(s.Comment), "\n")
@@ -863,7 +873,10 @@ func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*par
 			fieldName := snakeToCamelCase(field.Name)
 			goType := getGoTypeWithNamespace(field.Type, structMap, enumMap, field.Optional, namespace, nsImports, packageImportPath)
 			jsonTag := field.Name
-			if field.Optional || omitEmpty {
+			switch {
+			case field.Optional && field.Type.Array != nil && jsonOptions.preserveEmptyOptionalArrays:
+				jsonTag += ",omitzero"
+			case field.Optional || jsonOptions.omitEmpty:
 				jsonTag += ",omitempty"
 			}
 			fmt.Fprintf(sb, "	%s %s `json:\"%s\"`\n", fieldName, goType, jsonTag)

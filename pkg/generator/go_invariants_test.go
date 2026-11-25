@@ -244,9 +244,9 @@ func TestGoGenerationIsDeterministic(t *testing.T) {
 	}
 	types := &NamespaceTypes{Structs: []*parser.Struct{holder}}
 
-	first := generateNamespaceGo("test", types, structMap, map[string]*parser.Enum{}, "example.com/rpc", false)
+	first := generateNamespaceGo("test", types, structMap, map[string]*parser.Enum{}, "example.com/rpc", goJSONOptions{})
 	for i := 0; i < 40; i++ {
-		if got := generateNamespaceGo("test", types, structMap, map[string]*parser.Enum{}, "example.com/rpc", false); got != first {
+		if got := generateNamespaceGo("test", types, structMap, map[string]*parser.Enum{}, "example.com/rpc", goJSONOptions{}); got != first {
 			t.Fatalf("generation is not byte-deterministic on run %d:\n--- first ---\n%s\n--- got ---\n%s", i, first, got)
 		}
 	}
@@ -285,7 +285,7 @@ interface Svc { get() Item }
 		enumMap[e.Name] = e
 	}
 	namespaceMap := GroupTypesByNamespace(idl)
-	code := generateNamespaceGo("test", namespaceMap["test"], structMap, enumMap, "example.com/rpc", false)
+	code := generateNamespaceGo("test", namespaceMap["test"], structMap, enumMap, "example.com/rpc", goJSONOptions{})
 
 	for _, marker := range []string{
 		"`json:\"name\"`",

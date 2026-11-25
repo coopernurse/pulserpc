@@ -331,3 +331,27 @@ func TestInvalidEnumDefinitionErrorsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestJSONFallbackPreservesEmptyOptionalSlicesAndWideIntegers(t *testing.T) {
+	type payload struct {
+		Optional []string `json:"optional,omitzero"`
+		Wide     int64    `json:"wide"`
+	}
+	for _, values := range [][]string{nil, {}, {"one"}} {
+		wire, err := convertToMap(payload{Optional: values, Wide: 9223372036854775807})
+		if err != nil {
+			t.Fatal(err)
+		}
+		obj, ok := wire.(map[string]interface{})
+		if !ok || obj["wide"] != json.Number("9223372036854775807") {
+			t.Fatalf("wide integer was lost: %#v", wire)
+		}
+		value, present := obj["optional"]
+		if present != (values != nil) {
+			t.Fatalf("unexpected optional field presence for %#v: %#v", values, obj)
+		}
+		if items, ok := value.([]interface{}); present && (!ok || len(items) != len(values)) {
+			t.Fatalf("expected %d array elements, got %#v", len(values), value)
+		}
+	}
+}

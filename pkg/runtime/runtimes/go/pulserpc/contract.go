@@ -1,6 +1,7 @@
 package pulserpc
 
 import (
+	"bytes"
 	"encoding"
 	"encoding/json"
 	"fmt"
@@ -434,9 +435,12 @@ func structViaJSON(value interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("failed to marshal struct to JSON: %w", err)
 	}
 	var result map[string]interface{}
-	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(jsonBytes))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON to map: %w", err)
 	}
+	normalizeJSONNumbers(result)
 	return result, nil
 }
 
@@ -448,10 +452,12 @@ func jsonRoundTrip(value interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("failed to marshal struct to JSON: %w", err)
 	}
 	var result interface{}
-	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(jsonBytes))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON to map: %w", err)
 	}
-	return result, nil
+	return normalizeJSONNumbers(result), nil
 }
 
 // canConvertStructByReflection reports whether a struct type can be walked

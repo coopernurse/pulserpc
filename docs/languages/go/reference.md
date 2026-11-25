@@ -79,10 +79,16 @@ struct field:
 pulserpc -plugin go-client-server -omit-empty -dir ./pkg/checkout checkout.pulse
 ```
 
-With the flag enabled, required fields also omit their zero value (`0`, `""`,
+With `-omit-empty` enabled, required fields also omit their zero value (`0`, `""`,
 `false`, or a nil pointer/slice/map). This is a compile-time generator option,
 not a `ServerConfig` field. Use it deliberately: omitting a required zero value
 from a request can make the server report the field as missing.
+
+Use `-preserve-empty-optional-arrays` when an optional array must distinguish omission
+from an explicit empty array. It emits the Go `omitzero` JSON tag on optional
+slice fields. A nil slice is omitted and a non-nil empty slice serializes to
+`[]`. Generated code using this flag requires Go 1.24 or later. The flag takes
+precedence for optional arrays when combined with `-omit-empty`.
 
 ## Optional Fields
 
