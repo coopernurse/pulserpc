@@ -37,7 +37,7 @@ func TestGoGeneratedContextSignatures(t *testing.T) {
 	)
 	// The body cap must be installed before user middleware so a hook that
 	// reads the payload cannot buffer an unbounded body.
-	maxBytes := strings.Index(server, "http.MaxBytesReader(w, r.Body, maxRequestBodySize)")
+	maxBytes := strings.Index(server, "http.MaxBytesReader(w, r.Body, bodyLimit)")
 	middlewareLoop := strings.Index(server, "for _, mw := range s.httpMiddleware")
 	if maxBytes < 0 || middlewareLoop < 0 || maxBytes > middlewareLoop {
 		t.Errorf("generated adapter does not cap the body before HTTP middleware (maxBytes=%d, middleware=%d)", maxBytes, middlewareLoop)

@@ -7,6 +7,7 @@ import (
 	"log"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -45,17 +46,54 @@ type Server struct {
 	middleware        []Middleware
 	validateRequests  bool
 	validateResponses bool
+	config            ServerConfig
 }
 
-// NewServer creates a new Server instance
+// NewServer creates a new Server instance with the default server policy.
 func NewServer(contract *Contract, validateRequests bool, validateResponses bool) *Server {
+	return NewServerWithConfig(contract, validateRequests, validateResponses, DefaultServerConfig())
+}
+
+// NewServerWithConfig creates a new Server instance with an explicit policy.
+func NewServerWithConfig(contract *Contract, validateRequests bool, validateResponses bool, config ServerConfig) *Server {
 	return &Server{
 		contract:          contract,
 		handlers:          make(map[string]interface{}),
 		middleware:        nil,
 		validateRequests:  validateRequests,
 		validateResponses: validateResponses,
+		config:            config,
 	}
+}
+
+// Config returns a copy of the server policy.
+func (s *Server) Config() ServerConfig {
+	return s.config
+}
+
+// paramError is an internal error that carries the ErrorPhase a params failure
+// belongs to so the response path can consult ServerConfig.MapError.
+type paramError struct {
+	phase ErrorPhase
+	err   error
+}
+
+func (e *paramError) Error() string { return e.err.Error() }
+
+// paramErrorResponse converts a params decode/validation failure into a
+// JSON-RPC error response. A configured MapError wins; a nil return falls back
+// to the pre-options behavior: RPCError passthrough, otherwise -32602 with the
+// error text as data.
+func (s *Server) paramErrorResponse(isNotification bool, reqID interface{}, phase ErrorPhase, err error) map[string]interface{} {
+	if s.config.MapError != nil {
+		if mapped := s.config.MapError(phase, err); mapped != nil {
+			return s.respondError(isNotification, reqID, mapped.Code, mapped.Message, mapped.Data)
+		}
+	}
+	if rpcErr, ok := err.(*RPCError); ok {
+		return s.respondError(isNotification, reqID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
+	}
+	return s.respondError(isNotification, reqID, -32602, "Invalid params", err.Error())
 }
 
 // UseRPC registers an RPC middleware hook. Hooks run in registration order.
@@ -244,6 +282,13 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 		return s.errorResponse(nil, -32600, "Invalid Request", "Request must be an object")
 	}
 
+	// A non-null id policy turns what would otherwise be a notification into an
+	// invalid request. errorResponse is used directly (not respondError) so the
+	// error is written even though the id is absent.
+	if s.config.RequireNonNullID && reqID == nil {
+		return s.errorResponse(nil, -32600, "Invalid Request", "id must not be null")
+	}
+
 	// Check JSON-RPC version. A request with an invalid (or missing) version is
 	// not a valid JSON-RPC 2.0 request, so its id cannot be trusted: reply with
 	// a null id rather than echoing the caller-supplied one. respondError still
@@ -280,6 +325,9 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 		return s.errorResponse(nil, -32600, "Invalid Request", "id must be a string, number, or null")
 	}
 	isNotification = reqID == nil
+	if s.config.RequireNonNullID && reqID == nil {
+		return s.errorResponse(nil, -32600, "Invalid Request", "id must not be null")
+	}
 	if request["jsonrpc"] != "2.0" {
 		return s.respondError(isNotification, nil, -32600, "Invalid Request", "jsonrpc version must be '2.0'")
 	}
@@ -331,36 +379,44 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 	case []interface{}:
 		positionalParams = p
 	case map[string]interface{}:
+		// Named params are an envelope-level protocol shape decision, so they
+		// are never routed through MapError.
+		if s.config.ParamsMode == ParamsModePositionalOnly {
+			return s.respondError(isNotification, reqID, -32600, "Invalid Request",
+				"named params are not allowed")
+		}
 		positionalParams, err = s.namedParamsToPositional(p, fnDef)
 		if err != nil {
-			return s.respondError(isNotification, reqID, -32602, "Invalid params", err.Error())
+			return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams, err)
 		}
 	case nil:
 		positionalParams = []interface{}{}
 	default:
-		return s.respondError(isNotification, reqID, -32602, "Invalid params",
-			"params must be an array or an object")
+		return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams,
+			fmt.Errorf("params must be an array or an object"))
 	}
 
 	// Validate request using positional params
 	if s.validateRequests && s.contract != nil {
 		if err := s.contract.ValidateRequest(ifaceName, funcName, positionalParams); err != nil {
-			if rpcErr, ok := err.(*RPCError); ok {
-				return s.respondError(isNotification, reqID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
-			}
-			return s.respondError(isNotification, reqID, -32602, "Invalid params", err.Error())
+			return s.paramErrorResponse(isNotification, reqID, ErrorPhaseValidateParams, err)
 		}
 	}
 
 	// Convert positional params to named params using IDL signature
 	namedParams, err := s.positionalToNamedParams(ifaceName, funcName, positionalParams)
 	if err != nil {
-		return s.respondError(isNotification, reqID, -32602, "Invalid params", err.Error())
+		return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams, err)
 	}
 
 	// Invoke handler method with the reflect.Value resolved above.
 	result, err := s.invokeHandler(ctx, handlerValue, funcName, funcValue, namedParams, fnDef)
 	if err != nil {
+		// Parameter decode failures (unknown request fields) carry their phase
+		// so MapError can see them.
+		if pe, ok := err.(*paramError); ok {
+			return s.paramErrorResponse(isNotification, reqID, pe.phase, pe.err)
+		}
 		// Check if it's an RPCError
 		if rpcErr, ok := err.(*RPCError); ok {
 			return s.respondError(isNotification, reqID, rpcErr.Code, rpcErr.Message, rpcErr.Data)
@@ -673,7 +729,7 @@ func (s *Server) invokeHandler(ctx context.Context, handlerValue reflect.Value, 
 		paramType := methodType.In(i)
 
 		// Try to get the parameter by name from paramDefs
-		var argValue reflect.Value
+		var rawValue interface{}
 		found := false
 
 		defIndex := i - paramOffset
@@ -682,7 +738,7 @@ func (s *Server) invokeHandler(ctx context.Context, handlerValue reflect.Value, 
 				paramName, _ := pd["name"].(string)
 				if paramName != "" {
 					if v, ok := params[paramName]; ok {
-						argValue = valueToType(v, paramType, s)
+						rawValue = v
 						found = true
 					}
 				}
@@ -693,14 +749,27 @@ func (s *Server) invokeHandler(ctx context.Context, handlerValue reflect.Value, 
 			// Try all keys in order (for numbered params)
 			for _, v := range params {
 				if v != nil {
-					argValue = valueToType(v, paramType, s)
+					rawValue = v
 					found = true
 					break
 				}
 			}
 		}
 
-		if !found {
+		// Strict mode rejects keys that would be silently dropped by
+		// convertMapToStruct. The check runs before conversion so the handler
+		// never observes a partially populated struct. It is a decode failure:
+		// the payload shape does not match the handler type.
+		if found && rawValue != nil && s.config.RejectUnknownRequestFields {
+			if err := checkUnknownRequestFields(rawValue, paramType, fmt.Sprintf("param[%d]", defIndex)); err != nil {
+				return nil, &paramError{phase: ErrorPhaseDecodeParams, err: err}
+			}
+		}
+
+		var argValue reflect.Value
+		if found {
+			argValue = valueToType(rawValue, paramType, s)
+		} else {
 			// Use zero value for the parameter type
 			argValue = reflect.Zero(paramType)
 		}
@@ -756,6 +825,15 @@ func (s *Server) convertValueToType(value reflect.Value, targetType reflect.Type
 	// If already assignable, return as-is
 	if value.Type().AssignableTo(targetType) {
 		return value
+	}
+
+	// json.Number has string kind. Special-case numeric targets before the
+	// generic conversion paths so a decoder-read number never silently becomes
+	// a string (or an unusable value) when the handler wants an int or float.
+	if num, ok := value.Interface().(json.Number); ok {
+		if converted, ok := convertJSONNumber(num, targetType); ok {
+			return converted
+		}
 	}
 
 	// Handle nil pointer inputs
@@ -990,4 +1068,191 @@ func (s *Server) convertMapToStruct(mapValue reflect.Value, structType reflect.T
 
 	// Return the value, not the pointer
 	return elem
+}
+
+// convertJSONNumber converts a json.Number to a numeric target type. It reports
+// false when the target is not numeric or the value does not fit, leaving the
+// caller's existing fallback behavior intact.
+func convertJSONNumber(num json.Number, targetType reflect.Type) (reflect.Value, bool) {
+	switch targetType.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		var i int64
+		if parsed, err := num.Int64(); err == nil {
+			i = parsed
+		} else {
+			// Accept whole-valued decimals such as "5.0".
+			f, ferr := num.Float64()
+			if ferr != nil {
+				return reflect.Value{}, false
+			}
+			i = int64(f)
+			if float64(i) != f {
+				return reflect.Value{}, false
+			}
+		}
+		converted := reflect.New(targetType).Elem()
+		if converted.OverflowInt(i) {
+			return reflect.Value{}, false
+		}
+		converted.SetInt(i)
+		return converted, true
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		u, err := strconv.ParseUint(num.String(), 10, 64)
+		if err != nil {
+			return reflect.Value{}, false
+		}
+		converted := reflect.New(targetType).Elem()
+		if converted.OverflowUint(u) {
+			return reflect.Value{}, false
+		}
+		converted.SetUint(u)
+		return converted, true
+
+	case reflect.Float32, reflect.Float64:
+		f, err := num.Float64()
+		if err != nil {
+			return reflect.Value{}, false
+		}
+		converted := reflect.New(targetType).Elem()
+		if converted.OverflowFloat(f) {
+			return reflect.Value{}, false
+		}
+		converted.SetFloat(f)
+		return converted, true
+	}
+	return reflect.Value{}, false
+}
+
+// jsonUnmarshalerType identifies types that own their JSON decoding. Strict
+// unknown-field checking must leave them alone: their accepted keys are not
+// knowable from struct tags.
+var jsonUnmarshalerType = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
+
+// checkUnknownRequestFields reports the first request-map key that
+// convertMapToStruct would silently ignore when value is converted to
+// targetType. It mirrors that function's key candidates and recursion so strict
+// mode accepts exactly the keys lenient conversion would populate.
+func checkUnknownRequestFields(value interface{}, targetType reflect.Type, path string) error {
+	if value == nil || targetType == nil {
+		return nil
+	}
+	for targetType.Kind() == reflect.Pointer {
+		targetType = targetType.Elem()
+	}
+	if targetType == nil || targetType.Kind() == reflect.Interface {
+		// An interface target has no key schema.
+		return nil
+	}
+	if targetType.Implements(jsonUnmarshalerType) || reflect.PointerTo(targetType).Implements(jsonUnmarshalerType) {
+		return nil
+	}
+
+	switch targetType.Kind() {
+	case reflect.Struct:
+		dict, ok := value.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		return checkStructRequestFields(dict, targetType, path)
+	case reflect.Slice, reflect.Array:
+		items, ok := value.([]interface{})
+		if !ok {
+			return nil
+		}
+		for i, item := range items {
+			if err := checkUnknownRequestFields(item, targetType.Elem(), fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		dict, ok := value.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		keys := make([]string, 0, len(dict))
+		for key := range dict {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if err := checkUnknownRequestFields(dict[key], targetType.Elem(), path+"."+key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkStructRequestFields verifies every key in dict maps to a struct field.
+func checkStructRequestFields(dict map[string]interface{}, structType reflect.Type, path string) error {
+	allowed := make(map[string]reflect.Type, structType.NumField())
+	addStructRequestKeys(structType, allowed)
+
+	keys := make([]string, 0, len(dict))
+	for key := range dict {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fieldType, ok := allowed[key]
+		if !ok {
+			return fmt.Errorf("%s: unknown field %q", path, key)
+		}
+		if err := checkUnknownRequestFields(dict[key], fieldType, path+"."+key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addStructRequestKeys records the keys convertMapToStruct accepts for a struct,
+// including promoted fields from embedded structs.
+func addStructRequestKeys(structType reflect.Type, allowed map[string]reflect.Type) {
+	for i := 0; i < structType.NumField(); i++ {
+		field := structType.Field(i)
+		if field.PkgPath != "" {
+			// Unexported fields are not settable; convertMapToStruct skips them.
+			continue
+		}
+
+		jsonName := ""
+		if tag := field.Tag.Get("json"); tag != "" {
+			name := strings.SplitN(tag, ",", 2)[0]
+			if name == "-" {
+				continue
+			}
+			jsonName = name
+		}
+
+		candidates := make([]string, 0, 4)
+		if jsonName != "" {
+			candidates = append(candidates, jsonName)
+		}
+		candidates = append(candidates, field.Name)
+		if len(field.Name) > 0 {
+			candidates = append(candidates, string(rune(field.Name[0]-'A'+'a'))+field.Name[1:])
+		}
+		candidates = append(candidates, strings.ToLower(field.Name))
+		for _, candidate := range candidates {
+			if candidate == "" {
+				continue
+			}
+			if _, exists := allowed[candidate]; !exists {
+				allowed[candidate] = field.Type
+			}
+		}
+
+		// convertMapToStruct flattens anonymous structs when the embedded
+		// field's own name did not match, so their promoted keys are valid.
+		if field.Anonymous {
+			embedded := field.Type
+			for embedded.Kind() == reflect.Pointer {
+				embedded = embedded.Elem()
+			}
+			if embedded.Kind() == reflect.Struct {
+				addStructRequestKeys(embedded, allowed)
+			}
+		}
+	}
 }

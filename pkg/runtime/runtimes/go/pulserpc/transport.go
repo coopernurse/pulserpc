@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -26,8 +27,8 @@ type RequestWithID interface {
 }
 
 // idsEqual compares a request id with the one echoed in a response. JSON
-// decoding turns numbers into float64, so numeric ids must be compared by
-// value rather than by Go type.
+// decoding may turn numbers into float64 or json.Number, so numeric ids are
+// compared by exact rational value rather than by Go type.
 func idsEqual(sent, received interface{}) bool {
 	if sent == nil || received == nil {
 		return sent == nil && received == nil
@@ -38,24 +39,53 @@ func idsEqual(sent, received interface{}) bool {
 	}
 	sv, sok := numericID(sent)
 	rv, rok := numericID(received)
-	return sok && rok && sv == rv
+	return sok && rok && sv.Cmp(rv) == 0
 }
 
-func numericID(value interface{}) (float64, bool) {
+// numericID converts a request id to an exact rational value. Integers are
+// exact; json.Number keeps its decimal text; float64 is interpreted as the
+// exact binary value it holds. Big integers therefore never lose precision by
+// passing through float64.
+func numericID(value interface{}) (*big.Rat, bool) {
 	switch v := value.(type) {
 	case int:
-		return float64(v), true
+		return new(big.Rat).SetInt64(int64(v)), true
+	case int8:
+		return new(big.Rat).SetInt64(int64(v)), true
+	case int16:
+		return new(big.Rat).SetInt64(int64(v)), true
+	case int32:
+		return new(big.Rat).SetInt64(int64(v)), true
 	case int64:
-		return float64(v), true
+		return new(big.Rat).SetInt64(v), true
+	case uint:
+		return new(big.Rat).SetUint64(uint64(v)), true
+	case uint8:
+		return new(big.Rat).SetUint64(uint64(v)), true
+	case uint16:
+		return new(big.Rat).SetUint64(uint64(v)), true
+	case uint32:
+		return new(big.Rat).SetUint64(uint64(v)), true
 	case uint64:
-		return float64(v), true
+		return new(big.Rat).SetUint64(v), true
 	case float64:
-		return v, true
+		r := new(big.Rat).SetFloat64(v)
+		return r, r != nil
+	case float32:
+		r := new(big.Rat).SetFloat64(float64(v))
+		return r, r != nil
 	case json.Number:
+		if r, ok := new(big.Rat).SetString(v.String()); ok {
+			return r, true
+		}
 		f, err := v.Float64()
-		return f, err == nil
+		if err != nil {
+			return nil, false
+		}
+		r := new(big.Rat).SetFloat64(f)
+		return r, r != nil
 	default:
-		return 0, false
+		return nil, false
 	}
 }
 

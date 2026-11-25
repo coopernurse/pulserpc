@@ -180,6 +180,69 @@ to the registered interface are ignored; every interface method must be
 implemented, and `Register` returns an error naming the offending method
 otherwise.
 
+## Server configuration
+
+`NewPulseRPCServerWithConfig` accepts a `pulserpc.ServerConfig` that controls
+the server policy. Start from `pulserpc.DefaultServerConfig()` and override the
+fields you need:
+
+```go
+cfg := pulserpc.DefaultServerConfig()
+cfg.AllowBatch = false
+cfg.RequireNonNullID = true
+cfg.ParamsMode = pulserpc.ParamsModePositionalOnly
+cfg.MaxRequestBodyBytes = 32 * 1024
+cfg.RejectInvalidUTF8 = true
+cfg.RejectUnknownRequestFields = true
+cfg.MapError = func(phase pulserpc.ErrorPhase, err error) *pulserpc.RPCError {
+    return pulserpc.NewRPCError(4101, "Invalid input")
+}
+
+server := checkout.NewPulseRPCServerWithConfig("0.0.0.0", 8080, cfg)
+```
+
+`NewPulseRPCServer(host, port)` is equivalent to
+`NewPulseRPCServerWithConfig(host, port, pulserpc.DefaultServerConfig())` and
+keeps the v0.4.0 behavior.
+
+> **The `ServerConfig` zero value disables batching.** `AllowBatch` must be set
+> explicitly. Always build the config from `DefaultServerConfig()` so you only
+> change the policies you intend to change.
+
+| Field | Default | Behavior |
+|-------|---------|----------|
+| `AllowBatch` | `true` | `false` rejects a JSON array body with `-32600` before dispatch. The zero value is `false`. |
+| `RequireNonNullID` | `false` | `true` rejects an absent or `null` id with `-32600` and a `null` response id. The handler does not run and an error is written even though the request would otherwise be a notification. |
+| `ParamsMode` | `ParamsModeAny` | `ParamsModePositionalOnly` rejects object (named) params with `-32600`. Missing or `null` params still mean zero arguments. |
+| `MaxRequestBodyBytes` | `0` | `<= 0` keeps the legacy 1 MiB cap and the legacy `-32600` `"Request body too large"` response. A positive value uses that byte cap and reports oversized bodies as `-32700` `"Parse error"`. |
+| `RejectInvalidUTF8` | `false` | `true` rejects a body that is not valid UTF-8 with `-32700` `"Parse error"`. The default lets `encoding/json` replace invalid bytes with U+FFFD. |
+| `RejectUnknownRequestFields` | `false` | `true` rejects unknown keys in struct-typed request params with `-32602` (or the mapped error). Detection recurses through pointers, slices, arrays, maps, and embedded structs, and honors `json` tags and `json:"-"`. Unknown top-level JSON-RPC envelope members are still ignored. |
+| `MapError` | `nil` | Maps argument decode and validation failures to the returned `*RPCError`. Return `nil` to fall back to the standard response. |
+
+### Parameter error phases
+
+`MapError` receives an `ErrorPhase` so an application can distinguish a
+malformed payload from a value that decoded but failed contract validation:
+
+- `pulserpc.ErrorPhaseDecodeParams` covers params-shape, parameter-count,
+  named-param conversion, and unknown-request-field failures.
+- `pulserpc.ErrorPhaseValidateParams` covers IDL contract validation failures
+  such as a wrong value type, a missing required struct field, or a bad enum
+  value.
+
+A mapped error is returned with HTTP status 200 and exactly the code, message,
+and data of the returned `RPCError` (the example above omits `data`). Envelope
+protocol errors are never mapped and remain `-32600`: an invalid `jsonrpc`
+version, method, or id, and named params rejected by `ParamsModePositionalOnly`.
+Notifications still receive no response unless `RequireNonNullID` rejects them.
+
+### Numeric IDs are exact
+
+The generated adapter decodes request bodies with `json.Decoder.UseNumber()`,
+so numeric ids never pass through `float64`. An id such as
+`9007199254740993` (above 2^53) is echoed exactly. This applies with or without
+a custom `ServerConfig`.
+
 ## Client Usage
 
 Generated client methods take a context first:
@@ -241,9 +304,10 @@ runs at the very top of the generated handler, before the method check and body
 read. Return a derived context to share header values with RPC middleware and
 handlers. Return `false` after writing a response to abort without the adapter
 writing a second one. A nil context falls back to `r.Context()`. The adapter's
-1 MiB body cap is installed before this hook, so a middleware that inspects the
-body is still bounded. Each hook receives `r.WithContext(ctx)` using the
-context returned by the previous hook.
+request body cap (the configured `MaxRequestBodyBytes`, or the default 1 MiB) is
+installed before this hook, so a middleware that inspects the body is still
+bounded. Each hook receives `r.WithContext(ctx)` using the context returned by
+the previous hook.
 
 ```go
 import (
@@ -372,7 +436,8 @@ Generated adapters and the runtime enforce the shared resource limits (D5/D6):
 
 | Limit | Value | Error |
 |-------|-------|-------|
-| Request body | 1 MiB | `-32600` `"Request body too large"` |
+| Request body (default) | 1 MiB | `-32600` `"Request body too large"` |
+| Request body (`MaxRequestBodyBytes > 0`) | configured | `-32700` `"Parse error"` |
 | Response body (client read) | 10 MiB | client error |
 | Batch entries | 100 | `-32600` `"Batch exceeds maximum size"` |
 | HTTP client timeout | 30 s | transport error |
@@ -384,7 +449,11 @@ Additional behavior:
 - Handler errors and panics return `-32603` `"Internal error"` with no `data`
   member. Details are logged server-side only.
 - Requests with a boolean, object, or array `id` are rejected with `-32600`.
-  An explicit `"id": null` is a notification and receives no response.
+  An explicit `"id": null` is a notification and receives no response unless
+  `RequireNonNullID` is enabled, which rejects absent and null ids with
+  `-32600`.
+- Numeric ids are decoded with `json.Decoder.UseNumber()` and echoed exactly, so
+  integers above 2^53 do not lose precision.
 - Batch responses keep the array shape. Non-object batch entries receive their
   own `-32600`; notification-only batches return HTTP 204 with no body.
 - `NewHTTPTransport` accepts optional custom headers and removes a trailing `/`
