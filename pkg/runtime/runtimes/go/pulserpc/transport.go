@@ -63,8 +63,21 @@ func idsEqual(sent, received interface{}) bool {
 			}
 		}
 	}
-	if s, ok := sent.(float64); ok {
+	switch s := sent.(type) {
+	case float64:
 		if r, ok := received.(float64); ok {
+			return s == r
+		}
+	case int:
+		if r, ok := received.(int); ok {
+			return s == r
+		}
+	case int64:
+		if r, ok := received.(int64); ok {
+			return s == r
+		}
+	case uint64:
+		if r, ok := received.(uint64); ok {
 			return s == r
 		}
 	}
