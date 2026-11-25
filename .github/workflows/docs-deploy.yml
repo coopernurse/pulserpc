@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Download built site
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: jekyll-site
           run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
@@ -47,10 +47,10 @@ jobs:
           chmod -cvR +rX "docs/_site/"
 
       - name: Upload to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: docs/_site
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
