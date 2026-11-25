@@ -60,7 +60,7 @@ func TestNormalizeJSONNumbersRetainsPrecisionForIntegerValidation(t *testing.T) 
 		}
 	}
 
-	for _, token := range []string{"-0.0", "-0e0"} {
+	for _, token := range []string{"-0", "-0.0", "-0e0"} {
 		if got, ok := normalizeJSONNumbers(json.Number(token)).(float64); !ok || !math.Signbit(got) {
 			t.Errorf("normalized token %s lost negative zero", token)
 		}
