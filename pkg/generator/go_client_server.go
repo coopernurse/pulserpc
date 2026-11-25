@@ -514,6 +514,20 @@ func snakeToCamelCase(s string) string {
 	return result
 }
 
+// goMethodReturnsValue reports whether an IDL method declares a value return.
+// A nil ReturnType and the legacy Type{BuiltIn: "void"} representation (used by
+// the runtime contract and the OpenAPI importer) both mean the generated Go
+// method returns only error. The runtime's shape validation uses the same rule.
+func goMethodReturnsValue(method *parser.Method) bool {
+	if method == nil || method.ReturnType == nil {
+		return false
+	}
+	if method.ReturnType.IsBuiltIn() && method.ReturnType.BuiltIn == "void" {
+		return false
+	}
+	return true
+}
+
 // mapTypeToGoType maps an IDL type to a Go type string
 func mapTypeToGoType(t *parser.Type, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, optional bool) string {
 	if t.IsBuiltIn() {
@@ -869,7 +883,7 @@ func generateServerGo(idl *parser.IDL, idlJSON []byte, structMap map[string]*par
 			for _, param := range method.Parameters {
 				getGoTypeWithNamespace(param.Type, structMap, enumMap, false, primaryNs, nsImports, packageImportPath)
 			}
-			if method.ReturnType != nil {
+			if goMethodReturnsValue(method) {
 				getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, primaryNs, nsImports, packageImportPath)
 			}
 		}
@@ -975,7 +989,7 @@ func writeInterfaceStubGo(sb *strings.Builder, iface *parser.Interface, structMa
 		sb.WriteString(") ")
 
 		// Return type: always expose the Go-idiomatic error result.
-		if method.ReturnType != nil {
+		if goMethodReturnsValue(method) {
 			returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
 			fmt.Fprintf(sb, "(%s, error)\n", returnType)
 		} else {
@@ -1095,12 +1109,16 @@ func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
 
 	sb.WriteString("// handleRequest handles HTTP requests by delegating to pulserpc.Server.CallWithContext()\n")
 	sb.WriteString("func (s *PulseRPCServer) handleRequest(w http.ResponseWriter, r *http.Request) {\n")
+	sb.WriteString("	// Bound the body before middleware so a hook that inspects the payload\n")
+	sb.WriteString("	// cannot buffer an unbounded request. The method check still runs after\n")
+	sb.WriteString("	// middleware so authentication can reject before parsing.\n")
+	sb.WriteString("	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)\n\n")
 	sb.WriteString("	// HTTP middleware runs first, before the method check and body read. A\n")
 	sb.WriteString("	// middleware that writes a response and returns false owns the response;\n")
 	sb.WriteString("	// the adapter writes nothing further.\n")
 	sb.WriteString("	ctx := r.Context()\n")
 	sb.WriteString("	for _, mw := range s.httpMiddleware {\n")
-	sb.WriteString("		nextCtx, cont := mw(w, r)\n")
+	sb.WriteString("		nextCtx, cont := mw(w, r.WithContext(ctx))\n")
 	sb.WriteString("		if nextCtx != nil {\n")
 	sb.WriteString("			ctx = nextCtx\n")
 	sb.WriteString("		}\n")
@@ -1117,7 +1135,6 @@ func writeServerHandleRequestGoRefactored(sb *strings.Builder) {
 	sb.WriteString("		return\n")
 	sb.WriteString("	}\n\n")
 
-	sb.WriteString("	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)\n")
 	sb.WriteString("	body, err := io.ReadAll(r.Body)\n")
 	sb.WriteString("	if err != nil {\n")
 	sb.WriteString("		var maxBytesErr *http.MaxBytesError\n")
@@ -1241,7 +1258,7 @@ func generateClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, enum
 			for _, param := range method.Parameters {
 				getGoTypeWithNamespace(param.Type, structMap, enumMap, false, primaryNs, nsImports, packageImportPath)
 			}
-			if method.ReturnType != nil {
+			if goMethodReturnsValue(method) {
 				getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, primaryNs, nsImports, packageImportPath)
 			}
 		}
@@ -1532,14 +1549,18 @@ func writeInterfaceClientGo(sb *strings.Builder, iface *parser.Interface, struct
 	// set. The generated client has no network bootstrap in its constructor, so
 	// the first call is the earliest safe point to fetch the server IDL.
 	fmt.Fprintf(sb, "// ensureBootstrapVerification verifies the contract once before the first RPC\n")
-	fmt.Fprintf(sb, "// call when VerifyOnBootstrap() was supplied. The caller context bounds the\n")
-	fmt.Fprintf(sb, "// IDL fetch.\n")
+	fmt.Fprintf(sb, "// call when VerifyOnBootstrap() was supplied. Values from the caller context\n")
+	fmt.Fprintf(sb, "// are preserved, but its cancellation is not: a cancelled first call must not\n")
+	fmt.Fprintf(sb, "// permanently consume the one-shot integrity check.\n")
 	fmt.Fprintf(sb, "func (c *%s) ensureBootstrapVerification(ctx context.Context) {\n", clientName)
 	sb.WriteString("	if !c.verifyOnBootstrap {\n")
 	sb.WriteString("		return\n")
 	sb.WriteString("	}\n")
+	sb.WriteString("	if ctx == nil {\n")
+	sb.WriteString("		ctx = context.Background()\n")
+	sb.WriteString("	}\n")
 	sb.WriteString("	c.verifyOnce.Do(func() {\n")
-	sb.WriteString("		c.VerifyCompatibility(ctx)\n")
+	sb.WriteString("		c.VerifyCompatibility(context.WithoutCancel(ctx))\n")
 	sb.WriteString("	})\n")
 	sb.WriteString("}\n\n")
 
@@ -1573,23 +1594,24 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 	sb.WriteString(") ")
 
 	// Return type
-	if method.ReturnType != nil {
+	if goMethodReturnsValue(method) {
 		returnType := getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
 		fmt.Fprintf(sb, "(%s, error)", returnType)
 	} else {
 		sb.WriteString("error")
 	}
 	sb.WriteString(" {\n")
+	sb.WriteString("\tif ctx == nil {\n\t\tctx = context.Background()\n\t}\n")
 
 	goReturnType := ""
-	if method.ReturnType != nil {
+	if goMethodReturnsValue(method) {
 		goReturnType = getGoTypeWithNamespace(method.ReturnType, structMap, enumMap, method.ReturnOptional, namespace, nsImports, packageImportPath)
 	}
 
 	// A small helper keeps the generated error returns consistent for methods
 	// that do and do not declare a return value.
 	writeErrorReturn := func(errExpr string) {
-		if method.ReturnType == nil {
+		if !goMethodReturnsValue(method) {
 			fmt.Fprintf(sb, "\t\treturn %s\n", errExpr)
 			return
 		}
@@ -1621,7 +1643,7 @@ func writeClientMethodGo(sb *strings.Builder, iface *parser.Interface, method *p
 	sb.WriteString("\t}\n\n")
 
 	// Extract result
-	if method.ReturnType != nil {
+	if goMethodReturnsValue(method) {
 		sb.WriteString("\tresult, ok := response[\"result\"]\n")
 		sb.WriteString("\tif !ok {\n")
 		if method.ReturnOptional {
@@ -1738,7 +1760,7 @@ func referencedTestServerNamespaces(idl *parser.IDL, structMap map[string]*parse
 			for _, param := range method.Parameters {
 				findReferencedNamespacesInType(param.Type, structMap, enumMap, primaryNs, refs)
 			}
-			if method.ReturnType != nil {
+			if goMethodReturnsValue(method) {
 				findReferencedNamespacesInType(method.ReturnType, structMap, enumMap, primaryNs, refs)
 			}
 		}
@@ -1804,12 +1826,22 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	implBody := implSB.String()
 	usesMath := strings.Contains(implBody, "math.")
 	usesStrings := strings.Contains(implBody, "strings.")
+	// Context is only referenced by generated handler methods. An interface
+	// with no methods emits no signatures, so importing context would make
+	// go build fail with "imported and not used".
+	hasInterfaceMethods := false
+	for _, iface := range idl.Interfaces {
+		if len(iface.Methods) > 0 {
+			hasInterfaceMethods = true
+			break
+		}
+	}
 
 	sb.WriteString("// Generated by pulserpc - do not edit\n")
 	sb.WriteString("// Test server implementation for integration testing\n\n")
 	sb.WriteString("package main\n\n")
 	sb.WriteString("import (\n")
-	if len(idl.Interfaces) > 0 {
+	if hasInterfaceMethods {
 		sb.WriteString("	\"context\"\n")
 	}
 	sb.WriteString("	\"fmt\"\n")
@@ -1844,7 +1876,8 @@ func generateTestServerGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 	sb.WriteString("	server := NewPulseRPCServer(\"0.0.0.0\", port)\n\n")
 	for _, iface := range idl.Interfaces {
 		implName := goInterfaceIdent(iface, idl) + "Impl"
-		fmt.Fprintf(&sb, "\tserver.Register(\"%s\", &%s{})\n", iface.Name, implName)
+		fmt.Fprintf(&sb, "\tif err := server.Register(\"%s\", &%s{}); err != nil {\n", iface.Name, implName)
+		fmt.Fprintf(&sb, "\t\tpanic(err)\n\t}\n")
 	}
 	sb.WriteString("\n")
 	sb.WriteString("\tmux := http.NewServeMux()\n")
@@ -1892,7 +1925,7 @@ func writeTestMethodImplGo(sb *strings.Builder, iface *parser.Interface, method 
 	sb.WriteString(") ")
 
 	// Return type
-	if method.ReturnType != nil {
+	if goMethodReturnsValue(method) {
 		returnType := mapTypeToGoType(method.ReturnType, structMap, enumMap, method.ReturnOptional)
 		fmt.Fprintf(sb, "(%s, error)", returnType)
 	} else {
@@ -1974,7 +2007,7 @@ func writeTestMethodImplGo(sb *strings.Builder, iface *parser.Interface, method 
 		sb.WriteString("	return op, nil\n")
 	default:
 		// Default implementation
-		if method.ReturnType != nil {
+		if goMethodReturnsValue(method) {
 			returnType := mapTypeToGoType(method.ReturnType, structMap, enumMap, method.ReturnOptional)
 			sb.WriteString("	var zero ")
 			sb.WriteString(returnType)
@@ -2068,6 +2101,11 @@ func generateTestClientGo(idl *parser.IDL, structMap map[string]*parser.Struct, 
 		clientName := goInterfaceIdent(iface, idl) + "Client"
 		clientVar := strings.ToLower(goInterfaceIdent(iface, idl)) + "Client"
 		fmt.Fprintf(&sb, "	%s := New%s(transport)\n", clientVar, clientName)
+		if len(iface.Methods) == 0 {
+			// No test calls will reference the client; keep it used so a
+			// methodless interface still builds.
+			fmt.Fprintf(&sb, "	_ = %s\n", clientVar)
+		}
 	}
 	sb.WriteString("\n")
 
@@ -2130,7 +2168,7 @@ func writeTestClientCallGo(sb *strings.Builder, iface *parser.Interface, method 
 	// Generate method call, always passing a context as the first argument.
 	methodName := snakeToCamelCase(method.Name)
 	callArgs := append([]string{"context.Background()"}, params...)
-	if method.ReturnType != nil {
+	if goMethodReturnsValue(method) {
 		fmt.Fprintf(sb, "		result, err := %s.%s(%s)\n", clientVar, methodName, strings.Join(callArgs, ", "))
 	} else {
 		fmt.Fprintf(sb, "		err := %s.%s(%s)\n", clientVar, methodName, strings.Join(callArgs, ", "))
@@ -2140,7 +2178,7 @@ func writeTestClientCallGo(sb *strings.Builder, iface *parser.Interface, method 
 	sb.WriteString("			return\n")
 	sb.WriteString("		}\n")
 
-	if method.ReturnType == nil {
+	if !goMethodReturnsValue(method) {
 		// Void methods return only error; there is no result to assert.
 		fmt.Fprintf(sb, "		fmt.Printf(\"✓ %s passed\\n\")\n", testName)
 		sb.WriteString("	}()\n\n")

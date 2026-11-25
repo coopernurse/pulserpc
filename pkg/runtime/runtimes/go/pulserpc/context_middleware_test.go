@@ -503,3 +503,110 @@ func TestAddHandlerWithoutContractValidatesAllExportedMethods(t *testing.T) {
 		t.Fatal("handler without a context was accepted without a contract")
 	}
 }
+
+// A contract that does not declare the interface is a configuration error, not
+// a reason to validate unrelated exported methods.
+func TestAddHandlerRejectsUnknownInterfaceWithContract(t *testing.T) {
+	server := newRegistrationServer(t)
+	err := server.AddHandler("Missing", extraMethodHandler{})
+	if err == nil {
+		t.Fatal("unknown interface was accepted")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not declared") {
+		t.Errorf("error = %q, want an unknown-interface message", err)
+	}
+	if _, ok := server.handlers["Missing"]; ok {
+		t.Error("handler for an unknown interface was stored")
+	}
+}
+
+// Middleware may rewrite the id, and the response/notification decision must
+// follow the request that is actually dispatched.
+func TestRPCMiddlewareRewriteControlsNotificationStatus(t *testing.T) {
+	t.Run("notification gains an id", func(t *testing.T) {
+		server := newContextTestServer(t)
+		handler := &recordingHandler{}
+		if err := server.AddHandler("Ctx", handler); err != nil {
+			t.Fatalf("AddHandler: %v", err)
+		}
+		server.UseRPC(func(ctx context.Context, request map[string]interface{}, response map[string]interface{}) (context.Context, map[string]interface{}, map[string]interface{}) {
+			rewritten := map[string]interface{}{}
+			for k, v := range request {
+				rewritten[k] = v
+			}
+			rewritten["id"] = "new-id"
+			return ctx, rewritten, nil
+		})
+
+		response := server.Call(pingRequest(nil))
+		if response == nil {
+			t.Fatal("middleware-added id did not produce a response")
+		}
+		if response["id"] != "new-id" {
+			t.Errorf("response id = %#v, want new-id", response["id"])
+		}
+	})
+
+	t.Run("request loses its id", func(t *testing.T) {
+		server := newContextTestServer(t)
+		handler := &recordingHandler{}
+		if err := server.AddHandler("Ctx", handler); err != nil {
+			t.Fatalf("AddHandler: %v", err)
+		}
+		server.UseRPC(func(ctx context.Context, request map[string]interface{}, response map[string]interface{}) (context.Context, map[string]interface{}, map[string]interface{}) {
+			rewritten := map[string]interface{}{}
+			for k, v := range request {
+				if k != "id" {
+					rewritten[k] = v
+				}
+			}
+			return ctx, rewritten, nil
+		})
+
+		if response := server.Call(pingRequest(7)); response != nil {
+			t.Errorf("request without an id received a response: %#v", response)
+		}
+	})
+}
+
+// A middleware that returns no request keeps the current request; the nil
+// guard in dispatch is defensive and cannot be triggered through the public
+// middleware contract.
+func TestRPCMiddlewareNilRequestKeepsCurrentRequest(t *testing.T) {
+	server := newContextTestServer(t)
+	handler := &recordingHandler{}
+	if err := server.AddHandler("Ctx", handler); err != nil {
+		t.Fatalf("AddHandler: %v", err)
+	}
+	server.UseRPC(func(ctx context.Context, request map[string]interface{}, response map[string]interface{}) (context.Context, map[string]interface{}, map[string]interface{}) {
+		return ctx, nil, nil
+	})
+
+	response := server.Call(pingRequest(1))
+	if response == nil {
+		t.Fatal("expected a response")
+	}
+	if result, _ := response["result"].(string); result != "background" {
+		t.Errorf("result = %q, want the original request to run", result)
+	}
+	if handler.callCount() != 1 {
+		t.Errorf("handler was invoked %d times, want 1", handler.callCount())
+	}
+}
+
+// A server without a contract cannot serve the embedded IDL; it must return an
+// internal error rather than dereferencing nil.
+func TestIDLRequestWithoutContractIsInternalError(t *testing.T) {
+	server := NewServer(nil, false, false)
+	response := server.Call(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "pulserpc-idl",
+		"id":      1,
+	})
+	if response == nil {
+		t.Fatal("expected a response")
+	}
+	if code := errorCode(t, response); code != -32603 {
+		t.Errorf("code = %d, want -32603", code)
+	}
+}

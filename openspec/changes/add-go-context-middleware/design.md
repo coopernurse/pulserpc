@@ -113,9 +113,10 @@ type NotifyTransport interface {
 Generated client methods take `ctx context.Context` first and pass it to
 `Transport.Call`. `HTTPTransport` uses `http.NewRequestWithContext`.
 
-`ensureBootstrapVerification` receives the caller's context because its IDL
-fetch is a real RPC; the first caller to trigger verification controls that
-request.
+`ensureBootstrapVerification` receives the caller's context so its IDL fetch can
+see caller-provided values, but it calls `context.WithoutCancel` before the
+one-shot verification. A cancelled or short-deadline first call must not
+permanently consume the integrity check.
 
 **Alternative considered:** adding `CallWithContext` as an optional transport
 capability while keeping `Call`. Rejected: the generated transport is generated
@@ -125,7 +126,8 @@ a single signature avoids a permanently split API.
 ### Two middleware hooks
 
 HTTP middleware runs once per HTTP request, before the method check, body read,
-and JSON parsing:
+and JSON parsing. The adapter installs its 1 MiB body cap before running the
+hook, so a middleware that inspects the payload cannot buffer an unbounded body:
 
 ```go
 // In the generated server package.

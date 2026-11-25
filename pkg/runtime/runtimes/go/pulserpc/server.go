@@ -99,12 +99,8 @@ const (
 func (s *Server) validateHandler(ifaceName string, handler interface{}) error {
 	handlerValue := reflect.ValueOf(handler)
 
-	var iface *Interface
-	if s.contract != nil {
-		iface = s.contract.GetInterface(ifaceName)
-	}
-	if iface == nil {
-		// Without an IDL interface there is no declared shape to compare
+	if s.contract == nil {
+		// Without an IDL contract there is no declared shape to compare
 		// against; still require the context/error convention on every
 		// exported method so a misconfigured handler fails at startup.
 		for i := 0; i < handlerValue.NumMethod(); i++ {
@@ -116,6 +112,11 @@ func (s *Server) validateHandler(ifaceName string, handler interface{}) error {
 			}
 		}
 		return nil
+	}
+
+	iface := s.contract.GetInterface(ifaceName)
+	if iface == nil {
+		return fmt.Errorf("interface %s is not declared in the contract", ifaceName)
 	}
 
 	methodNames := make([]string, 0, len(iface.Functions))
@@ -268,15 +269,31 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 		return shortCircuit
 	}
 
-	// Middleware may have rewritten the request. Re-read the method so a
-	// rewriting hook still controls dispatch.
+	// Middleware may have rewritten the request. Re-read the envelope so a
+	// rewriting hook still controls dispatch and so the response id and
+	// notification status describe the request that is actually dispatched.
+	if request == nil {
+		return s.errorResponse(nil, -32600, "Invalid Request", "Request must be an object")
+	}
+	reqID = request["id"]
+	if !validRequestID(reqID) {
+		return s.errorResponse(nil, -32600, "Invalid Request", "id must be a string, number, or null")
+	}
+	isNotification = reqID == nil
+	if request["jsonrpc"] != "2.0" {
+		return s.respondError(isNotification, nil, -32600, "Invalid Request", "jsonrpc version must be '2.0'")
+	}
 	method, ok = request["method"].(string)
 	if !ok || method == "" {
 		return s.respondError(isNotification, nil, -32600, "Invalid Request", "Method must be a string")
 	}
 
-	// Handle pulserpc-idl request
+	// Handle pulserpc-idl request. Without a contract there is no IDL to serve;
+	// report an internal error instead of dereferencing a nil contract.
 	if method == "pulserpc-idl" {
+		if s.contract == nil {
+			return s.respondError(isNotification, reqID, -32603, internalErrorMessage, nil)
+		}
 		return s.respondSuccess(isNotification, reqID, s.contract.idlParsed)
 	}
 

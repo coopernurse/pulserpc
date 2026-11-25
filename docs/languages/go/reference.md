@@ -240,7 +240,10 @@ Every request has two supported middleware layers.
 runs at the very top of the generated handler, before the method check and body
 read. Return a derived context to share header values with RPC middleware and
 handlers. Return `false` after writing a response to abort without the adapter
-writing a second one. A nil context falls back to `r.Context()`.
+writing a second one. A nil context falls back to `r.Context()`. The adapter's
+1 MiB body cap is installed before this hook, so a middleware that inspects the
+body is still bounded. Each hook receives `r.WithContext(ctx)` using the
+context returned by the previous hook.
 
 ```go
 import (
@@ -312,12 +315,17 @@ Generated Go APIs are context-aware as of v0.4.0:
   methods and `error` for void methods. The interface previously omitted
   `error`.
 - `Transport.Call` and `NotifyTransport.Notify` take a context first; custom
-  transports must add it.
+  transports must add it. The runtime library's `Transport.Request` /
+  `RequestWithID`, `Client.Call`, and `Client.Notify` also take a context.
 - `Register` and `AddHandler` return `error`. Statement-form calls such as
   `server.Register("A", &AImpl{})` still compile, but check the error at
-  startup.
+  startup. Registration rejects a handler method without a leading
+  `context.Context` or without the declared `error` result.
 - `Server.Call(request)` keeps working and uses `context.Background()`; use
   `CallWithContext(ctx, request)` to propagate cancellation.
+- Optional one-shot bootstrap verification preserves values from the caller
+  context but ignores its cancellation, so a cancelled first call cannot
+  permanently skip the contract check.
 
 The JSON-RPC wire format, validation rules, error codes, and golden responses
 are unchanged.

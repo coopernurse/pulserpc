@@ -347,6 +347,9 @@ func (c *Client) SetLocalIDL(idlJSON string) error {
 }
 
 func (c *Client) VerifyCompatibility(ctx context.Context) *VerificationResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var clientIDL interface{}
 	if c.localIDL != nil {
 		clientIDL = c.localIDL

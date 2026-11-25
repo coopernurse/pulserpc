@@ -70,12 +70,17 @@ SHALL take a context, and the generated HTTP transport SHALL use
 - **WHEN** a caller invokes `client.Notify(ctx, "Svc.ping", params)`
 - **THEN** the transport sends the notification with `ctx`
 
+#### Scenario: Cancelled first call cannot skip bootstrap verification
+- **WHEN** the first client call has a cancelled context and `VerifyOnBootstrap` is enabled
+- **THEN** the one-shot verification still runs with the caller's values but without its cancellation
+
 ### Requirement: HTTP middleware hook
 
 The generated server SHALL expose an HTTP middleware hook that receives the
 concrete `http.ResponseWriter` and `*http.Request`, and returns a context and a
-boolean continue flag. Returning `false` SHALL stop processing without the
-adapter writing a second response.
+boolean continue flag. The adapter SHALL install its request body cap before
+invoking the hook. Returning `false` SHALL stop processing without the adapter
+writing a second response.
 
 #### Scenario: Header-derived context reaches the handler
 - **WHEN** HTTP middleware stores a header value with `context.WithValue`
@@ -89,6 +94,14 @@ adapter writing a second response.
 #### Scenario: Nil context falls back to request context
 - **WHEN** HTTP middleware returns `nil, true`
 - **THEN** the adapter uses `r.Context()`
+
+#### Scenario: Middleware body reads are bounded
+- **WHEN** HTTP middleware reads `r.Body`
+- **THEN** the read is subject to the adapter's 1 MiB request cap
+
+#### Scenario: Derived context reaches the next HTTP hook
+- **WHEN** the first HTTP middleware returns a derived context
+- **THEN** the next hook receives `r.WithContext` containing that context
 
 ### Requirement: RPC middleware hook
 
