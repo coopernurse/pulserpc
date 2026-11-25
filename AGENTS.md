@@ -9,14 +9,6 @@ and C#.
 - [CLAUDE.md](CLAUDE.md) — architecture, build/test commands, conventions, pitfalls
 - [.github/copilot-instructions.md](.github/copilot-instructions.md) — implementation detail
 
-## Workflow
-
-Work is spec-driven with **openspec**:
-
-- Active changes live in `openspec/changes/<name>/` (`proposal.md`, `design.md`, `tasks.md`)
-- Approved specs live in `openspec/specs/`; completed changes in `openspec/changes/archive/`
-- In OpenCode, use the `/opsx-*` commands to propose, apply, verify, and archive a change
-
 ## Quick commands
 
 ```bash
