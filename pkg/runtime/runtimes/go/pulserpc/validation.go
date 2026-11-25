@@ -1,6 +1,7 @@
 package pulserpc
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -42,34 +43,61 @@ func ValidateStringE(value interface{}, path string) []ValidationError {
 func ValidateIntE(value interface{}, path string) []ValidationError {
 	switch v := value.(type) {
 	case int:
-		if int64(v) < math.MinInt32 || int64(v) > math.MaxInt32 {
-			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %d", v)}}
-		}
-		return nil
+		return validateInt64E(int64(v), path)
 	case int64:
-		if v < math.MinInt32 || v > math.MaxInt32 {
-			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %d", v)}}
-		}
-		return nil
+		return validateInt64E(v, path)
 	case float64:
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got non-finite float %v", v)}}
+		return validateFloatAsIntE(v, path)
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return validateInt64E(i, path)
 		}
-		if v != math.Trunc(v) {
-			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got float with fractional part: %v", v)}}
+		f, err := v.Float64()
+		if err != nil {
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got non-numeric value %q", v.String())}}
 		}
-		if v < math.MinInt32 || v > math.MaxInt32 {
-			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %v", v)}}
-		}
-		return nil
+		return validateFloatAsIntE(f, path)
 	default:
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got %T", value)}}
 	}
 }
 
+// validateInt64E checks the signed 32-bit IDL int range shared by every integer
+// input form.
+func validateInt64E(v int64, path string) []ValidationError {
+	if v < math.MinInt32 || v > math.MaxInt32 {
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %d", v)}}
+	}
+	return nil
+}
+
+// validateFloatAsIntE applies the fractional and range rules shared by float and
+// json.Number inputs for an int parameter.
+func validateFloatAsIntE(v float64, path string) []ValidationError {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got non-finite float %v", v)}}
+	}
+	if v != math.Trunc(v) {
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got float with fractional part: %v", v)}}
+	}
+	if v < math.MinInt32 || v > math.MaxInt32 {
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %v", v)}}
+	}
+	return nil
+}
+
 func ValidateFloatE(value interface{}, path string) []ValidationError {
-	switch value.(type) {
+	switch v := value.(type) {
 	case float64, int:
+		return nil
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected float, got non-numeric value %q", v.String())}}
+		}
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected float, got non-finite value %v", f)}}
+		}
 		return nil
 	default:
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected float, got %T", value)}}

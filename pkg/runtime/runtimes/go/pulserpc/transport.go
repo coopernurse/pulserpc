@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,8 +28,8 @@ type RequestWithID interface {
 }
 
 // idsEqual compares a request id with the one echoed in a response. JSON
-// decoding turns numbers into float64, so numeric ids must be compared by
-// value rather than by Go type.
+// decoding may turn numbers into float64 or json.Number, so numeric ids are
+// compared by exact rational value rather than by Go type.
 func idsEqual(sent, received interface{}) bool {
 	if sent == nil || received == nil {
 		return sent == nil && received == nil
@@ -36,26 +38,158 @@ func idsEqual(sent, received interface{}) bool {
 		r, _ := received.(string)
 		return r == s
 	}
+
+	// Keep the common cases allocation-free. Both json.Number values compare
+	// exactly; a mixed json.Number/float64 pair falls back to float64 to match
+	// v0.4.0 behavior for fractional ids.
+	if s, ok := sent.(json.Number); ok {
+		if r, ok := received.(json.Number); ok {
+			return jsonNumbersEqual(s, r)
+		}
+		if r, ok := received.(float64); ok {
+			return jsonNumberFloatEqual(s, r)
+		}
+	}
+	if r, ok := received.(json.Number); ok {
+		if s, ok := sent.(float64); ok {
+			return jsonNumberFloatEqual(r, s)
+		}
+		if s, ok := sent.(uint64); ok {
+			if i, err := r.Int64(); err == nil && i >= 0 {
+				return s == uint64(i)
+			}
+			if u, err := strconv.ParseUint(r.String(), 10, 64); err == nil {
+				return s == u
+			}
+		}
+	}
+	if s, ok := sent.(float64); ok {
+		if r, ok := received.(float64); ok {
+			return s == r
+		}
+	}
+
 	sv, sok := numericID(sent)
 	rv, rok := numericID(received)
-	return sok && rok && sv == rv
+	return sok && rok && sv.Cmp(rv) == 0
 }
 
-func numericID(value interface{}) (float64, bool) {
+// jsonNumbersEqual compares two json.Number values without a float64 round trip
+// when either value is not an int64.
+func jsonNumbersEqual(a, b json.Number) bool {
+	if ai, err := a.Int64(); err == nil {
+		if bi, err := b.Int64(); err == nil {
+			return ai == bi
+		}
+	}
+	ar, aok := new(big.Rat).SetString(a.String())
+	br, bok := new(big.Rat).SetString(b.String())
+	if aok && bok {
+		return ar.Cmp(br) == 0
+	}
+	af, aerr := a.Float64()
+	bf, berr := b.Float64()
+	return aerr == nil && berr == nil && af == bf
+}
+
+// jsonNumberFloatEqual preserves the old float64 comparison for a mixed
+// json.Number/float64 id pair.
+func jsonNumberFloatEqual(n json.Number, f float64) bool {
+	nf, err := n.Float64()
+	return err == nil && nf == f
+}
+
+// DecodeResponse parses a JSON-RPC response body. The top-level id keeps its
+// original numeric text as json.Number so large ids compare exactly; every
+// other number is normalized to float64 to preserve the v0.4.0 client view.
+func DecodeResponse(data []byte) (map[string]interface{}, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var response map[string]interface{}
+	if err := decoder.Decode(&response); err != nil {
+		return nil, err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, fmt.Errorf("trailing data after response")
+	}
+	for key, value := range response {
+		if key == "id" {
+			continue
+		}
+		response[key] = normalizeJSONNumbers(value)
+	}
+	return response, nil
+}
+
+// normalizeJSONNumbers converts json.Number values to float64 recursively. It is
+// used for request params, response results, and error data so middleware and
+// handlers see the same Go types as v0.4.0.
+func normalizeJSONNumbers(value interface{}) interface{} {
+	switch v := value.(type) {
+	case json.Number:
+		if f, err := v.Float64(); err == nil {
+			return f
+		}
+		return v
+	case []interface{}:
+		for i := range v {
+			v[i] = normalizeJSONNumbers(v[i])
+		}
+		return v
+	case map[string]interface{}:
+		for key := range v {
+			v[key] = normalizeJSONNumbers(v[key])
+		}
+		return v
+	default:
+		return value
+	}
+}
+
+// numericID converts a request id to an exact rational value. Integers are
+// exact; json.Number keeps its decimal text; float64 is interpreted as the
+// exact binary value it holds. Big integers therefore never lose precision by
+// passing through float64.
+func numericID(value interface{}) (*big.Rat, bool) {
 	switch v := value.(type) {
 	case int:
-		return float64(v), true
+		return new(big.Rat).SetInt64(int64(v)), true
+	case int8:
+		return new(big.Rat).SetInt64(int64(v)), true
+	case int16:
+		return new(big.Rat).SetInt64(int64(v)), true
+	case int32:
+		return new(big.Rat).SetInt64(int64(v)), true
 	case int64:
-		return float64(v), true
+		return new(big.Rat).SetInt64(v), true
+	case uint:
+		return new(big.Rat).SetUint64(uint64(v)), true
+	case uint8:
+		return new(big.Rat).SetUint64(uint64(v)), true
+	case uint16:
+		return new(big.Rat).SetUint64(uint64(v)), true
+	case uint32:
+		return new(big.Rat).SetUint64(uint64(v)), true
 	case uint64:
-		return float64(v), true
+		return new(big.Rat).SetUint64(v), true
 	case float64:
-		return v, true
+		r := new(big.Rat).SetFloat64(v)
+		return r, r != nil
+	case float32:
+		r := new(big.Rat).SetFloat64(float64(v))
+		return r, r != nil
 	case json.Number:
+		if r, ok := new(big.Rat).SetString(v.String()); ok {
+			return r, true
+		}
 		f, err := v.Float64()
-		return f, err == nil
+		if err != nil {
+			return nil, false
+		}
+		r := new(big.Rat).SetFloat64(f)
+		return r, r != nil
 	default:
-		return 0, false
+		return nil, false
 	}
 }
 
@@ -205,9 +339,9 @@ func (t *HTTPTransport) RequestWithID(ctx context.Context, method string, params
 		return nil, fmt.Errorf("empty response")
 	}
 
-	// Parse JSON response
-	var result map[string]interface{}
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	// Parse JSON response. The id stays exact; other numbers use float64.
+	result, err := DecodeResponse(respBody)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
