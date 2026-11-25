@@ -109,17 +109,18 @@ sourceSets {
 | IDL Type | Java Type | Example |
 |----------|-----------|---------|
 | `string` | `String` | `"hello"` |
-| `int` | `int` (`Integer` when optional) | `42` |
+| `int` | `long` (`Long` when optional) | `42L` |
 | `float` | `double` (`Double` when optional) | `3.14` |
 | `bool` | `boolean` (`Boolean` when optional) | `true`, `false` |
-| `[]Type` | `List<Type>` | `Arrays.asList(1, 2, 3)` |
+| `[]Type` | `List<Type>` | `Arrays.asList(1L, 2L, 3L)` |
 | `map[string]Type` | `Map<String, Type>` | `Collections.singletonMap("key", "value")` |
 | `Enum` | `Enum` (serialized by name) | `OrderStatus.PENDING` |
 | `Struct` | Class with getters/setters | `new Product(...)` |
 | `T [optional]` | Boxed `T` or `null` | `null` |
 
-`int` is signed 32-bit on the wire (`-2147483648`..`2147483647`); values outside
-that range, fractional numbers, booleans, and NaN/Infinity are rejected.
+`int` is signed 64-bit on the wire (`-9223372036854775808`..`9223372036854775807`);
+values outside that range, fractional numbers, booleans, and NaN/Infinity are
+rejected.
 
 ## Optional Fields
 
@@ -129,17 +130,17 @@ absence is representable as `null`:
 ```java
 public class Product {
     private String name;       // required string
-    private Integer stock;     // optional int  -> Integer
+    private Long stock;        // optional int  -> Long
     private Boolean active;    // optional bool -> Boolean
     private Double price;      // optional float -> Double
     private String note;       // optional string stays String
 }
 
 // Methods with an optional return type return the boxed type or null
-public Integer getStock() { return stock; }
+public Long getStock() { return stock; }
 ```
 
-Required built-ins stay primitive (`int`, `boolean`, `double`).
+Required built-ins stay primitive (`long`, `boolean`, `double`).
 
 ## Generated Classes
 
@@ -354,6 +355,16 @@ PulseRPC supports both Jackson and Gson. Configure in `pom.xml`:
 </dependency>
 ```
 
+With Gson, the raw `Object`/`Map`/`List` parsing path preserves int64
+precision: integral JSON numbers become `Long` (or `BigInteger` when they do not
+fit), while decimal/exponent forms remain `Double`. Middleware or application
+code that previously cast raw map values directly to `Double` should use
+`Number` (`longValue()`/`doubleValue()`) instead. Jackson already returns
+`Integer`/`Long`/`BigInteger` for integral numbers. The raw
+`Object`/`Map`/`List` path uses the runtime's streaming tree reader for int64
+precision, so custom Gson `Object` type adapters are not applied to those raw
+targets; typed targets still use the configured `Gson` instance.
+
 ## Validation
 
 PulseRPC automatically validates:
@@ -372,7 +383,7 @@ Cart cart = cart.addToCart(new AddToCartRequest(
 
 ## Best Practices
 
-1. **Use null for optional values**: Optional returns are boxed (`Integer`, `Boolean`, `Double`) or object references; return `null` when absent
+1. **Use null for optional values**: Optional returns are boxed (`Long`, `Boolean`, `Double`) or object references; return `null` when absent
 2. **Stream for collections**: Use Java streams for filtering and mapping
 3. **Immutable where possible**: Consider making generated classes immutable
 4. **Use Jackson annotations**: Add `@JsonProperty` for custom field names

@@ -13,7 +13,7 @@ import { strict as assert } from "assert";
 import {
   validateString, validateInt, validateFloat, validateBool,
   validateArray, validateMap, validateEnum, validateStruct, validateType,
-  INT32_MIN, INT32_MAX,
+  INT64_SAFE_MIN, INT64_SAFE_MAX,
 } from "../validation";
 import {
   findStruct, findEnum, getStructFields,
@@ -86,25 +86,36 @@ function test_shared_validateType_optional_null() {
   console.log("  ✓ validateType optional/null");
 }
 
-function test_shared_validateInt_signed32_range() {
-  // D1/R25: IDL int is signed 32-bit. Boundary values are accepted; anything
-  // wider (including |x| > 2^31) is rejected even though it is integral.
+function test_shared_validateInt_signed64_safe_range() {
+  // D1/R25: IDL int is signed 64-bit on the wire, but JavaScript numbers can
+  // represent only up to 2^53 - 1 exactly. Safe integers (including the former
+  // 32-bit overflow values) are accepted; wider integral values are rejected
+  // rather than silently rounded.
   const s: StructMap = {};
   const e: EnumMap = {};
-  for (const value of [0, 1, -1, INT32_MIN, INT32_MAX]) {
+  for (const value of [0, 1, -1, 2 ** 31, 2 ** 32, -(2 ** 31) - 1, INT64_SAFE_MIN, INT64_SAFE_MAX]) {
     assert.deepStrictEqual(
       validateType(value, { builtIn: "int" }, s, e),
       [],
       `expected ${value} to be a valid int`
     );
   }
-  for (const value of [INT32_MAX + 1, INT32_MIN - 1, 4294967296, 2 ** 53]) {
+  for (const value of [
+    INT64_SAFE_MAX + 1,
+    INT64_SAFE_MIN - 1,
+    INT64_SAFE_MAX + 2048,
+    2 ** 63 - 1,
+    2 ** 63,
+    -(2 ** 63),
+  ]) {
     const errs = validateType(value, { builtIn: "int" }, s, e);
     assert.strictEqual(errs.length, 1, `expected ${value} to be rejected`);
-    assert.match(errs[0].message, /32-bit/);
+    assert.match(errs[0].message, /signed 64-bit/);
+    assert.match(errs[0].message, /safe integer/);
+    assert.match(errs[0].message, /cannot represent the full int64 range exactly/);
   }
-  assert.strictEqual(validateInt(INT32_MAX + 1).length, 1);
-  console.log("  ✓ validateType int enforces signed 32-bit range");
+  assert.strictEqual(validateInt(INT64_SAFE_MAX + 1).length, 1);
+  console.log("  ✓ validateType int enforces signed 64-bit safe integer range");
 }
 
 function test_shared_enum_is_wire_string() {
@@ -317,7 +328,7 @@ function run(label: string, fn: () => void) {
 
 run("test_shared_validateType_covers_all_builtins", test_shared_validateType_covers_all_builtins);
 run("test_shared_validateInt_rejects_non_finite", test_shared_validateInt_rejects_non_finite);
-run("test_shared_validateInt_signed32_range", test_shared_validateInt_signed32_range);
+run("test_shared_validateInt_signed64_safe_range", test_shared_validateInt_signed64_safe_range);
 run("test_shared_enum_is_wire_string", test_shared_enum_is_wire_string);
 run("test_shared_float_is_double", test_shared_float_is_double);
 run("test_shared_validateType_array", test_shared_validateType_array);

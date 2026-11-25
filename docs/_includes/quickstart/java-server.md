@@ -107,7 +107,7 @@ public class MyServer {
             order.setPaymentMethod(request.getPaymentMethod());
             order.setStatus(OrderStatus.pending);
             order.setTotal(cart.getSubtotal());
-            order.setCreatedAt((int)(System.currentTimeMillis() / 1000));
+            order.setCreatedAt(System.currentTimeMillis() / 1000);
             orders.put(orderId, order);
 
             CheckoutResponse resp = new CheckoutResponse();

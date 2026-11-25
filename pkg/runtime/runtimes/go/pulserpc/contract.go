@@ -322,9 +322,11 @@ func convertToMap(value interface{}) (interface{}, error) {
 		return nil, nil
 	}
 
-	// If it's already a map or primitive, return as-is
+	// If it's already a map or primitive, return as-is. json.Number is a
+	// numeric scalar even though its Go kind is string; validators accept it
+	// and it must not be mistaken for a string response.
 	switch value.(type) {
-	case map[string]interface{}, string, float64, int, bool, []interface{}:
+	case map[string]interface{}, string, float64, int, int64, bool, []interface{}, json.Number:
 		return value, nil
 	}
 
@@ -374,7 +376,14 @@ func convertValueToMap(rv reflect.Value) (interface{}, error) {
 	case reflect.Bool:
 		return rv.Bool(), nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return float64(rv.Int()), nil
+		// Keep the JSON-shaped float64 view for values that round-trip
+		// exactly. Larger int64 values stay int64: validation accepts int64,
+		// and an inexact float would turn a valid value into an invalid one.
+		i := rv.Int()
+		if intFitsFloatExactly(i) {
+			return float64(i), nil
+		}
+		return i, nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return float64(rv.Uint()), nil
 	case reflect.Float32, reflect.Float64:

@@ -14,18 +14,18 @@ def _join_path(parent: str, child: str) -> str:
     return f"{parent}.{child}" if parent else f".{child}"
 
 
-# IDL `int` is a signed 32-bit integer (D1/R25).  Python integers are
+# IDL `int` is a signed 64-bit integer (D1/R25).  Python integers are
 # arbitrary precision, so the range must be enforced by validation even though
 # generated native types may be wider.
-INT_MIN = -2147483648
-INT_MAX = 2147483647
+INT_MIN = -2 ** 63
+INT_MAX = 2 ** 63 - 1
 
 
 def _validate_int_range(value: Any, path: str) -> List["ValidationError"]:
     if value < INT_MIN or value > INT_MAX:
         return [_make_error(
             path,
-            f"Expected int in signed 32-bit range "
+            f"Expected int in signed 64-bit range "
             f"[{INT_MIN}, {INT_MAX}], got {value}",
         )]
     return []

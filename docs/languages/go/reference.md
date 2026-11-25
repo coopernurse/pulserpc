@@ -13,19 +13,20 @@ layout: default
 | IDL Type | Go Type | Example |
 |----------|---------|---------|
 | `string` | `string` | `"hello"` |
-| `int` | `int` | `42` |
+| `int` | `int64` | `42` |
 | `float` | `float64` | `3.14` |
 | `bool` | `bool` | `true`, `false` |
-| `[]Type` | `[]Type` | `[]int{1, 2, 3}` |
+| `[]Type` | `[]Type` | `[]int64{1, 2, 3}` |
 | `map[string]Type` | `map[string]Type` | `map[string]string{"key": "value"}` |
 | `Enum` | `EnumName` + `EnumValue_Value` | `OrderStatusPending` |
 | `Struct` | `Struct` (value type; `*Struct` only when `[optional]`) | `Product{...}` |
-| `T [optional]` | `*T` (pointer + `omitempty`) | `*string`, `*int` |
+| `T [optional]` | `*T` (pointer + `omitempty`) | `*string`, `*int64` |
 
-> **`int` is signed 32-bit on the wire.** Go's native `int` may be wider, but
-> validation accepts only integral JSON numbers in
-> `[-2147483648, 2147483647]` (D1). Fractional, NaN/Inf, bool, and out-of-range
-> values are rejected with `-32602`.
+> **`int` is signed 64-bit on the wire.** Generated Go fields and method
+> signatures use `int64`; validation accepts integral JSON numbers in
+> `[-9223372036854775808, 9223372036854775807]` (D1). Fractional, NaN/Inf, bool,
+> and out-of-range values are rejected with `-32602`. This is a breaking change
+> from the earlier 32-bit `int`.
 >
 > **Optional fields omit their value when nil.** Optional fields are pointers
 > tagged with `omitempty`, so a nil value is absent from the serialized struct
@@ -59,6 +60,30 @@ cart := &checkout.Cart{
 }
 ```
 
+### Struct JSON tags
+
+By default, only optional fields are tagged `omitempty`; required fields are
+always serialized:
+
+```go
+type Product struct {
+    ProductId string  `json:"product_id"`
+    ImageUrl  *string `json:"image_url,omitempty"`
+}
+```
+
+Pass `-omit-empty` to the Go generator to add `omitempty` to every generated
+struct field:
+
+```bash
+pulserpc -plugin go-client-server -omit-empty -dir ./pkg/checkout checkout.pulse
+```
+
+With the flag enabled, required fields also omit their zero value (`0`, `""`,
+`false`, or a nil pointer/slice/map). This is a compile-time generator option,
+not a `ServerConfig` field. Use it deliberately: omitting a required zero value
+from a request can make the server report the field as missing.
+
 ## Optional Fields
 
 Optional fields become pointers. Use helper functions:
@@ -68,7 +93,7 @@ func stringPtr(s string) *string {
     return &s
 }
 
-func intPtr(i int) *int {
+func int64Ptr(i int64) *int64 {
     return &i
 }
 
@@ -253,14 +278,27 @@ so numeric ids never pass through `float64`. An id such as
 `9007199254740993` (above 2^53) is echoed exactly. This applies with or without
 a custom `ServerConfig`.
 
-Only the request id keeps the exact `json.Number` form. Before dispatch, the
-adapter converts numbers inside `params` (and other request members) back to
-`float64`, so RPC middleware and handlers see the same Go types as v0.4.0. On
+The request id always keeps the exact `json.Number` form. Before dispatch,
+the adapter converts numbers inside `params` (and other request members) back to
+`float64` **when the value is in the JavaScript safe-integer range**
+(`±(2^53-1)`), so RPC middleware sees the same Go types as v0.4.0 for ordinary
+values. Larger `int64` values stay `json.Number`: middleware must handle that
+type (or convert it explicitly) when it inspects a large `int64` parameter, and
+the runtime converts it to `int64` for the handler without losing precision.
+(Even `-2^63`, which is exactly representable as a `float64`, stays
+`json.Number` because JSON float formatting would rewrite its integer text.) On
 the client side, `HTTPTransport` also preserves the response id as
-`json.Number` and compares numeric ids exactly; result and error numbers keep
-the v0.4.0 `float64` shape. Upgrade client and server runtimes together, and
-note that a server which still rounds a large id will now fail the client's
-envelope check instead of silently accepting a mismatched id.
+`json.Number` and compares numeric ids exactly; result and error numbers stay
+`float64` in the safe-integer range and remain `json.Number` for larger
+integers. Upgrade client and server runtimes together, and note that a server
+which still rounds a large id will now fail the client's envelope check instead
+of silently accepting a mismatched id.
+
+> **JavaScript/TypeScript cannot use the full `int` range.** The JavaScript
+> `number` type represents integers exactly only up to 2^53-1
+> (`9007199254740991`). A TypeScript client or server therefore validates
+> against the safe-integer range even though the wire type is signed 64-bit.
+> Go, Java, C#, and Python runtimes support the full range.
 
 ## Client Usage
 

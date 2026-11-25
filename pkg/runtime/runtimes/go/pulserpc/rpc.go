@@ -33,4 +33,3 @@ func NewRPCErrorWithData(code int, message string, data interface{}) *RPCError {
 		Data:    data,
 	}
 }
-

@@ -402,7 +402,7 @@ func mapTypeToCsType(t *parser.Type, structMap map[string]*parser.Struct, enumMa
 		case "string":
 			csType = "string"
 		case "int":
-			csType = "int"
+			csType = "long"
 		case "float":
 			csType = "double"
 		case "bool":
@@ -449,7 +449,7 @@ func mapTypeToCsTypeWithNamespace(t *parser.Type, structMap map[string]*parser.S
 		case "string":
 			csType = "string"
 		case "int":
-			csType = "int"
+			csType = "long"
 		case "float":
 			csType = "double"
 		case "bool":
@@ -1017,7 +1017,13 @@ func writePulseRPCServerCs(sb *strings.Builder, idl *parser.IDL, structMap map[s
 	sb.WriteString("                    return intVal;\n")
 	sb.WriteString("                if (element.TryGetInt64(out var longVal))\n")
 	sb.WriteString("                    return longVal;\n")
-	sb.WriteString("                return element.GetDouble();\n")
+	sb.WriteString("                // Do not round an integer-form number outside int64\n")
+	sb.WriteString("                // through a double: it could land back inside the range.\n")
+	sb.WriteString("                // Keep the JsonElement so validation rejects it.\n")
+	sb.WriteString("                var raw = element.GetRawText();\n")
+	sb.WriteString("                if (raw.IndexOf('.') >= 0 || raw.IndexOf('e') >= 0 || raw.IndexOf('E') >= 0)\n")
+	sb.WriteString("                    return element.GetDouble();\n")
+	sb.WriteString("                return element;\n")
 	sb.WriteString("            case JsonValueKind.True:\n")
 	sb.WriteString("                return true;\n")
 	sb.WriteString("            case JsonValueKind.False:\n")
@@ -1634,7 +1640,7 @@ func GetCSharpType(typeDef map[string]interface{}, allStructs map[string]*parser
 		case "string":
 			return "typeof(string)"
 		case "int":
-			return "typeof(int)"
+			return "typeof(long)"
 		case "float":
 			return "typeof(double)"
 		case "bool":
@@ -2255,10 +2261,10 @@ func writeMethodImplementationCs(sb *strings.Builder, iface *parser.Interface, m
 			return
 		case "repeat_num":
 			// returns num as an array repeated 'count' number of times
-			sb.WriteString("        var result = new List<int>();\n")
+			sb.WriteString("        var result = new List<long>();\n")
 			sb.WriteString("        for (int i = 0; i < count; i++)\n")
 			sb.WriteString("        {\n")
-			sb.WriteString("            result.Add((int)num);\n")
+			sb.WriteString("            result.Add(num);\n")
 			sb.WriteString("        }\n")
 			sb.WriteString("        return result;\n")
 			return

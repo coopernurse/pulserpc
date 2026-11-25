@@ -700,11 +700,18 @@ echo ""
 
 echo -e "${BLUE}=== Numeric Boundaries, Declared Errors, and Invalid Requests ===${NC}"
 
-# D1: int32 boundaries for int parameters (inclusive at both ends).
+# D1: int64 boundaries for int parameters. Values above the old int32 range are
+# valid; values outside int64 are rejected. The maximum int64 value is covered
+# separately in test_numeric_types.sh because TypeScript's safe-integer limit
+# is lower than the full int64 range.
 test_method "A.add" "[2147483647,0]" "A.add accepts int32 maximum (2147483647)" "result" "2147483647"
-test_validation_error "A.add" "[2147483648,0]" "A.add rejects int32 overflow (2147483648)" "-32602"
+test_method "A.add" "[2147483648,0]" "A.add accepts above int32 maximum (2147483648)" "result" "2147483648"
 test_method "A.add" "[-2147483648,0]" "A.add accepts int32 minimum (-2147483648)" "result" "-2147483648"
-test_validation_error "A.add" "[-2147483649,0]" "A.add rejects int32 underflow (-2147483649)" "-32602"
+test_method "A.add" "[-2147483649,0]" "A.add accepts below int32 minimum (-2147483649)" "result" "-2147483649"
+test_method "A.add" "[9007199254740991,0]" "A.add accepts max JavaScript-safe integer" "result" "9007199254740991"
+test_method "A.add" "[-9007199254740991,0]" "A.add accepts min JavaScript-safe integer" "result" "-9007199254740991"
+test_validation_error "A.add" "[9223372036854775808,0]" "A.add rejects above int64 maximum" "-32602"
+test_validation_error "A.add" "[-9223372036854775809,0]" "A.add rejects below int64 minimum" "-32602"
 
 # D1: int parameters reject fractional numbers and booleans.
 test_validation_error "A.add" "[5.5,3]" "A.add rejects fractional int parameter" "-32602"

@@ -42,20 +42,33 @@ public class ValidationTest {
     }
 
     @Test
-    public void testValidateIntSigned32BitRange() {
-        // Invariant R25/D1: IDL ints are signed 32-bit.
+    public void testValidateIntSigned64BitRange() {
+        // Invariant R25/D1: IDL ints are signed 64-bit.
         Validation.validateInt(Integer.MAX_VALUE);
         Validation.validateInt(Integer.MIN_VALUE);
+        Validation.validateInt(Long.MAX_VALUE);
+        Validation.validateInt(Long.MIN_VALUE);
         Validation.validateInt(2147483647L);
         Validation.validateInt(-2147483648L);
+        Validation.validateInt(2147483648L);
+        Validation.validateInt(-2147483649L);
         Validation.validateInt(2147483647.0);
         Validation.validateInt(-2147483648.0);
+        Validation.validateInt(2147483648.0);
+        Validation.validateInt(4.0E18);
+        // -2^63 is exactly representable as a double and is in range.
+        Validation.validateInt(-9223372036854775808.0);
+        Validation.validateInt(5.0f);
 
         Object[] invalid = {
-            2147483648L, -2147483649L,
-            2147483648.0, -2147483649.0,
-            Double.POSITIVE_INFINITY, Double.NaN,
-            1.5, Double.valueOf(1.25)
+            // 2^63 is one past Long.MAX_VALUE and is out of range.
+            9223372036854775808.0, 9.223372036854776E18,
+            // Below Long.MIN_VALUE (-2^63).
+            -1.0E19,
+            Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN,
+            Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, Float.NaN,
+            1.5, Double.valueOf(1.25), Float.valueOf(2.5f),
+            true
         };
         for (Object value : invalid) {
             try {
@@ -65,6 +78,13 @@ public class ValidationTest {
                 Assert.assertTrue("message should name int: " + e.getMessage(),
                     e.getMessage().contains("Expected int"));
             }
+        }
+
+        try {
+            Validation.validateInt("not an int");
+            Assert.fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage().contains("Expected int"));
         }
     }
 

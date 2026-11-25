@@ -99,7 +99,7 @@ class OrderServiceImpl : IOrderService
             PaymentMethod = request.PaymentMethod,
             Status = OrderStatus.pending,
             Total = (double)cart.Subtotal,
-            CreatedAt = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
         };
 
         _orders[orderId] = order;

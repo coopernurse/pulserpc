@@ -3,6 +3,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.Gson;
 import org.junit.Test;
 import org.junit.Assert;
+import java.math.BigInteger;
 import java.util.*;
 
 public class JsonParserTest {
@@ -86,6 +87,26 @@ public class JsonParserTest {
         Map<String, Object> data = Map.of("test", "value");
         String json = parser.toJson(data);
         Assert.assertTrue(json.contains("\"test\":\"value\""));
+    }
+
+    @Test
+    public void testBothParsersPreserveInt64ObjectNumbers() {
+        for (JsonParser parser : new JsonParser[]{new JacksonJsonParser(), new GsonJsonParser()}) {
+            Map<String, Object> result = parser.fromJson(
+                "{\"max\":9223372036854775807,\"min\":-9223372036854775808,\"small\":42,\"ratio\":1.5}",
+                Map.class);
+
+            Assert.assertEquals(Long.valueOf(Long.MAX_VALUE), result.get("max"));
+            Assert.assertEquals(Long.valueOf(Long.MIN_VALUE), result.get("min"));
+            Assert.assertEquals(42, ((Number) result.get("small")).intValue());
+            Assert.assertEquals(1.5, ((Number) result.get("ratio")).doubleValue(), 0.0);
+
+            // Integer-form text outside int64 must stay exact and be rejected by
+            // validation rather than being rounded into range.
+            Object tooBig = parser.fromJson("{\"n\":9223372036854775808}", Map.class).get("n");
+            Assert.assertTrue(tooBig instanceof BigInteger);
+            Assert.assertFalse(Validation.validateInt(tooBig, "").isEmpty());
+        }
     }
 
     @Test

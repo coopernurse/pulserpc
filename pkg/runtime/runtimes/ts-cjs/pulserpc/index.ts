@@ -33,6 +33,8 @@ export {
   validateMap,
   validateEnum,
   validateStruct,
+  INT64_SAFE_MIN,
+  INT64_SAFE_MAX,
   INT32_MIN,
   INT32_MAX,
 } from "./validation";

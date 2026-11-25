@@ -25,10 +25,16 @@ now partly stale) and [../audit/invariants-additional.md](../audit/invariants-ad
 
 ## Canonical decisions (all plans must implement these identically)
 
-- **D1 — IDL `int` is signed 32-bit.** Valid values are integral JSON numbers
-  in `[-2147483648, 2147483647]`. Fractional, NaN/Inf, bool, and out-of-range
-  values are invalid in every runtime. Generated native types may be wider, but
-  validation enforces the range. This is a documented breaking change.
+- **D1 — IDL `int` is signed 64-bit.** Valid values are integral JSON numbers
+  in `[-9223372036854775808, 9223372036854775807]`. Fractional, NaN/Inf, bool,
+  and out-of-range values are invalid in every runtime. Generated native types
+  are `int64` (Go), `long`/`Long` (Java), `long` (C#), `int` (Python), and
+  `number` (TypeScript). JavaScript numbers are exact only through 2^53-1, so
+  the TypeScript runtime validates the safe-integer range; the other runtimes
+  support the full range. A `float64` input may represent `-2^63` exactly but
+  not `9223372036854775807` (it rounds to `2^63`), so the accepted float bounds
+  are `[-2^63, 2^63)`. This is a documented breaking change from signed 32-bit
+  `int`.
 - **D2 — `id` is string, number, or null.** Servers reject boolean/object/array
   ids with `-32600`. Numeric ids are compared by value.
 - **D3 — Non-POST requests** return HTTP **405** with a JSON-RPC error body:

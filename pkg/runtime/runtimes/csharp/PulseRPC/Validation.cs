@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 
 namespace PulseRPC
 {
@@ -65,13 +66,12 @@ namespace PulseRPC
         public static List<ValidationError> ValidateInt(object? value, string path)
         {
             var errs = new List<ValidationError>();
-            if (value is int) return errs;
-            if (value is long l && l >= IntMin && l <= IntMax) return errs;
+            if (value is int || value is long) return errs;
             if (value is double d)
             {
                 if (double.IsNaN(d) || double.IsInfinity(d)) { errs.Add(new ValidationError(path, $"Expected int, got non-finite float {d}")); return errs; }
                 if (d != Math.Floor(d)) { errs.Add(new ValidationError(path, $"Expected int, got float with fractional part: {d}")); return errs; }
-                if (d < IntMin || d > IntMax) { errs.Add(new ValidationError(path, $"Expected int in signed 32-bit range, got {d}")); return errs; }
+                if (d < IntMin || d >= IntMaxExclusive) { errs.Add(new ValidationError(path, $"Expected int in signed 64-bit range, got {d}")); return errs; }
                 return errs;
             }
             if (value is float f)
@@ -79,7 +79,7 @@ namespace PulseRPC
                 double df = f;
                 if (double.IsNaN(df) || double.IsInfinity(df)) { errs.Add(new ValidationError(path, $"Expected int, got non-finite float {df}")); return errs; }
                 if (df != Math.Floor(df)) { errs.Add(new ValidationError(path, $"Expected int, got float with fractional part: {df}")); return errs; }
-                if (df < IntMin || df > IntMax) { errs.Add(new ValidationError(path, $"Expected int in signed 32-bit range, got {df}")); return errs; }
+                if (df < IntMin || df >= IntMaxExclusive) { errs.Add(new ValidationError(path, $"Expected int in signed 64-bit range, got {df}")); return errs; }
                 return errs;
             }
             if (value is bool)
@@ -91,8 +91,17 @@ namespace PulseRPC
             return errs;
         }
 
-        public const long IntMin = -2147483648L;
-        public const long IntMax = 2147483647L;
+        public const long IntMin = long.MinValue;
+        public const long IntMax = long.MaxValue;
+        public const long Int64Min = long.MinValue;
+        public const long Int64Max = long.MaxValue;
+        // Retained for callers that need the old signed 32-bit bounds.
+        public const long Int32Min = -2147483648L;
+        public const long Int32Max = 2147483647L;
+
+        // 2^63 as a double. long.MaxValue rounds up to this value as a double, so
+        // the upper bound is exclusive to keep 2^63 itself out of range.
+        private const double IntMaxExclusive = 9223372036854775808.0;
 
         public static List<ValidationError> ValidateFloat(object? value, string path)
         {
@@ -100,6 +109,18 @@ namespace PulseRPC
             if (value is bool)
             {
                 errs.Add(new ValidationError(path, "Expected float, got bool"));
+                return errs;
+            }
+            if (value is JsonElement jsonElement)
+            {
+                // Integer-form JSON numbers outside int64 are kept as
+                // JsonElement so ValidateInt can reject them; any JSON number
+                // is still a valid float/double.
+                if (jsonElement.ValueKind == JsonValueKind.Number)
+                {
+                    return errs;
+                }
+                errs.Add(new ValidationError(path, $"Expected float, got {jsonElement.ValueKind}"));
                 return errs;
             }
             if (value is double d)

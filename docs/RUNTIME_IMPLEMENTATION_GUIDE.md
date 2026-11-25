@@ -51,14 +51,20 @@ catalog (`docs/audit/invariants.md`,
 `docs/audit/invariants-additional.md`) and the plans under `docs/plans/` use
 these identifiers.
 
-**D1 — `int` is signed 32-bit.** Valid values are integral JSON numbers in
-`[-2147483648, 2147483647]`. For `int`, fractional numbers, NaN/Infinity,
-booleans, and out-of-range values are invalid in every runtime. Generated native
-types may be wider, but request/response validation enforces the range. This is a
-documented breaking change from the earlier unbounded-`int` behavior. `float` is
-not affected by this rule: it is an IEEE-754 double, and runtime validation
-accepts any number, including `NaN` and `±Infinity` (a JSON parser can produce
-them even though they are not standard JSON literals).
+**D1 — `int` is signed 64-bit.** Valid values are integral JSON numbers in
+`[-9223372036854775808, 9223372036854775807]`. For `int`, fractional numbers,
+NaN/Infinity, booleans, and out-of-range values are invalid in every runtime.
+Generated native types are `int64` (Go), `long`/`Long` (Java), `long` (C#),
+`int` (Python), and `number` (TypeScript). JavaScript numbers represent integers
+exactly only through 2^53-1, so the TypeScript runtime validates the
+safe-integer range even though the wire type is signed 64-bit; the other
+runtimes support the full range. For a `float64` input, the representable
+integer bounds are `[-2^63, 2^63)`: `2^63` is exactly the `float64` rounding of
+`9223372036854775807` and must be rejected, while `-2^63` is exact and valid.
+This is a documented breaking change from the earlier signed 32-bit `int`
+behavior. `float` is not affected by this rule: it is an IEEE-754 double, and
+runtime validation accepts any number, including `NaN` and `±Infinity` (a JSON
+parser can produce them even though they are not standard JSON literals).
 
 **D2 — `id` is a string, number, or null.** Servers reject boolean, object, and
 array ids with `-32600`. Numeric ids are compared by value. An absent or

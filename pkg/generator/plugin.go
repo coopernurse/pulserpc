@@ -21,4 +21,3 @@ type Plugin interface {
 	// the provided FlagSet.
 	Generate(idl *parser.IDL, fs *flag.FlagSet) error
 }
-

@@ -69,6 +69,36 @@ function testValidateIntRejectsNonFinite() {
   console.log("✓ testValidateIntRejectsNonFinite");
 }
 
+function testValidateIntSigned64SafeRange() {
+  // IDL int is signed 64-bit on the wire; JavaScript numbers can represent
+  // only safe integers exactly, so wider values are rejected instead of being
+  // silently rounded.
+  for (const value of [
+    0,
+    2 ** 31,
+    2 ** 32,
+    -(2 ** 31) - 1,
+    Number.MIN_SAFE_INTEGER,
+    Number.MAX_SAFE_INTEGER,
+  ]) {
+    assert.deepEqual(validateInt(value), [], `expected ${value} to be a valid int`);
+  }
+  for (const value of [
+    Number.MAX_SAFE_INTEGER + 1,
+    Number.MIN_SAFE_INTEGER - 1,
+    2 ** 63 - 1,
+    2 ** 63,
+    -(2 ** 63),
+  ]) {
+    const errs = validateInt(value);
+    assert.equal(errs.length, 1, `expected ${value} to be rejected`);
+    assert.match(errs[0].message, /signed 64-bit/);
+    assert.match(errs[0].message, /safe integer/);
+    assert.match(errs[0].message, /cannot represent the full int64 range exactly/);
+  }
+  console.log("✓ testValidateIntSigned64SafeRange");
+}
+
 function testValidateFloatSuccess() {
   assert.deepEqual(validateFloat(3.14), []);
   assert.deepEqual(validateFloat(42), []);
@@ -448,6 +478,7 @@ testValidateStringFailure();
 testValidateIntSuccess();
 testValidateIntFailure();
 testValidateIntRejectsNonFinite();
+testValidateIntSigned64SafeRange();
 testValidateFloatSuccess();
 testValidateFloatFailure();
 testValidateBoolSuccess();

@@ -55,7 +55,7 @@ Read [README.md](README.md) for D1–D16. Do not edit shared harness scripts.
 
 ### R24 / R25 — id type and int range
 - Server: reject boolean/object/array ids with `-32600`.
-- `Validation.validateInt`: reject values outside signed 32-bit. Update tests.
+- `Validation.validateInt`: reject values outside signed 64-bit. Update tests.
 
 ### R29 / R30 — headers and trailing slash
 - Add a `HTTPTransport(String baseUrl, JsonParser parser, Map<String,String>

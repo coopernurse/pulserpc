@@ -77,6 +77,17 @@ echo ""
 PASSED=0
 FAILED=0
 
+# Runtime-specific expectation overrides.
+#
+# IDL `int` is signed 64-bit on the wire, but JavaScript `number` is an IEEE-754
+# double: the TypeScript runtimes accept only safe integers (|x| <= 2^53 - 1)
+# and reject larger values instead of silently rounding them. Every other
+# runtime supports the full signed 64-bit range.
+declare -A TS_EXPECTED_OVERRIDES=(
+    ["9223372036854775807"]="fail"
+    ["-9223372036854775808"]="fail"
+)
+
 # Test cases: value, expected, description
 TEST_CASES=(
     "5:pass:integer 5"
@@ -87,6 +98,12 @@ TEST_CASES=(
     "-3.5:fail:float -3.5 (fractional part)"
     "0:pass:zero"
     "0.0:pass:float 0.0"
+    "2147483648:pass:above int32 max (valid int64)"
+    "-2147483649:pass:below int32 min (valid int64)"
+    "9223372036854775807:pass:int64 max (TS rejects: unsafe JavaScript number)"
+    "-9223372036854775808:pass:int64 min (TS rejects: unsafe JavaScript number)"
+    "9223372036854775808:fail:above int64 max"
+    "-9223372036854775809:fail:below int64 min"
 )
 
 for runtime in go python ts csharp java; do
@@ -102,7 +119,11 @@ for runtime in go python ts csharp java; do
     
     for test_case in "${TEST_CASES[@]}"; do
         IFS=':' read -r value expected description <<< "$test_case"
-        if test_int_value "$runtime" "$port" "$value" "$expected" "$description"; then
+        expected_for_runtime="$expected"
+        if [ "$runtime" = "ts" ] && [ -n "${TS_EXPECTED_OVERRIDES[$value]:-}" ]; then
+            expected_for_runtime="${TS_EXPECTED_OVERRIDES[$value]}"
+        fi
+        if test_int_value "$runtime" "$value" "$expected_for_runtime" "$description"; then
             PASSED=$((PASSED + 1))
         else
             FAILED=$((FAILED + 1))

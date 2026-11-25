@@ -42,6 +42,11 @@ func (p *GoClientServer) RegisterFlags(fs *flag.FlagSet) {
 	if fs.Lookup("inline-runtime") == nil {
 		fs.Bool("inline-runtime", true, "Place runtime files inline with generated code (for playground/testing)")
 	}
+	// Register omit-empty flag. When true, every generated struct field gets
+	// omitempty; the default keeps optional-only tags.
+	if fs.Lookup("omit-empty") == nil {
+		fs.Bool("omit-empty", false, "Add omitempty to every generated Go struct field (default: optional fields only)")
+	}
 }
 
 // writeIDLJSONGo writes the IDL metadata as JSON to idl.json and returns the
@@ -156,6 +161,11 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 		return silentFlag != nil && silentFlag.Value.String() == "true"
 	}
 
+	omitEmpty := false
+	if f := fs.Lookup("omit-empty"); f != nil {
+		omitEmpty = f.Value.String() == "true"
+	}
+
 	// Access the -dir flag value
 	dirFlag := fs.Lookup("dir")
 	outputDir := ""
@@ -252,7 +262,7 @@ func (p *GoClientServer) Generate(idl *parser.IDL, fs *flag.FlagSet) error {
 			return fmt.Errorf("failed to create namespace directory: %w", err)
 		}
 
-		namespaceCode := generateNamespaceGo(namespace, types, structMap, enumMap, packageImportPath)
+		namespaceCode := generateNamespaceGo(namespace, types, structMap, enumMap, packageImportPath, omitEmpty)
 		namespacePath := filepath.Join(namespaceDir, namespace+".go")
 		if err := os.WriteFile(namespacePath, []byte(namespaceCode), 0644); err != nil {
 			return fmt.Errorf("failed to write %s/%s.go: %w", namespace, namespace, err)
@@ -536,7 +546,7 @@ func mapTypeToGoType(t *parser.Type, structMap map[string]*parser.Struct, enumMa
 		case "string":
 			goType = "string"
 		case "int":
-			goType = "int"
+			goType = "int64"
 		case "float":
 			goType = "float64"
 		case "bool":
@@ -573,7 +583,7 @@ func getGoTypeWithNamespace(t *parser.Type, structMap map[string]*parser.Struct,
 		case "string":
 			goType = "string"
 		case "int":
-			goType = "int"
+			goType = "int64"
 		case "float":
 			goType = "float64"
 		case "bool":
@@ -730,8 +740,9 @@ func namespaceForMatchingKey[T any](typeName string, defs map[string]T) (string,
 	return smallest[:strings.IndexByte(smallest, '.')], true
 }
 
-// generateNamespaceGo generates a Go file for a single namespace
-func generateNamespaceGo(namespace string, types *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, packageImportPath string) string {
+// generateNamespaceGo generates a Go file for a single namespace. omitEmpty
+// controls whether required struct fields also receive the omitempty JSON tag.
+func generateNamespaceGo(namespace string, types *NamespaceTypes, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, packageImportPath string, omitEmpty bool) string {
 	// Find referenced namespaces for cross-namespace imports
 	referencedNamespaces := getReferencedNamespaces(types, structMap, enumMap, namespace)
 
@@ -748,7 +759,7 @@ func generateNamespaceGo(namespace string, types *NamespaceTypes, structMap map[
 	var body strings.Builder
 	generateEnumTypesGo(&body, types.Enums)
 	body.WriteString("\n")
-	generateStructTypesGo(&body, namespace, types.Structs, structMap, enumMap, nsImports, packageImportPath)
+	generateStructTypesGo(&body, namespace, types.Structs, structMap, enumMap, nsImports, packageImportPath, omitEmpty)
 	body.WriteString("\n")
 
 	var sb strings.Builder
@@ -812,7 +823,7 @@ func generateEnumTypesGo(sb *strings.Builder, enums []*parser.Enum) {
 }
 
 // generateStructTypesGo generates Go struct types for all structs in the namespace
-func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*parser.Struct, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, nsImports map[string]string, packageImportPath string) {
+func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*parser.Struct, structMap map[string]*parser.Struct, enumMap map[string]*parser.Enum, nsImports map[string]string, packageImportPath string, omitEmpty bool) {
 	for _, s := range structs {
 		if s.Comment != "" {
 			lines := strings.Split(strings.TrimSpace(s.Comment), "\n")
@@ -852,7 +863,7 @@ func generateStructTypesGo(sb *strings.Builder, namespace string, structs []*par
 			fieldName := snakeToCamelCase(field.Name)
 			goType := getGoTypeWithNamespace(field.Type, structMap, enumMap, field.Optional, namespace, nsImports, packageImportPath)
 			jsonTag := field.Name
-			if field.Optional {
+			if field.Optional || omitEmpty {
 				jsonTag += ",omitempty"
 			}
 			fmt.Fprintf(sb, "	%s %s `json:\"%s\"`\n", fieldName, goType, jsonTag)
@@ -2026,7 +2037,7 @@ func writeTestMethodImplGo(sb *strings.Builder, iface *parser.Interface, method 
 		sb.WriteString("		text = strings.ToUpper(text)\n")
 		sb.WriteString("	}\n")
 		sb.WriteString("	items := make([]string, count)\n")
-		sb.WriteString("	for i := 0; i < count; i++ {\n")
+		sb.WriteString("	for i := int64(0); i < count; i++ {\n")
 		sb.WriteString("		items[i] = text\n")
 		sb.WriteString("	}\n")
 		sb.WriteString("	return RepeatResponse{\n")
@@ -2037,8 +2048,8 @@ func writeTestMethodImplGo(sb *strings.Builder, iface *parser.Interface, method 
 	case "say_hi":
 		sb.WriteString("	return HiResponse{Hi: \"hi\"}, nil\n")
 	case "repeat_num":
-		sb.WriteString("	result := make([]int, count)\n")
-		sb.WriteString("	for i := 0; i < count; i++ {\n")
+		sb.WriteString("	result := make([]int64, count)\n")
+		sb.WriteString("	for i := range result {\n")
 		sb.WriteString("		result[i] = num\n")
 		sb.WriteString("	}\n")
 		sb.WriteString("	return result, nil\n")

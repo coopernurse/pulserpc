@@ -728,7 +728,7 @@ func addTypeImports(t *parser.Type, basePackage string, currentPackage string, i
 }
 
 // getJavaTypeWithPackage returns Java type name with package qualification if needed
-// For primitives in generics, this uses boxed types (Integer, Double, Boolean)
+// For primitives in generics, this uses boxed types (Long, Double, Boolean)
 func getJavaTypeWithPackage(t *parser.Type, enumMap map[string]*parser.Enum, basePackage string, currentPackage string, structMap map[string]*parser.Struct) string {
 	if t.IsBuiltIn() {
 		return getJavaType(t, enumMap)
@@ -760,7 +760,7 @@ func getJavaTypeWithPackageOptional(t *parser.Type, optional bool, enumMap map[s
 	if optional && t.IsBuiltIn() {
 		switch t.BuiltIn {
 		case "int":
-			return "Integer"
+			return "Long"
 		case "float":
 			return "Double"
 		case "bool":
@@ -777,7 +777,7 @@ func getJavaTypeWithPackageForGeneric(t *parser.Type, basePackage string, curren
 		case "string":
 			return "String"
 		case "int":
-			return "Integer"
+			return "Long"
 		case "float":
 			return "Double"
 		case "bool":
@@ -812,7 +812,7 @@ func writeJavaType(sb *strings.Builder, t *parser.Type, enumMap map[string]*pars
 		case "string":
 			sb.WriteString("String")
 		case "int":
-			sb.WriteString("Integer")
+			sb.WriteString("Long")
 		case "float":
 			sb.WriteString("Double")
 		case "bool":
@@ -1606,17 +1606,17 @@ func getJavaType(typeDef *parser.Type, enumMap map[string]*parser.Enum) string {
 		case "string":
 			return "String"
 		case "int":
-			return "int"
+			return "long"
 		case "float":
 			return "double"
 		case "bool":
 			return "boolean"
 		}
 	} else if typeDef.IsArray() {
-		elementType := getJavaType(typeDef.Array, enumMap)
+		elementType := getBoxedJavaType(typeDef.Array, enumMap)
 		return fmt.Sprintf("List<%s>", elementType)
 	} else if typeDef.IsMap() {
-		valueType := getJavaType(typeDef.MapValue, enumMap)
+		valueType := getBoxedJavaType(typeDef.MapValue, enumMap)
 		return fmt.Sprintf("Map<String, %s>", valueType)
 	} else if typeDef.IsUserDefined() {
 		// Lookup uses fully qualified name, but return simple name
@@ -1635,7 +1635,7 @@ func getBoxedJavaType(typeDef *parser.Type, enumMap map[string]*parser.Enum) str
 		case "string":
 			return "String"
 		case "int":
-			return "Integer"
+			return "Long"
 		case "float":
 			return "Double"
 		case "bool":
@@ -1830,7 +1830,7 @@ func writeTestMethodBody(sb *strings.Builder, iface *parser.Interface, method *p
 			sb.WriteString("        return response;\n")
 			return
 		case "repeat_num":
-			sb.WriteString("        java.util.List<Integer> result = new java.util.ArrayList<>();\n")
+			sb.WriteString("        java.util.List<Long> result = new java.util.ArrayList<>();\n")
 			sb.WriteString("        for (int i = 0; i < count; i++) {\n")
 			sb.WriteString("            result.add(num);\n")
 			sb.WriteString("        }\n")
@@ -2049,7 +2049,7 @@ func writeTestParamValue(sb *strings.Builder, param *parser.Parameter, structMap
 		case "float":
 			sb.WriteString("java.util.Arrays.asList(1.1, 2.2, 3.3)")
 		case "int":
-			sb.WriteString("java.util.Arrays.asList(1, 2, 3)")
+			sb.WriteString("java.util.Arrays.asList(1L, 2L, 3L)")
 		default:
 			elementType := getJavaTypeWithPackage(param.Type.Array, enumMap, basePackage, currentPackage, structMap)
 			fmt.Fprintf(sb, "java.util.Arrays.asList(/* %s values */)", elementType)

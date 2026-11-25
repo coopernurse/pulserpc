@@ -49,9 +49,10 @@ An API difference that is not listed here is a bug, not an intentional waiver.
 
 These rules are identical to Python 3 and the other runtimes:
 
-- **D1/R25 — `int` is signed 32-bit.** `validate_int` accepts integral values
-  in `[-2147483648, 2147483647]`; fractional, NaN/Inf, bool and out-of-range
-  values are rejected. Python 2 `long` values are range-checked explicitly.
+- **D1/R25 — `int` is signed 64-bit.** `validate_int` accepts integral values
+  in `[-9223372036854775808, 9223372036854775807]`; fractional, NaN/Inf, bool
+  and out-of-range values are rejected. Python 2 `long` values are range-checked
+  explicitly.
 - **D2/R24 — `id` is a string, number or null.** Booleans, objects and arrays
   are rejected with `-32600` and a response `id` of `null`.
 - **D4/R15 — internal errors never leak details.** An unhandled handler

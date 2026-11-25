@@ -39,7 +39,7 @@ force full Python 3 parity (verification/diff remains a documented carve-out).
 ### R24 / R25 — id type and int range
 - Servers reject boolean/object/array ids with `-32600`.
 - `validate_int` (both `validation.py` files): reject integral values outside
-  signed 32-bit, in addition to bool/NaN/Inf/fractional. Update tests.
+  signed 64-bit, in addition to bool/NaN/Inf/fractional. Update tests.
 
 ### R16 / R18 — generated server limits (Python 2 gaps)
 - Python 3 already caps bodies at 1 MiB and batches at 100. Add the same body

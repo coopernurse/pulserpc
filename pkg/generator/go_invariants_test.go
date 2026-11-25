@@ -244,9 +244,9 @@ func TestGoGenerationIsDeterministic(t *testing.T) {
 	}
 	types := &NamespaceTypes{Structs: []*parser.Struct{holder}}
 
-	first := generateNamespaceGo("test", types, structMap, map[string]*parser.Enum{}, "example.com/rpc")
+	first := generateNamespaceGo("test", types, structMap, map[string]*parser.Enum{}, "example.com/rpc", false)
 	for i := 0; i < 40; i++ {
-		if got := generateNamespaceGo("test", types, structMap, map[string]*parser.Enum{}, "example.com/rpc"); got != first {
+		if got := generateNamespaceGo("test", types, structMap, map[string]*parser.Enum{}, "example.com/rpc", false); got != first {
 			t.Fatalf("generation is not byte-deterministic on run %d:\n--- first ---\n%s\n--- got ---\n%s", i, first, got)
 		}
 	}
@@ -263,7 +263,7 @@ func TestGoGenerationIsDeterministic(t *testing.T) {
 }
 
 // C9/C11/R26/R27: optional fields use omitempty, enums are string types, and
-// float maps to float64.
+// int maps to int64 while float maps to float64.
 func TestGoStructTagsEnumsAndFloats(t *testing.T) {
 	idl := parseTestIDL(t, `namespace test
 enum Status { active inactive }
@@ -285,13 +285,14 @@ interface Svc { get() Item }
 		enumMap[e.Name] = e
 	}
 	namespaceMap := GroupTypesByNamespace(idl)
-	code := generateNamespaceGo("test", namespaceMap["test"], structMap, enumMap, "example.com/rpc")
+	code := generateNamespaceGo("test", namespaceMap["test"], structMap, enumMap, "example.com/rpc", false)
 
 	for _, marker := range []string{
 		"`json:\"name\"`",
 		"`json:\"note,omitempty\"`",
 		"type Status string",
 		"StatusActive Status = \"active\"",
+		"Count int64",
 		"Ratio float64",
 		"Status Status",
 	} {
@@ -301,5 +302,31 @@ interface Svc { get() Item }
 	}
 	if strings.Contains(code, "`json:\"name,omitempty\"`") {
 		t.Error("required field name uses omitempty")
+	}
+}
+
+// IDL int is signed 64-bit: Go maps it to int64 in every position.
+func TestGoIntMapsToInt64(t *testing.T) {
+	intType := &parser.Type{BuiltIn: "int"}
+	cases := []struct {
+		name     string
+		typ      *parser.Type
+		optional bool
+		want     string
+	}{
+		{"scalar", intType, false, "int64"},
+		{"optional", intType, true, "*int64"},
+		{"array", &parser.Type{Array: intType}, false, "[]int64"},
+		{"optional array", &parser.Type{Array: intType}, true, "[]int64"},
+		{"map", &parser.Type{MapValue: intType}, false, "map[string]int64"},
+		{"optional map", &parser.Type{MapValue: intType}, true, "map[string]int64"},
+	}
+	for _, tc := range cases {
+		if got := mapTypeToGoType(tc.typ, nil, nil, tc.optional); got != tc.want {
+			t.Errorf("%s: mapTypeToGoType = %q, want %q", tc.name, got, tc.want)
+		}
+		if got := getGoTypeWithNamespace(tc.typ, nil, nil, tc.optional, "test", nil, "example.com/rpc"); got != tc.want {
+			t.Errorf("%s: getGoTypeWithNamespace = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -43,14 +44,19 @@ func ValidateStringE(value interface{}, path string) []ValidationError {
 func ValidateIntE(value interface{}, path string) []ValidationError {
 	switch v := value.(type) {
 	case int:
-		return validateInt64E(int64(v), path)
+		return nil
 	case int64:
-		return validateInt64E(v, path)
+		return nil
 	case float64:
 		return validateFloatAsIntE(v, path)
 	case json.Number:
-		if i, err := v.Int64(); err == nil {
-			return validateInt64E(i, path)
+		if _, err := v.Int64(); err == nil {
+			return nil
+		}
+		// An integer-form number that does not fit int64 is out of range.
+		// Do not let the float64 fallback round it back into range.
+		if isIntegerFormJSONNumber(v) {
+			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 64-bit range, got %s", v.String())}}
 		}
 		f, err := v.Float64()
 		if err != nil {
@@ -62,13 +68,30 @@ func ValidateIntE(value interface{}, path string) []ValidationError {
 	}
 }
 
-// validateInt64E checks the signed 32-bit IDL int range shared by every integer
-// input form.
-func validateInt64E(v int64, path string) []ValidationError {
-	if v < math.MinInt32 || v > math.MaxInt32 {
-		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %d", v)}}
-	}
-	return nil
+// float64 cannot represent math.MaxInt64 exactly: the nearest double is 2^63.
+// Accept the representable bounds [-2^63, 2^63) so -2^63 (exact) is valid and
+// 2^63 (which would land outside the int64 range) is rejected.
+const (
+	minInt64AsFloat        = -9223372036854775808.0 // -2^63
+	maxInt64FloatExclusive = 9223372036854775808.0  // 2^63
+	// maxExactFloatInteger is the largest integer magnitude a float64 can
+	// represent exactly (2^53-1). Larger int64 values are kept as
+	// json.Number so their exact JSON integer text survives a round trip;
+	// float64 marshaling can otherwise rewrite even an exact value such as
+	// MinInt64 as -9223372036854776000.
+	maxExactFloatInteger = 9007199254740991
+)
+
+// intFitsFloatExactly reports whether i can round-trip through float64 and
+// JSON as the same integer value and text.
+func intFitsFloatExactly(i int64) bool {
+	return i >= -maxExactFloatInteger && i <= maxExactFloatInteger
+}
+
+// isIntegerFormJSONNumber reports whether a json.Number has no fraction or
+// exponent, i.e. it denotes an integer and must not be rounded through float64.
+func isIntegerFormJSONNumber(n json.Number) bool {
+	return !strings.ContainsAny(n.String(), ".eE")
 }
 
 // validateFloatAsIntE applies the fractional and range rules shared by float and
@@ -80,15 +103,15 @@ func validateFloatAsIntE(v float64, path string) []ValidationError {
 	if v != math.Trunc(v) {
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got float with fractional part: %v", v)}}
 	}
-	if v < math.MinInt32 || v > math.MaxInt32 {
-		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %v", v)}}
+	if v < minInt64AsFloat || v >= maxInt64FloatExclusive {
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 64-bit range, got %v", v)}}
 	}
 	return nil
 }
 
 func ValidateFloatE(value interface{}, path string) []ValidationError {
 	switch v := value.(type) {
-	case float64, int:
+	case float64, int, int64:
 		return nil
 	case json.Number:
 		f, err := v.Float64()

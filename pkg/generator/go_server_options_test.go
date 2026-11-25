@@ -22,6 +22,7 @@ struct Item {
 interface Svc {
   ping() string
   add(a int, b int) int
+  echo64(value int) int
   meta(item Item) string
 }
 `
@@ -85,7 +86,8 @@ import (
 type e2eHandler struct{}
 
 func (e2eHandler) Ping(ctx context.Context) (string, error) { return "pong", nil }
-func (e2eHandler) Add(ctx context.Context, a, b int) (int, error) { return a + b, nil }
+func (e2eHandler) Add(ctx context.Context, a, b int64) (int64, error) { return a + b, nil }
+func (e2eHandler) Echo64(ctx context.Context, value int64) (int64, error) { return value, nil }
 func (e2eHandler) Meta(ctx context.Context, item Item) (string, error) { return item.Name, nil }
 
 func strictConfig() pulserpc.ServerConfig {
@@ -229,10 +231,40 @@ func TestGeneratedServerOptionsEndToEnd(t *testing.T) {
 			t.Fatalf("numeric id lost precision: %s", body)
 		}
 	})
+
+	t.Run("large int64 params stay exact", func(t *testing.T) {
+		for _, want := range []string{"9223372036854775807", "-9223372036854775808", "9007199254740993"} {
+			_, body := post(t, server, []byte(` + "`" + `{"jsonrpc":"2.0","method":"Svc.echo64","params":[` + "`" + `+want+` + "`" + `],"id":1}` + "`" + `))
+			if !strings.Contains(string(body), ` + "`" + `"result":` + "`" + `+want) {
+				t.Fatalf("large int64 param %s lost precision: %s", want, body)
+			}
+		}
+	})
+
+	t.Run("generated client round-trips large int64", func(t *testing.T) {
+		plain := NewPulseRPCServer("0.0.0.0", 0)
+		if err := plain.Register("Svc", e2eHandler{}); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		plainServer := httptest.NewServer(plain)
+		defer plainServer.Close()
+
+		client := NewSvcClient(NewHTTPTransport(plainServer.URL, nil))
+		for _, want := range []int64{9223372036854775807, 9007199254740993, -9223372036854775808} {
+			got, err := client.Echo64(context.Background(), want)
+			if err != nil {
+				t.Fatalf("Echo64(%d): %v", want, err)
+			}
+			if got != want {
+				t.Fatalf("Echo64(%d) = %d", want, got)
+			}
+		}
+	})
 }
 
-// Params keep the v0.4.0 float64 view for middleware and handlers; only the
-// top-level id stays json.Number so it can be echoed exactly.
+// Params keep the v0.4.0 float64 view for middleware and handlers where the
+// value is exactly representable; integers above 2^53 stay json.Number so they
+// are not corrupted. Only the top-level id is always json.Number.
 func TestGeneratedServerNormalizesParamsForMiddleware(t *testing.T) {
 	plain := NewPulseRPCServerWithConfig("0.0.0.0", 0, pulserpc.DefaultServerConfig())
 	if err := plain.Register("Svc", e2eHandler{}); err != nil {
@@ -260,6 +292,14 @@ func TestGeneratedServerNormalizesParamsForMiddleware(t *testing.T) {
 	}
 	if idType != "json.Number" {
 		t.Fatalf("middleware id type = %s, want json.Number", idType)
+	}
+
+	status, body = post(t, server, []byte(` + "`" + `{"jsonrpc":"2.0","method":"Svc.echo64","params":[9007199254740993],"id":1}` + "`" + `))
+	if status != http.StatusOK || !strings.Contains(string(body), ` + "`" + `"result":9007199254740993` + "`" + `) {
+		t.Fatalf("large int64 call failed: status=%d body=%s", status, body)
+	}
+	if paramType != "json.Number" {
+		t.Fatalf("large middleware param type = %s, want json.Number", paramType)
 	}
 }
 `
