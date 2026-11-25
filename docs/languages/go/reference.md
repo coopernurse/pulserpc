@@ -211,6 +211,11 @@ to the registered interface are ignored; every interface method must be
 implemented, and `Register` returns an error naming the offending method
 otherwise.
 
+
+For an IDL interface declared in a namespace, register either its declared
+name or its qualified IDL name. Incoming calls must use the registered name.
+Register both explicitly if both spellings are part of the service contract.
+
 ## Server configuration
 
 `NewPulseRPCServerWithConfig` accepts a `pulserpc.ServerConfig` that controls

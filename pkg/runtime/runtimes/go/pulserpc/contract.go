@@ -32,6 +32,8 @@ type Contract struct {
 	// once here and reused by all validation/FindStruct/FindEnum calls so type
 	// resolution stays O(1) instead of scanning the whole map per lookup.
 	resolver *typeResolver
+
+	qualifiedInterfaces map[string]*Interface
 }
 
 // NewContract creates a new Contract from parsed IDL data
@@ -67,6 +69,12 @@ func NewContract(idlParsed interface{}) *Contract {
 						}
 					}
 					c.Interfaces[iface.Name] = iface
+					if namespace, _ := ifaceDict["namespace"].(string); namespace != "" && !strings.Contains(iface.Name, ".") {
+						if c.qualifiedInterfaces == nil {
+							c.qualifiedInterfaces = make(map[string]*Interface)
+						}
+						c.qualifiedInterfaces[namespace+"."+iface.Name] = iface
+					}
 				}
 			}
 		}
@@ -153,17 +161,16 @@ func LoadContractFromFile(path string) (*Contract, error) {
 
 // HasInterface checks if an interface exists in the contract
 func (c *Contract) HasInterface(ifaceName string) bool {
-	_, ok := c.Interfaces[ifaceName]
-	return ok
+	return c.GetInterface(ifaceName) != nil
 }
 
-// GetInterface returns an interface by name, or nil if not found
+// GetInterface returns an interface by declared name or qualified IDL name.
+// An exact declared name takes precedence over a derived qualified name.
 func (c *Contract) GetInterface(ifaceName string) *Interface {
-	iface, ok := c.Interfaces[ifaceName]
-	if !ok {
-		return nil
+	if iface := c.Interfaces[ifaceName]; iface != nil {
+		return iface
 	}
-	return iface
+	return c.qualifiedInterfaces[ifaceName]
 }
 
 // GetFunction returns a function definition from an interface

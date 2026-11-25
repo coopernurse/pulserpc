@@ -684,3 +684,46 @@ func TestRequireIDLFieldNamesRejectsAliasesInNestedRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestQualifiedInterfaceRegistrationKeepsWireName(t *testing.T) {
+	var idl any
+	raw := strings.Replace(optionsTestIDL, `"name": "Opt",`, `"name": "Opt", "namespace": "example.api",`, 1)
+	if err := json.Unmarshal([]byte(raw), &idl); err != nil {
+		t.Fatal(err)
+	}
+	contract := NewContract(idl)
+	if !contract.HasInterface("Opt") || !contract.HasInterface("example.api.Opt") ||
+		contract.HasInterface("other.api.Opt") || len(contract.Interfaces) != 1 {
+		t.Fatal("qualified lookup changed the declared contract")
+	}
+	server := NewServer(contract, true, true)
+	if err := server.AddHandler("example.api.Opt", &optionsHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	call := func(name string, params []any) map[string]any {
+		return server.Call(map[string]any{"jsonrpc": "2.0", "id": 17, "method": name, "params": params})
+	}
+	if response := call("example.api.Opt.ping", nil); response["result"] != "pong" || response["id"] != 17 {
+		t.Fatalf("qualified result: %#v", response)
+	}
+	if code := errorCode(t, call("Opt.ping", nil)); code != -32601 {
+		t.Fatalf("unregistered bare name: got %d, want -32601", code)
+	}
+	if code := errorCode(t, call("example.api.Opt.add", []any{"bad", 2})); code != -32602 {
+		t.Fatalf("qualified parameter validation: got %d, want -32602", code)
+	}
+}
+
+func TestQualifiedInterfaceLookupPrefersExactDeclaration(t *testing.T) {
+	var idl any
+	if err := json.Unmarshal([]byte(`{"interfaces":[
+		{"name":"Example","namespace":"app","methods":[{"name":"root"}]},
+		{"name":"app.Example","namespace":"app","methods":[{"name":"exact"}]}
+	]}`), &idl); err != nil {
+		t.Fatal(err)
+	}
+	contract := NewContract(idl)
+	if iface := contract.GetInterface("app.Example"); iface == nil || iface.GetFunction("exact") == nil {
+		t.Fatalf("expected exact declaration, got %#v", iface)
+	}
+}
