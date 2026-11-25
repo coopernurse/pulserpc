@@ -10,6 +10,7 @@ import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import java.io.IOException;
 import java.io.StringReader;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -105,7 +106,21 @@ public class GsonJsonParser implements JsonParser {
     }
 
     private static boolean wantsObjectTree(Type type) {
-        return type == Object.class || type == Map.class || type == List.class;
+        if (type == Object.class || type == Map.class || type == List.class) {
+            return true;
+        }
+        if (type instanceof ParameterizedType) {
+            ParameterizedType parameterized = (ParameterizedType) type;
+            Type raw = parameterized.getRawType();
+            Type[] args = parameterized.getActualTypeArguments();
+            if (raw == Map.class) {
+                return args.length == 2 && args[0] == String.class && args[1] == Object.class;
+            }
+            if (raw == List.class) {
+                return args.length == 1 && args[0] == Object.class;
+            }
+        }
+        return false;
     }
 
     /**
