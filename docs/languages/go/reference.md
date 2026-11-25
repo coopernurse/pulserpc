@@ -259,7 +259,7 @@ copied `pulserpc` runtime must be upgraded together; `NewPulseRPCServer` and
 |-------|---------|----------|
 | `AllowBatch` | `true` | `false` rejects a JSON array body with `-32600` before dispatch. The zero value is `false`. |
 | `RequireNonNullID` | `false` | `true` rejects an absent or `null` id with `-32600` and a `null` response id. The handler does not run and an error is written even though the request would otherwise be a notification. The id policy is applied before the `jsonrpc` and method checks, so an id-less request reports the id error first. |
-| `ParamsMode` | `ParamsModeAny` | `ParamsModePositionalOnly` rejects object (named) params with `-32600`. Missing or `null` params still mean zero arguments. |
+| `ParamsMode` | `ParamsModeAny` | Accepts positional or named params. `ParamsModePositionalOnly` rejects named params with `-32600`. `ParamsModePositionalOnlyMapped` rejects named params via the parameter decode mappers and falls back to the same `-32600`. |
 | `MaxRequestBodyBytes` | `0` | `<= 0` keeps the legacy 1 MiB cap and the legacy `-32600` `"Request body too large"` response. A positive value uses that byte cap and reports oversized bodies as `-32700` `"Parse error"`. |
 | `RejectInvalidUTF8` | `false` | `true` rejects a body that is not valid UTF-8 with `-32700` `"Parse error"`. The default lets `encoding/json` replace invalid bytes with U+FFFD. |
 | `RejectUnknownRequestFields` | `false` | `true` rejects unknown keys in struct-typed request params with `-32602` (or the mapped error). Detection recurses through pointers, slices, arrays, maps, and embedded structs, and honors `json` tags and `json:"-"`. Unknown top-level JSON-RPC envelope members are still ignored. |

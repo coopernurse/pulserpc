@@ -413,11 +413,13 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 	case []interface{}:
 		positionalParams = p
 	case map[string]interface{}:
-		// Named params are an envelope-level protocol shape decision, so they
-		// are never routed through MapError.
-		if s.config.ParamsMode == ParamsModePositionalOnly {
+		switch s.config.ParamsMode {
+		case ParamsModePositionalOnly:
 			return s.respondError(isNotification, reqID, -32600, "Invalid Request",
 				"named params are not allowed")
+		case ParamsModePositionalOnlyMapped:
+			return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams,
+				NewRPCErrorWithData(-32600, "Invalid Request", "named params are not allowed"))
 		}
 		positionalParams, err = s.namedParamsToPositional(p, fnDef)
 		if err != nil {

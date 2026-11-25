@@ -727,3 +727,48 @@ func TestQualifiedInterfaceLookupPrefersExactDeclaration(t *testing.T) {
 		t.Fatalf("expected exact declaration, got %#v", iface)
 	}
 }
+
+func TestMappedPositionalModeMapsOnlyNamedParameterRejection(t *testing.T) {
+	config := DefaultServerConfig()
+	config.ParamsMode = ParamsModePositionalOnlyMapped
+	calls := 0
+	config.MapMethodError = func(name string, phase ErrorPhase, err error) *RPCError {
+		calls++
+		if name != "Opt.add" || phase != ErrorPhaseDecodeParams || err == nil {
+			t.Fatalf("unexpected mapping arguments: %q %q %v", name, phase, err)
+		}
+		return NewRPCError(4101, "Positional arguments required")
+	}
+	server, _ := newOptionsServer(t, config)
+	request := map[string]any{
+		"jsonrpc": "2.0", "id": "stable", "method": "Opt.add",
+		"params": map[string]any{"a": 1, "b": 2},
+	}
+	response := server.Call(request)
+	if got := errorCode(t, response); got != 4101 || response["id"] != "stable" {
+		t.Fatalf("mapped rejection = %#v", response)
+	}
+	request["id"] = true
+	if got := errorCode(t, server.Call(request)); got != -32600 || calls != 1 {
+		t.Fatalf("envelope error was mapped: code=%d mapper calls=%d", got, calls)
+	}
+
+	request["id"] = "stable"
+	config.MapMethodError = nil
+	fallback, _ := newOptionsServer(t, config)
+	response = fallback.Call(request)
+	data, hasData := errorData(t, response)
+	if code := errorCode(t, response); code != -32600 || !hasData || data != "named params are not allowed" {
+		t.Fatalf("fallback = %#v", response)
+	}
+
+	config.ParamsMode = ParamsModePositionalOnly
+	config.MapError = func(ErrorPhase, error) *RPCError {
+		t.Fatal("existing positional policy unexpectedly invoked the mapper")
+		return nil
+	}
+	legacy, _ := newOptionsServer(t, config)
+	if code := errorCode(t, legacy.Call(request)); code != -32600 {
+		t.Fatalf("legacy positional code = %d", code)
+	}
+}
