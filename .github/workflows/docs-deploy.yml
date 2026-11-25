@@ -49,8 +49,14 @@ jobs:
       - name: Upload to GitHub Pages
         uses: actions/upload-pages-artifact@v5
         with:
+          # A unique name per attempt prevents a re-run from leaving two
+          # "github-pages" artifacts in the same workflow run, which makes
+          # deploy-pages fail with "Multiple artifacts named github-pages".
+          name: github-pages-${{ github.run_attempt }}
           path: docs/_site
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
