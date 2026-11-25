@@ -82,8 +82,8 @@ zero-argument handler keeps working.
 
 An internal `paramError` wraps the underlying error with an `ErrorPhase`:
 
-- `ErrorPhaseDecodeParams`: params shape, parameter count from named
-  conversion, unknown named parameters, unknown struct fields.
+- `ErrorPhaseDecodeParams`: params shape, parameter-count mismatches, unknown
+  named parameters, unknown struct fields.
 - `ErrorPhaseValidateParams`: `Contract.ValidateRequest` failures.
 
 A helper consults `MapError` first. A non-nil mapped error is returned as-is

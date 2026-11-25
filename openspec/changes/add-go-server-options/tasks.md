@@ -8,7 +8,7 @@
 - [x] 2.1 Add `config ServerConfig` to `Server`; add `NewServerWithConfig` and `Config()` (returning a copy); make `NewServer` delegate with `DefaultServerConfig()`.
 - [x] 2.2 Enforce `RequireNonNullID` after the nil-request check and again after middleware rewrite; use `errorResponse` with a null id so the error is not suppressed as a notification.
 - [x] 2.3 Reject object params with `-32600` when `ParamsModePositionalOnly`; keep absent/null params as zero arguments.
-- [x] 2.4 Route params decode failures through an internal typed `ErrorPhaseDecodeParams` error and `Contract.ValidateRequest` failures through `ErrorPhaseValidateParams`.
+- [x] 2.4 Route params decode failures (including parameter-count mismatches) through an internal typed `ErrorPhaseDecodeParams` error and `Contract.ValidateRequest` failures through `ErrorPhaseValidateParams`.
 - [x] 2.5 Add a response helper that calls `MapError`, falls back to `*RPCError` passthrough, then `-32602 "Invalid params"` with the error text as data; leave envelope errors unmapped.
 - [x] 2.6 Add recursive strict unknown-field detection in `invokeHandler` before conversion, sharing key candidates with `convertMapToStruct` and handling pointers, slices/arrays, maps, embedded structs, and `json:"-"`. Cache the per-type key schema and bound recursive embedded types.
 
