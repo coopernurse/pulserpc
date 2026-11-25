@@ -81,11 +81,13 @@ func (s *Server) rejectNullID(reqID interface{}) map[string]interface{} {
 	return nil
 }
 
-// NormalizeRequestNumbers converts numbers inside a decoded request to
-// float64, matching the pre-UseNumber middleware and handler view, while
-// preserving the top-level request id as json.Number so it can be echoed
-// exactly. Generated HTTP adapters call it after decoding the body. Batch
-// arrays are walked member by member, so each member's id is preserved.
+// NormalizeRequestNumbers normalizes numbers inside a decoded request for the
+// v0.4.0 middleware and handler view, while preserving the top-level request id
+// as json.Number so it can be echoed exactly. Integers outside the JavaScript
+// safe-integer range and whole-valued decimal/exponent tokens that cannot
+// round-trip through float64 stay json.Number. Generated HTTP adapters call it
+// after decoding the body. Batch arrays are walked member by member, so each
+// member's id is preserved.
 func NormalizeRequestNumbers(request interface{}) {
 	switch r := request.(type) {
 	case map[string]interface{}:

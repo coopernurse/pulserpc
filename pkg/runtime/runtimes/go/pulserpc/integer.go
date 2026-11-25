@@ -8,7 +8,7 @@ import (
 
 // exactJSONInt64 accepts integral decimal and exponent forms without rounding.
 // The input is a number token from the JSON decoder.
-// It bounds exponent work by the input size and appends at most 19 zeroes.
+// It bounds exponent work by the input size and appends at most 18 zeroes.
 func exactJSONInt64(number json.Number) (int64, bool) {
 	if i, err := number.Int64(); err == nil {
 		return i, true

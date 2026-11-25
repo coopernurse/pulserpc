@@ -84,11 +84,12 @@ With `-omit-empty` enabled, required fields also omit their zero value (`0`, `""
 not a `ServerConfig` field. Use it deliberately: omitting a required zero value
 from a request can make the server report the field as missing.
 
-Use `-preserve-empty-optional-arrays` when an optional array must distinguish omission
-from an explicit empty array. It emits the Go `omitzero` JSON tag on optional
-slice fields. A nil slice is omitted and a non-nil empty slice serializes to
-`[]`. Generated code using this flag requires Go 1.24 or later. The flag takes
-precedence for optional arrays when combined with `-omit-empty`.
+Use `-preserve-empty-optional-arrays` when an optional array must distinguish
+omission from an explicit empty array. It emits the Go `omitzero` JSON tag on
+optional slice fields only; optional maps are unchanged. A nil slice is omitted
+and a non-nil empty slice serializes to `[]`. Generated code using this flag
+requires Go 1.24 or later. The flag takes precedence for optional arrays when
+combined with `-omit-empty`.
 
 ## Optional Fields
 
@@ -211,10 +212,17 @@ to the registered interface are ignored; every interface method must be
 implemented, and `Register` returns an error naming the offending method
 otherwise.
 
+For an IDL interface declared in a namespace, `Register` also accepts its
+qualified IDL name (`namespace.Interface`). The registered spelling becomes the
+wire method prefix: a server that registers `example.api.Catalog` dispatches
+`example.api.Catalog.list`, not `Catalog.list`. Generated Go clients still call
+the declared name, so use the qualified form only when retaining an existing
+wire name, and register both spellings if both must be served.
 
-For an IDL interface declared in a namespace, register either its declared
-name or its qualified IDL name. Incoming calls must use the registered name.
-Register both explicitly if both spellings are part of the service contract.
+```go
+// Wire method becomes "example.api.Catalog.list"
+server.Register("example.api.Catalog", &CatalogService{})
+```
 
 ## Server configuration
 
@@ -229,9 +237,19 @@ cfg.RequireNonNullID = true
 cfg.ParamsMode = pulserpc.ParamsModePositionalOnly
 cfg.MaxRequestBodyBytes = 32 * 1024
 cfg.RejectInvalidUTF8 = true
-cfg.RejectUnknownRequestFields = true
+cfg.RejectUnknownRequestFields = true // decode phase: keys the Go struct can populate
+cfg.RequireIDLFieldNames = true       // validation phase: exact IDL keys only
+cfg.RejectNullRequestField = func(structName, fieldName string) bool {
+    return structName == "checkout.Cart" && fieldName == "coupon"
+}
 cfg.MapError = func(phase pulserpc.ErrorPhase, err error) *pulserpc.RPCError {
     return pulserpc.NewRPCError(4101, "Invalid input")
+}
+cfg.MapMethodError = func(method string, phase pulserpc.ErrorPhase, err error) *pulserpc.RPCError {
+    if method == "CatalogService.add" && phase == pulserpc.ErrorPhaseDecodeParams {
+        return pulserpc.NewRPCError(4102, "Bad arguments")
+    }
+    return nil // fall through to MapError
 }
 
 server := checkout.NewPulseRPCServerWithConfig("0.0.0.0", 8080, cfg)
@@ -263,14 +281,14 @@ copied `pulserpc` runtime must be upgraded together; `NewPulseRPCServer` and
 | `MaxRequestBodyBytes` | `0` | `<= 0` keeps the legacy 1 MiB cap and the legacy `-32600` `"Request body too large"` response. A positive value uses that byte cap and reports oversized bodies as `-32700` `"Parse error"`. |
 | `RejectInvalidUTF8` | `false` | `true` rejects a body that is not valid UTF-8 with `-32700` `"Parse error"`. The default lets `encoding/json` replace invalid bytes with U+FFFD. |
 | `RejectUnknownRequestFields` | `false` | `true` rejects unknown keys in struct-typed request params with `-32602` (or the mapped error). Detection recurses through pointers, slices, arrays, maps, and embedded structs, and honors `json` tags and `json:"-"`. Unknown top-level JSON-RPC envelope members are still ignored. |
-| `RequireIDLFieldNames` | `false` | During request contract validation, restricts struct keys to exact IDL field names, including nested and inherited fields. Leaves map keys, envelope metadata, and response validation unchanged. |
-| `RejectNullRequestField` | `nil` | Rejects explicit null for selected optional request struct fields. The callback receives the declared struct name and exact IDL field key. Omission, response validation, and direct contract validation are unaffected. |
-| `MapError` | `nil` | Maps argument decode and validation failures to the returned `*RPCError`. Return `nil` to fall back to the standard response. |
-| `MapMethodError` | `nil` | Maps the same failures with the qualified RPC method available. Return `nil` to fall through to `MapError`, then to the standard response. |
+| `RequireIDLFieldNames` | `false` | During request contract validation, restricts struct keys to exact IDL field names, including nested and inherited fields. Leaves map keys, envelope metadata, and response validation unchanged. Runs only with request validation enabled and reports `ErrorPhaseValidateParams`. Unlike `RejectUnknownRequestFields` (decode-time keys the Go struct can populate), it rejects every key missing from the IDL definition. |
+| `RejectNullRequestField` | `nil` | Rejects explicit null for selected optional request struct fields during request validation. The callback receives the declared struct name and exact IDL field key. Omission, response validation, and direct contract validation are unaffected. |
+| `MapError` | `nil` | Maps argument decode and validation failures to the returned `*RPCError`. Return `nil` to fall back to the standard response. Named-param rejection is mapped only in `ParamsModePositionalOnlyMapped`. |
+| `MapMethodError` | `nil` | Maps the same failures with the full RPC method name (`Interface.method`) available. Runs before `MapError`; return `nil` to fall through to `MapError`, then to the standard response. |
 
-`RejectNullRequestField` may run concurrently for different requests. For a
-field inherited through `extends`, the callback receives the resolved request
-struct's name.
+`RejectNullRequestField`, `MapError`, and `MapMethodError` may run concurrently
+for different requests. For a field inherited through `extends`, the null-field
+callback receives the resolved request struct's name.
 
 ### Parameter error phases
 
@@ -278,7 +296,8 @@ struct's name.
 malformed payload from a value that decoded but failed contract validation:
 
 - `pulserpc.ErrorPhaseDecodeParams` covers params-shape, parameter-count,
-  named-param conversion, and unknown-request-field failures.
+  named-param conversion, named-param rejection in
+  `ParamsModePositionalOnlyMapped`, and unknown-request-field failures.
 - `pulserpc.ErrorPhaseValidateParams` covers IDL contract validation failures
   such as a wrong value type, a missing required struct field, or a bad enum
   value.
@@ -286,8 +305,11 @@ malformed payload from a value that decoded but failed contract validation:
 A mapped error is returned with HTTP status 200 and exactly the code, message,
 and data of the returned `RPCError` (the example above omits `data`). Envelope
 protocol errors are never mapped and remain `-32600`: an invalid `jsonrpc`
-version, method, or id, and named params rejected by `ParamsModePositionalOnly`.
-Notifications still receive no response unless `RequireNonNullID` rejects them.
+version, method, or id. Named params rejected by `ParamsModePositionalOnly` are
+also never mapped; `ParamsModePositionalOnlyMapped` routes that rejection
+through `MapMethodError`/`MapError` with `ErrorPhaseDecodeParams` and falls back
+to the same `-32600` response. Notifications still receive no response unless
+`RequireNonNullID` rejects them.
 
 ### Numeric IDs are exact
 
@@ -297,26 +319,29 @@ so numeric ids never pass through `float64`. An id such as
 a custom `ServerConfig`.
 
 The request id always keeps the exact `json.Number` form. Before dispatch,
-the adapter converts numbers inside `params` (and other request members) back to
-`float64` **when the value is in the JavaScript safe-integer range**
-(`±(2^53-1)`), so RPC middleware sees the same Go types as v0.4.0 for ordinary
-values. Larger `int64` values stay `json.Number`: middleware must handle that
-type (or convert it explicitly) when it inspects a large `int64` parameter, and
-the runtime converts it to `int64` for the handler without losing precision.
-(Even `-2^63`, which is exactly representable as a `float64`, stays
-`json.Number` because JSON float formatting would rewrite its integer text.) On
-the client side, `HTTPTransport` also preserves the response id as
-`json.Number` and compares numeric ids exactly; result and error numbers stay
-`float64` in the safe-integer range and remain `json.Number` for larger
-integers. Upgrade client and server runtimes together, and note that a server
-which still rounds a large id will now fail the client's envelope check instead
-of silently accepting a mismatched id.
+the adapter normalizes numbers inside `params` (and other request members) for
+the v0.4.0 middleware view: integers in the JavaScript safe-integer range
+(`±(2^53-1)`) and fractional values become `float64`; everything else stays
+`json.Number`. That includes larger `int64` values and whole-valued
+decimal/exponent tokens such as `1e16`, even when the IDL type is `float`.
+Middleware must handle `json.Number` (or convert it explicitly) when it inspects
+such a value; the runtime converts it to the declared native type without losing
+precision. (Even `-2^63`, which is exactly representable as a `float64`, stays
+`json.Number` because JSON float formatting would rewrite its integer text.)
+Negative zero keeps its sign. On the client side, `HTTPTransport` also preserves
+the response id as `json.Number` and compares numeric ids exactly; result and
+error numbers follow the same normalization. Upgrade client and server runtimes
+together, and note that a server which still rounds a large id will now fail the
+client's envelope check instead of silently accepting a mismatched id.
 
 For Go IDL integer fields, decimal and exponent spellings are accepted when
 their exact numeric value is an integer in the signed 64-bit range. The adapter
 rejects fractional values even when a float64 conversion would round to an
-integer. These rules apply to optional pointer fields as well.
-
+integer. These rules apply to optional pointer fields as well. This token-level
+exactness is Go-specific: runtimes that validate a native floating-point value
+(Java, C#, Python, TypeScript) accept a token such as `9007199254740992.5` as
+the rounded integer `9007199254740992`. Services that must behave identically
+across runtimes should send plain integer tokens.
 
 > **JavaScript/TypeScript cannot use the full `int` range.** The JavaScript
 > `number` type represents integers exactly only up to 2^53-1

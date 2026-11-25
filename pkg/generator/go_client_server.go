@@ -42,8 +42,9 @@ func (p *GoClientServer) RegisterFlags(fs *flag.FlagSet) {
 	if fs.Lookup("inline-runtime") == nil {
 		fs.Bool("inline-runtime", true, "Place runtime files inline with generated code (for playground/testing)")
 	}
-	// Register omit-empty flag. When true, every generated struct field gets
-	// omitempty; the default keeps optional-only tags.
+	// Struct-tag flags. omit-empty adds omitempty to every field; the default
+	// keeps optional-only tags. preserve-empty-optional-arrays emits omitzero on
+	// optional slices so an empty non-nil array survives serialization.
 	if fs.Lookup("omit-empty") == nil {
 		fs.Bool("omit-empty", false, "Add omitempty to every generated Go struct field (default: optional fields only)")
 	}
