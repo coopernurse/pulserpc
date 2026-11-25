@@ -40,7 +40,10 @@ which returns a copy. `NewServer` delegates to
 `NewServerWithConfig(..., DefaultServerConfig())`, so existing callers keep the
 lenient behavior. The generated adapter reads `s.rpcServer.Config()` rather than
 duplicating policy state, so programmatic `Call`/`CallWithContext` users and the
-HTTP adapter enforce the same rules.
+HTTP adapter share the dispatch policy (`RequireNonNullID`, `ParamsMode`,
+`RejectUnknownRequestFields`, `MapError`). Batching and body limits are
+HTTP-adapter concerns and are enforced there; `Call` handles one request at a
+time and never reads `AllowBatch`.
 
 **Alternative considered:** putting policy on the generated `PulseRPCServer`
 only. Rejected: `Call`/`CallWithContext` would then enforce different rules from
@@ -93,12 +96,16 @@ error string as data. Envelope errors never use this path.
 The strict check runs in `invokeHandler` before converting each parameter and
 walks the raw decoded value against the handler parameter type. It accepts the
 same key candidates as `convertMapToStruct`: the `json` tag name, the Go field
-name, the lower-first-letter form, and the all-lowercase form. It skips
-`json:"-"`, unexported fields, empty-interface targets, and types implementing
-`json.Unmarshaler` (whose accepted keys are unknowable). It recurses through
+name, the lower-first-letter form, and the all-lowercase form. The candidate
+helper is shared with `convertMapToStruct` so the two checks cannot drift. It
+skips `json:"-"`, unexported fields, and empty-interface targets; it does not
+exempt `json.Unmarshaler` types because the runtime's converter populates these
+structs by reflection rather than calling `UnmarshalJSON`. It recurses through
 pointers, slices/arrays, maps, and embedded structs, adding promoted embedded
-keys to the allowed set. Unknown keys are reported deterministically (sorted)
-as `<path>: unknown field "<key>"`.
+keys to the allowed set. The allowed-key schema is a pure function of the
+struct type, so it is cached in a `sync.Map` rather than rebuilt for every
+element of a slice or map. Unknown keys are sorted only when producing an error
+(`<path>: unknown field "<key>"`), keeping the valid path allocation-free.
 
 Because the check runs after contract validation, an unknown key that does not
 affect validation reaches it; a missing required field still fails validation
@@ -118,18 +125,27 @@ keeps `encoding/json`'s byte replacement behavior.
 ### Exact numeric ids
 
 The adapter creates a `json.Decoder` over the body, calls `UseNumber()`, decodes
-one value, then attempts a second decode and requires `io.EOF` so trailing data
-is a `-32700`. Numeric ids are `json.Number`, which the runtime accepts and
-serializes verbatim.
+one value, then reads one token and requires `io.EOF` so trailing data is a
+`-32700` without materializing a second value. Numeric ids are `json.Number`,
+which the runtime accepts and serializes verbatim.
 
-Runtime validation accepts `json.Number` for `int` and `float`; conversion
-special-cases `json.Number` before the generic `ConvertibleTo` path so it maps
-to the requested integer or float width (and never to a string). Fractional and
-out-of-range ints are still rejected.
+To avoid changing the v0.4.0 middleware/handler view, the adapter then calls
+`pulserpc.NormalizeRequestNumbers`, which converts numbers inside `params` and
+other request members to `float64` while leaving each request's top-level `id`
+as `json.Number`. Batch arrays are walked member by member. Programmatic callers
+may still pass `json.Number` params directly; runtime validation accepts
+`json.Number` for `int` and `float`, and conversion special-cases it before the
+generic `ConvertibleTo` path so it maps to the requested integer or float width
+(and never to a string). Fractional and out-of-range ints are still rejected.
 
-`numericID`/`idsEqual` in `transport.go` convert ids to `*big.Rat`. Integers are
-exact, `json.Number` uses its decimal text, and `float64` uses its exact binary
-value. `idsEqual(7, 7.0)` and string comparison keep working.
+On the client side, the runtime and generated `HTTPTransport` decode responses
+through `pulserpc.DecodeResponse`, which keeps the response `id` as
+`json.Number` and normalizes every other number to `float64`. `numericID`/
+`idsEqual` in `transport.go` compare ids exactly: integers are exact,
+`json.Number` uses its decimal text, and `float64` uses its exact binary value.
+A mixed `json.Number`/`float64` pair falls back to the legacy float64 comparison,
+so fractional ids keep v0.4.0 behavior; `idsEqual(7, 7.0)` and string
+comparison keep working.
 
 ## Risks / Trade-offs
 

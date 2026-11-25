@@ -209,10 +209,20 @@ keeps the v0.4.0 behavior.
 > explicitly. Always build the config from `DefaultServerConfig()` so you only
 > change the policies you intend to change.
 
+`AllowBatch`, `MaxRequestBodyBytes`, and `RejectInvalidUTF8` are enforced by the
+generated HTTP adapter. `RequireNonNullID`, `ParamsMode`,
+`RejectUnknownRequestFields`, and `MapError` are enforced by the runtime
+dispatcher, so they also apply to programmatic `Call`/`CallWithContext` users.
+
+Regenerate the Go server with the matching PulseRPC release. Generated servers
+now call `NewServerWithConfig` and `Config()`, so the generated code and the
+copied `pulserpc` runtime must be upgraded together; `NewPulseRPCServer` and
+`NewServer` remain source-compatible.
+
 | Field | Default | Behavior |
 |-------|---------|----------|
 | `AllowBatch` | `true` | `false` rejects a JSON array body with `-32600` before dispatch. The zero value is `false`. |
-| `RequireNonNullID` | `false` | `true` rejects an absent or `null` id with `-32600` and a `null` response id. The handler does not run and an error is written even though the request would otherwise be a notification. |
+| `RequireNonNullID` | `false` | `true` rejects an absent or `null` id with `-32600` and a `null` response id. The handler does not run and an error is written even though the request would otherwise be a notification. The id policy is applied before the `jsonrpc` and method checks, so an id-less request reports the id error first. |
 | `ParamsMode` | `ParamsModeAny` | `ParamsModePositionalOnly` rejects object (named) params with `-32600`. Missing or `null` params still mean zero arguments. |
 | `MaxRequestBodyBytes` | `0` | `<= 0` keeps the legacy 1 MiB cap and the legacy `-32600` `"Request body too large"` response. A positive value uses that byte cap and reports oversized bodies as `-32700` `"Parse error"`. |
 | `RejectInvalidUTF8` | `false` | `true` rejects a body that is not valid UTF-8 with `-32700` `"Parse error"`. The default lets `encoding/json` replace invalid bytes with U+FFFD. |
@@ -242,6 +252,15 @@ The generated adapter decodes request bodies with `json.Decoder.UseNumber()`,
 so numeric ids never pass through `float64`. An id such as
 `9007199254740993` (above 2^53) is echoed exactly. This applies with or without
 a custom `ServerConfig`.
+
+Only the request id keeps the exact `json.Number` form. Before dispatch, the
+adapter converts numbers inside `params` (and other request members) back to
+`float64`, so RPC middleware and handlers see the same Go types as v0.4.0. On
+the client side, `HTTPTransport` also preserves the response id as
+`json.Number` and compares numeric ids exactly; result and error numbers keep
+the v0.4.0 `float64` shape. Upgrade client and server runtimes together, and
+note that a server which still rounds a large id will now fail the client's
+envelope check instead of silently accepting a mismatched id.
 
 ## Client Usage
 

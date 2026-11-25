@@ -151,11 +151,16 @@ rejected by `ParamsMode`) SHALL NOT be mapped and SHALL remain `-32600`.
 ### Requirement: Numeric ids are exact
 
 The generated adapter SHALL decode request bodies with `json.Decoder` and
-`UseNumber()` and SHALL reject a second JSON value as `-32700`. Numeric ids
-SHALL be echoed exactly, independent of `ServerConfig`. Runtime validation and
-conversion SHALL accept `json.Number` for `int` and `float` params without
-losing fractional/out-of-range rejection, and the client envelope check SHALL
-compare numeric ids exactly rather than through `float64`.
+`UseNumber()` and SHALL reject trailing data as `-32700`. Numeric ids SHALL be
+echoed exactly, independent of `ServerConfig`. The adapter SHALL normalize
+numbers inside `params` (and other non-id request members) back to `float64` so
+middleware and handlers keep the v0.4.0 view, while each request's top-level
+`id` remains `json.Number`. Runtime validation and conversion SHALL accept
+`json.Number` for `int` and `float` params without losing fractional/
+out-of-range rejection. The runtime and generated clients SHALL decode
+responses so the response id stays exact while result and error numbers remain
+`float64`, and the client envelope check SHALL compare numeric ids exactly
+rather than through `float64`.
 
 #### Scenario: Large numeric id round-trips
 - **WHEN** a request id is `9007199254740993`
@@ -165,14 +170,22 @@ compare numeric ids exactly rather than through `float64`.
 - **WHEN** the body contains two JSON values
 - **THEN** the response is `-32700 "Parse error"`
 
+#### Scenario: Middleware params keep the v0.4.0 type
+- **WHEN** an HTTP request carries numeric params
+- **THEN** RPC middleware sees `float64` params and a `json.Number` top-level id
+
 #### Scenario: json.Number params convert
-- **WHEN** a request carries `json.Number("2")` for an `int` param
+- **WHEN** a programmatic request carries `json.Number("2")` for an `int` param
 - **THEN** the handler receives `2`
 
 #### Scenario: Fractional int rejected
 - **WHEN** a request carries `json.Number("1.5")` for an `int` param
 - **THEN** validation rejects it with `-32602`
 
+#### Scenario: Client response id stays exact
+- **WHEN** a client decodes a response with id `9007199254740993`
+- **THEN** the id remains `json.Number` and the envelope check compares it exactly
+
 #### Scenario: Client id comparison stays exact
-- **WHEN** the client envelope check compares `7` with `7.0`
+- **WHEN** the client envelope check compares `7` with `7.0`, or a large `uint64` request id with its exact `json.Number` echo
 - **THEN** they are equal, and string ids still compare by string equality

@@ -27,10 +27,13 @@ response that does not match the request it sent.
 - Add generated `NewPulseRPCServerWithConfig(host, port, config)`; keep
   `NewPulseRPCServer(host, port)` delegating with the default policy.
 - Decode request bodies with `json.Decoder` + `UseNumber()` and reject trailing
-  data, so numeric ids round-trip exactly. Update runtime validation and
-  conversion so `json.Number` works for `int` and `float` params.
-- Compare numeric ids by exact rational value (`math/big.Rat`) in the client
-  envelope check instead of `float64`.
+  data, so numeric ids round-trip exactly. Normalize params (but not the id)
+  back to `float64` so middleware and handlers keep the v0.4.0 view. Update
+  runtime validation and conversion so `json.Number` also works for `int` and
+  `float` params.
+- Decode client responses so the id stays exact while result/error numbers stay
+  `float64`, and compare numeric ids by exact rational value (`math/big.Rat`)
+  in the client envelope check instead of `float64`.
 - Update the Go reference, add runtime and generator tests (including a
   generated-module end-to-end test), and record the change in openspec.
 
@@ -51,11 +54,12 @@ response that does not match the request it sent.
 - `pkg/runtime/runtimes/go/pulserpc/options.go` — new policy types and defaults.
 - `pkg/runtime/runtimes/go/pulserpc/server.go` — config-aware dispatch,
   unknown-field detection, `json.Number` conversion, error mapping.
-- `pkg/runtime/runtimes/go/pulserpc/validation.go` — `json.Number` and integer
-  width support.
-- `pkg/runtime/runtimes/go/pulserpc/transport.go` — exact numeric id comparison.
+- `pkg/runtime/runtimes/go/pulserpc/validation.go` — `json.Number` support for
+  `int` and `float`.
+- `pkg/runtime/runtimes/go/pulserpc/transport.go` — response decoding with an
+  exact id, request-number normalization, and exact numeric id comparison.
 - `pkg/generator/go_client_server.go` — configurable constructor, body limit,
-  UTF-8 and batch checks, `UseNumber` decoding.
+  UTF-8 and batch checks, `UseNumber` decoding, exact response decoding.
 - `pkg/generator/go_*_test.go` — updated adapter assertions and new coverage.
 
 **Documentation:**
@@ -65,5 +69,10 @@ response that does not match the request it sent.
 - `NewPulseRPCServer` and `NewServer` keep their existing behavior.
 - Wire output changes only where an option is enabled; the numeric-id fix is
   the one unconditional wire improvement.
+- RPC middleware and handlers still see numeric params as `float64`; only the
+  request id keeps its exact `json.Number` text.
+- Client and server runtimes should be upgraded together: a client now rejects
+  a response whose large numeric id does not match exactly instead of silently
+  accepting the rounded id.
 - The `ServerConfig` zero value disables batching (a deliberate fail-closed
   default), so callers must start from `DefaultServerConfig()`.

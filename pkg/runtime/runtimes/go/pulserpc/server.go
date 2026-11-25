@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // internalErrorMessage is the fixed, generic message returned to clients for
@@ -69,6 +70,36 @@ func NewServerWithConfig(contract *Contract, validateRequests bool, validateResp
 // Config returns a copy of the server policy.
 func (s *Server) Config() ServerConfig {
 	return s.config
+}
+
+// rejectNullID applies the RequireNonNullID policy. It returns a response only
+// when the policy is enabled and reqID is nil.
+func (s *Server) rejectNullID(reqID interface{}) map[string]interface{} {
+	if s.config.RequireNonNullID && reqID == nil {
+		return s.errorResponse(nil, -32600, "Invalid Request", "id must not be null")
+	}
+	return nil
+}
+
+// NormalizeRequestNumbers converts numbers inside a decoded request to
+// float64, matching the pre-UseNumber middleware and handler view, while
+// preserving the top-level request id as json.Number so it can be echoed
+// exactly. Generated HTTP adapters call it after decoding the body. Batch
+// arrays are walked member by member, so each member's id is preserved.
+func NormalizeRequestNumbers(request interface{}) {
+	switch r := request.(type) {
+	case map[string]interface{}:
+		for key, value := range r {
+			if key == "id" {
+				continue
+			}
+			r[key] = normalizeJSONNumbers(value)
+		}
+	case []interface{}:
+		for _, item := range r {
+			NormalizeRequestNumbers(item)
+		}
+	}
 }
 
 // paramError is an internal error that carries the ErrorPhase a params failure
@@ -285,8 +316,8 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 	// A non-null id policy turns what would otherwise be a notification into an
 	// invalid request. errorResponse is used directly (not respondError) so the
 	// error is written even though the id is absent.
-	if s.config.RequireNonNullID && reqID == nil {
-		return s.errorResponse(nil, -32600, "Invalid Request", "id must not be null")
+	if response := s.rejectNullID(reqID); response != nil {
+		return response
 	}
 
 	// Check JSON-RPC version. A request with an invalid (or missing) version is
@@ -325,8 +356,8 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 		return s.errorResponse(nil, -32600, "Invalid Request", "id must be a string, number, or null")
 	}
 	isNotification = reqID == nil
-	if s.config.RequireNonNullID && reqID == nil {
-		return s.errorResponse(nil, -32600, "Invalid Request", "id must not be null")
+	if response := s.rejectNullID(reqID); response != nil {
+		return response
 	}
 	if request["jsonrpc"] != "2.0" {
 		return s.respondError(isNotification, nil, -32600, "Invalid Request", "jsonrpc version must be '2.0'")
@@ -976,28 +1007,12 @@ func (s *Server) convertMapToStruct(mapValue reflect.Value, structType reflect.T
 		}
 		fieldType := field.Type
 
-		// Build candidate keys for this field.
-		// Honor json:"-" (and json:"-,..."): such fields must never be
-		// populated from request maps.
-		if tag := field.Tag.Get("json"); tag != "" {
-			name := strings.SplitN(tag, ",", 2)[0]
-			if name == "-" {
-				continue
-			}
+		// Build candidate keys for this field. json:"-" (and json:"-,...")
+		// fields must never be populated from request maps.
+		candidates, ok := structFieldKeyCandidates(field)
+		if !ok {
+			continue
 		}
-
-		candidates := []string{}
-		if tag := field.Tag.Get("json"); tag != "" {
-			name := strings.SplitN(tag, ",", 2)[0]
-			if name != "" {
-				candidates = append(candidates, name)
-			}
-		}
-		candidates = append(candidates, field.Name)
-		if len(field.Name) > 0 {
-			candidates = append(candidates, string(rune(field.Name[0]-'A'+'a'))+field.Name[1:])
-		}
-		candidates = append(candidates, strings.ToLower(field.Name))
 
 		var mapVal reflect.Value
 		found := false
@@ -1124,11 +1139,6 @@ func convertJSONNumber(num json.Number, targetType reflect.Type) (reflect.Value,
 	return reflect.Value{}, false
 }
 
-// jsonUnmarshalerType identifies types that own their JSON decoding. Strict
-// unknown-field checking must leave them alone: their accepted keys are not
-// knowable from struct tags.
-var jsonUnmarshalerType = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
-
 // checkUnknownRequestFields reports the first request-map key that
 // convertMapToStruct would silently ignore when value is converted to
 // targetType. It mirrors that function's key candidates and recursion so strict
@@ -1142,9 +1152,6 @@ func checkUnknownRequestFields(value interface{}, targetType reflect.Type, path 
 	}
 	if targetType == nil || targetType.Kind() == reflect.Interface {
 		// An interface target has no key schema.
-		return nil
-	}
-	if targetType.Implements(jsonUnmarshalerType) || reflect.PointerTo(targetType).Implements(jsonUnmarshalerType) {
 		return nil
 	}
 
@@ -1170,13 +1177,8 @@ func checkUnknownRequestFields(value interface{}, targetType reflect.Type, path 
 		if !ok {
 			return nil
 		}
-		keys := make([]string, 0, len(dict))
-		for key := range dict {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			if err := checkUnknownRequestFields(dict[key], targetType.Elem(), path+"."+key); err != nil {
+		for key, item := range dict {
+			if err := checkUnknownRequestFields(item, targetType.Elem(), path+"."+key); err != nil {
 				return err
 			}
 		}
@@ -1184,22 +1186,40 @@ func checkUnknownRequestFields(value interface{}, targetType reflect.Type, path 
 	return nil
 }
 
+// structRequestFields caches the accepted key schema for a struct type. The
+// schema is immutable after construction and strict checking is read-only, so a
+// single cached map can be shared by concurrent requests.
+var structRequestFields sync.Map // map[reflect.Type]map[string]reflect.Type
+
+// requestFieldsFor returns the cached key schema for structType.
+func requestFieldsFor(structType reflect.Type) map[string]reflect.Type {
+	if cached, ok := structRequestFields.Load(structType); ok {
+		return cached.(map[string]reflect.Type)
+	}
+	allowed := make(map[string]reflect.Type, structType.NumField())
+	addStructRequestKeys(structType, allowed, make(map[reflect.Type]bool))
+	actual, _ := structRequestFields.LoadOrStore(structType, allowed)
+	return actual.(map[string]reflect.Type)
+}
+
 // checkStructRequestFields verifies every key in dict maps to a struct field.
 func checkStructRequestFields(dict map[string]interface{}, structType reflect.Type, path string) error {
-	allowed := make(map[string]reflect.Type, structType.NumField())
-	addStructRequestKeys(structType, allowed)
+	allowed := requestFieldsFor(structType)
 
-	keys := make([]string, 0, len(dict))
+	var unknown []string
 	for key := range dict {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		fieldType, ok := allowed[key]
-		if !ok {
-			return fmt.Errorf("%s: unknown field %q", path, key)
+		if _, ok := allowed[key]; !ok {
+			unknown = append(unknown, key)
 		}
-		if err := checkUnknownRequestFields(dict[key], fieldType, path+"."+key); err != nil {
+	}
+	if len(unknown) > 0 {
+		// Sort only when producing an error so the valid path allocates nothing.
+		sort.Strings(unknown)
+		return fmt.Errorf("%s: unknown field %q", path, unknown[0])
+	}
+
+	for key := range dict {
+		if err := checkUnknownRequestFields(dict[key], allowed[key], path+"."+key); err != nil {
 			return err
 		}
 	}
@@ -1207,8 +1227,14 @@ func checkStructRequestFields(dict map[string]interface{}, structType reflect.Ty
 }
 
 // addStructRequestKeys records the keys convertMapToStruct accepts for a struct,
-// including promoted fields from embedded structs.
-func addStructRequestKeys(structType reflect.Type, allowed map[string]reflect.Type) {
+// including promoted fields from embedded structs. visited bounds recursive
+// embedded types so a self-referential struct cannot overflow the stack.
+func addStructRequestKeys(structType reflect.Type, allowed map[string]reflect.Type, visited map[reflect.Type]bool) {
+	if visited[structType] {
+		return
+	}
+	visited[structType] = true
+
 	for i := 0; i < structType.NumField(); i++ {
 		field := structType.Field(i)
 		if field.PkgPath != "" {
@@ -1216,28 +1242,11 @@ func addStructRequestKeys(structType reflect.Type, allowed map[string]reflect.Ty
 			continue
 		}
 
-		jsonName := ""
-		if tag := field.Tag.Get("json"); tag != "" {
-			name := strings.SplitN(tag, ",", 2)[0]
-			if name == "-" {
-				continue
-			}
-			jsonName = name
+		candidates, ok := structFieldKeyCandidates(field)
+		if !ok {
+			continue
 		}
-
-		candidates := make([]string, 0, 4)
-		if jsonName != "" {
-			candidates = append(candidates, jsonName)
-		}
-		candidates = append(candidates, field.Name)
-		if len(field.Name) > 0 {
-			candidates = append(candidates, string(rune(field.Name[0]-'A'+'a'))+field.Name[1:])
-		}
-		candidates = append(candidates, strings.ToLower(field.Name))
 		for _, candidate := range candidates {
-			if candidate == "" {
-				continue
-			}
 			if _, exists := allowed[candidate]; !exists {
 				allowed[candidate] = field.Type
 			}
@@ -1251,8 +1260,33 @@ func addStructRequestKeys(structType reflect.Type, allowed map[string]reflect.Ty
 				embedded = embedded.Elem()
 			}
 			if embedded.Kind() == reflect.Struct {
-				addStructRequestKeys(embedded, allowed)
+				addStructRequestKeys(embedded, allowed, visited)
 			}
 		}
 	}
+}
+
+// structFieldKeyCandidates returns the request-map keys convertMapToStruct and
+// strict unknown-field checking accept for a struct field. ok is false for a
+// field excluded with json:"-".
+func structFieldKeyCandidates(field reflect.StructField) ([]string, bool) {
+	jsonName := ""
+	if tag := field.Tag.Get("json"); tag != "" {
+		name := strings.SplitN(tag, ",", 2)[0]
+		if name == "-" {
+			return nil, false
+		}
+		jsonName = name
+	}
+
+	candidates := make([]string, 0, 4)
+	if jsonName != "" {
+		candidates = append(candidates, jsonName)
+	}
+	candidates = append(candidates, field.Name)
+	if len(field.Name) > 0 {
+		candidates = append(candidates, string(rune(field.Name[0]-'A'+'a'))+field.Name[1:])
+	}
+	candidates = append(candidates, strings.ToLower(field.Name))
+	return candidates, true
 }

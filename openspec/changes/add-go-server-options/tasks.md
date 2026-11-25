@@ -10,14 +10,14 @@
 - [x] 2.3 Reject object params with `-32600` when `ParamsModePositionalOnly`; keep absent/null params as zero arguments.
 - [x] 2.4 Route params decode failures through an internal typed `ErrorPhaseDecodeParams` error and `Contract.ValidateRequest` failures through `ErrorPhaseValidateParams`.
 - [x] 2.5 Add a response helper that calls `MapError`, falls back to `*RPCError` passthrough, then `-32602 "Invalid params"` with the error text as data; leave envelope errors unmapped.
-- [x] 2.6 Add recursive strict unknown-field detection in `invokeHandler` before conversion, mirroring `convertMapToStruct` key candidates and handling pointers, slices/arrays, maps, embedded structs, `json:"-"`, and `json.Unmarshaler`.
+- [x] 2.6 Add recursive strict unknown-field detection in `invokeHandler` before conversion, sharing key candidates with `convertMapToStruct` and handling pointers, slices/arrays, maps, embedded structs, and `json:"-"`. Cache the per-type key schema and bound recursive embedded types.
 
 ## 3. Numeric decoding and conversion
 
-- [x] 3.1 Decode generated-adapter bodies with `json.Decoder` + `UseNumber()` and reject trailing data with `-32700`.
-- [x] 3.2 Accept `json.Number` in `ValidateIntE` and `ValidateFloatE` (and integer widths) while keeping fractional/non-finite/range rules.
+- [x] 3.1 Decode generated-adapter bodies with `json.Decoder` + `UseNumber()` and reject trailing data with `-32700`; normalize params (not the request id) back to `float64` for middleware and handlers.
+- [x] 3.2 Accept `json.Number` in `ValidateIntE` and `ValidateFloatE` while keeping the pre-change numeric-kind acceptance and fractional/non-finite/range rules.
 - [x] 3.3 Special-case `json.Number` in `convertValueToType` so it converts to ints/uints/floats and never silently becomes a string.
-- [x] 3.4 Replace float64 id comparison in `transport.go` with `math/big.Rat` while keeping `idsEqual(7, 7.0)` and string equality.
+- [x] 3.4 Decode client responses through `DecodeResponse` so the id stays exact and other numbers stay `float64`; compare ids exactly with fast paths plus `math/big.Rat`, keeping `idsEqual(7, 7.0)` and string equality.
 
 ## 4. Generator
 
@@ -31,9 +31,9 @@
 
 - [x] 5.1 Add runtime tests for default leniency, `RequireNonNullID`, `ParamsModePositionalOnly`, strict unknown fields (top-level, nested, pointer, slice, map) and the default-off behavior.
 - [x] 5.2 Add runtime tests for `MapError` phases, data-free mapped errors, the nil fallback, and unmapped envelope errors.
-- [x] 5.3 Add runtime tests for exact `json.Number` id round-trip and `json.Number` int/float params including fractional and out-of-range rejection.
-- [x] 5.4 Add generator static assertions for the new constructor, `Config()`, `UseNumber`, `utf8.Valid`, `config.AllowBatch`, and the custom body-limit branch, including body-cap-before-middleware ordering.
-- [x] 5.5 Add a generated-module end-to-end test covering batches, absent/null ids, named params, mapped unknown fields, zero-arg params, oversize bodies, invalid UTF-8, exact ids, and default batch acceptance; run `go test ./...` in the generated module.
+- [x] 5.3 Add runtime tests for exact `json.Number` id round-trip, `json.Number` int/float params including fractional/out-of-range rejection, request-number normalization, response decoding, and exact client id comparison.
+- [x] 5.4 Add generator static assertions for the new constructor, `Config()`, `UseNumber`, trailing-data token, request normalization, response decoding, `utf8.Valid`, `config.AllowBatch`, and the custom body-limit branch, including body-cap-before-middleware ordering.
+- [x] 5.5 Add a generated-module end-to-end test covering batches, absent/null ids, named params, mapped unknown fields, zero-arg params, oversize bodies, invalid UTF-8, exact ids, middleware param/id types, and default batch acceptance; run `go test ./...` in the generated module.
 - [x] 5.6 Update `go_invariants_test.go` and `go_context_test.go` for the new adapter strings.
 
 ## 6. Documentation and openspec

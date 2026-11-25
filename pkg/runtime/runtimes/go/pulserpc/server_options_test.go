@@ -395,3 +395,71 @@ func TestJSONNumberParams(t *testing.T) {
 		}
 	}
 }
+
+// The adapter keeps the top-level id as json.Number and normalizes params (and
+// nested maps, including a param literally named "id") to float64.
+func TestNormalizeRequestNumbersPreservesOnlyRequestID(t *testing.T) {
+	request := map[string]interface{}{
+		"id":     json.Number("9007199254740993"),
+		"params": []interface{}{json.Number("1"), map[string]interface{}{"id": json.Number("2")}},
+	}
+	NormalizeRequestNumbers(request)
+
+	if _, ok := request["id"].(json.Number); !ok {
+		t.Fatalf("request id = %T, want json.Number", request["id"])
+	}
+	params := request["params"].([]interface{})
+	if _, ok := params[0].(float64); !ok {
+		t.Fatalf("param[0] = %T, want float64", params[0])
+	}
+	nested := params[1].(map[string]interface{})
+	if _, ok := nested["id"].(float64); !ok {
+		t.Fatalf("nested id = %T, want float64", nested["id"])
+	}
+
+	batch := []interface{}{map[string]interface{}{"id": json.Number("3"), "params": []interface{}{json.Number("4")}}}
+	NormalizeRequestNumbers(batch)
+	member := batch[0].(map[string]interface{})
+	if _, ok := member["id"].(json.Number); !ok {
+		t.Fatalf("batch member id = %T, want json.Number", member["id"])
+	}
+	if _, ok := member["params"].([]interface{})[0].(float64); !ok {
+		t.Fatalf("batch param = %T, want float64", member["params"].([]interface{})[0])
+	}
+}
+
+// Client responses keep an exact id while result/error numbers retain the
+// v0.4.0 float64 shape.
+func TestDecodeResponsePreservesIDAndNormalizesResult(t *testing.T) {
+	response, err := DecodeResponse([]byte(`{"jsonrpc":"2.0","id":9007199254740993,"result":{"n":9007199254740993}}`))
+	if err != nil {
+		t.Fatalf("DecodeResponse: %v", err)
+	}
+	if _, ok := response["id"].(json.Number); !ok {
+		t.Fatalf("id = %T, want json.Number", response["id"])
+	}
+	n := response["result"].(map[string]interface{})["n"]
+	if _, ok := n.(float64); !ok {
+		t.Fatalf("result number = %T, want float64", n)
+	}
+	if _, err := DecodeResponse([]byte("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}\n")); err != nil {
+		t.Fatalf("DecodeResponse rejected trailing whitespace: %v", err)
+	}
+	if _, err := DecodeResponse([]byte(`{"jsonrpc":"2.0","id":1} {"jsonrpc":"2.0","id":2}`)); err == nil {
+		t.Fatal("DecodeResponse accepted trailing data")
+	}
+}
+
+// Large integer ids compare exactly across the runtime's uint64 request ids and
+// json.Number echoes, while mixed float64 pairs keep their legacy behavior.
+func TestExactNumericIDComparison(t *testing.T) {
+	if !idsEqual(uint64(9007199254740993), json.Number("9007199254740993")) {
+		t.Error("uint64/json.Number large ids did not compare equal")
+	}
+	if idsEqual(uint64(9007199254740993), json.Number("9007199254740992")) {
+		t.Error("distinct large ids compared equal")
+	}
+	if !idsEqual(7, 7.0) || !idsEqual(json.Number("7.1"), 7.1) {
+		t.Error("mixed numeric id comparisons no longer match v0.4.0 behavior")
+	}
+}

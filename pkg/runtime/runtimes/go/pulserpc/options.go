@@ -27,15 +27,18 @@ const (
 )
 
 // ServerConfig controls the JSON-RPC policy enforced by the Go runtime server
-// and the generated HTTP adapter.
+// and the generated HTTP adapter. Batching and body limits are HTTP-adapter
+// concerns; the remaining fields are enforced by the runtime dispatcher.
 //
 // The zero value is intentionally strict about batching: AllowBatch is false
 // and MaxRequestBodyBytes is 0, meaning the legacy 1 MiB default and legacy
 // oversize error. Callers should start from DefaultServerConfig() (or set every
 // field explicitly) so the defaults are the lenient v0.4.0 behavior.
 type ServerConfig struct {
-	// AllowBatch accepts a JSON array request body. When false, batch bodies
-	// are rejected with -32600 before dispatch.
+	// AllowBatch accepts a JSON array request body. When false, the generated
+	// HTTP adapter rejects batch bodies with -32600 before dispatch. The
+	// programmatic Server.Call API handles one request at a time and therefore
+	// does not read this field.
 	AllowBatch bool
 	// RequireNonNullID rejects requests with an absent or null id with -32600.
 	// Such requests are notifications by default and receive no response.
@@ -47,7 +50,7 @@ type ServerConfig struct {
 	// 1 MiB cap and the legacy -32600 "Request body too large" response; a
 	// positive value uses that cap and reports oversize bodies as
 	// -32700 "Parse error".
-	MaxRequestBodyBytes int
+	MaxRequestBodyBytes int64
 	// RejectInvalidUTF8 rejects a body that is not valid UTF-8 with
 	// -32700 "Parse error". When false, encoding/json replaces invalid bytes
 	// with U+FFFD, matching v0.4.0.

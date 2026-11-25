@@ -43,8 +43,9 @@ func TestGoGeneratedServerOptionsSource(t *testing.T) {
 		"http.MaxBytesReader(w, r.Body, bodyLimit)",
 		"if config.RejectInvalidUTF8 && !utf8.Valid(body) {",
 		"decoder.UseNumber()",
-		"decoder.Decode(&trailing)",
-		"if !config.AllowBatch {",
+		"decoder.Token()",
+		"pulserpc.NormalizeRequestNumbers(requestData)",
+		"isBatch && !config.AllowBatch",
 		`"bytes"`,
 		`"unicode/utf8"`,
 	} {
@@ -58,6 +59,11 @@ func TestGoGeneratedServerOptionsSource(t *testing.T) {
 	if maxBytes < 0 || middlewareLoop < 0 || maxBytes > middlewareLoop {
 		t.Errorf("body cap is not installed before HTTP middleware (maxBytes=%d, middleware=%d)", maxBytes, middlewareLoop)
 	}
+
+	client := generatedGoClient(t, "namespace opt\ninterface Svc { ping() string }\n")
+	if !strings.Contains(client, "pulserpc.DecodeResponse(jsonDataResp)") {
+		t.Error("generated client does not decode responses with the exact-id helper")
+	}
 }
 
 const optionsE2ETestFile = `package opt
@@ -66,6 +72,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -222,6 +229,38 @@ func TestGeneratedServerOptionsEndToEnd(t *testing.T) {
 			t.Fatalf("numeric id lost precision: %s", body)
 		}
 	})
+}
+
+// Params keep the v0.4.0 float64 view for middleware and handlers; only the
+// top-level id stays json.Number so it can be echoed exactly.
+func TestGeneratedServerNormalizesParamsForMiddleware(t *testing.T) {
+	plain := NewPulseRPCServerWithConfig("0.0.0.0", 0, pulserpc.DefaultServerConfig())
+	if err := plain.Register("Svc", e2eHandler{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	var paramType, idType string
+	plain.UseRPC(func(ctx context.Context, request map[string]interface{}, response map[string]interface{}) (context.Context, map[string]interface{}, map[string]interface{}) {
+		if params, ok := request["params"].([]interface{}); ok && len(params) > 0 {
+			paramType = fmt.Sprintf("%T", params[0])
+		}
+		idType = fmt.Sprintf("%T", request["id"])
+		return ctx, request, nil
+	})
+
+	server := httptest.NewServer(plain)
+	defer server.Close()
+
+	status, body := post(t, server, []byte(` + "`" + `{"jsonrpc":"2.0","method":"Svc.add","params":[1,2],"id":1}` + "`" + `))
+	if status != http.StatusOK || !strings.Contains(string(body), ` + "`" + `"result":3` + "`" + `) {
+		t.Fatalf("call failed: status=%d body=%s", status, body)
+	}
+	if paramType != "float64" {
+		t.Fatalf("middleware param type = %s, want float64", paramType)
+	}
+	if idType != "json.Number" {
+		t.Fatalf("middleware id type = %s, want json.Number", idType)
+	}
 }
 `
 

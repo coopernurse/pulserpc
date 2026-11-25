@@ -44,30 +44,10 @@ func ValidateIntE(value interface{}, path string) []ValidationError {
 	switch v := value.(type) {
 	case int:
 		return validateInt64E(int64(v), path)
-	case int8:
-		return validateInt64E(int64(v), path)
-	case int16:
-		return validateInt64E(int64(v), path)
-	case int32:
-		return validateInt64E(int64(v), path)
 	case int64:
 		return validateInt64E(v, path)
-	case uint:
-		return validateUint64E(uint64(v), path)
-	case uint8:
-		return validateUint64E(uint64(v), path)
-	case uint16:
-		return validateUint64E(uint64(v), path)
-	case uint32:
-		return validateUint64E(uint64(v), path)
-	case uint64:
-		return validateUint64E(v, path)
-	case uintptr:
-		return validateUint64E(uint64(v), path)
 	case float64:
 		return validateFloatAsIntE(v, path)
-	case float32:
-		return validateFloatAsIntE(float64(v), path)
 	case json.Number:
 		if i, err := v.Int64(); err == nil {
 			return validateInt64E(i, path)
@@ -91,14 +71,6 @@ func validateInt64E(v int64, path string) []ValidationError {
 	return nil
 }
 
-// validateUint64E rejects negative (impossible) and out-of-range unsigned input.
-func validateUint64E(v uint64, path string) []ValidationError {
-	if v > math.MaxInt32 {
-		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 32-bit range, got %d", v)}}
-	}
-	return nil
-}
-
 // validateFloatAsIntE applies the fractional and range rules shared by float and
 // json.Number inputs for an int parameter.
 func validateFloatAsIntE(v float64, path string) []ValidationError {
@@ -116,8 +88,7 @@ func validateFloatAsIntE(v float64, path string) []ValidationError {
 
 func ValidateFloatE(value interface{}, path string) []ValidationError {
 	switch v := value.(type) {
-	case float64, float32, int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64, uintptr:
+	case float64, int:
 		return nil
 	case json.Number:
 		f, err := v.Float64()
