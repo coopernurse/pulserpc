@@ -62,6 +62,7 @@ pulserpc [flags] <idl-file>
 | `-go-module` | string | Override Go module path for pulserpc imports. Auto-detected from `go.mod` if not specified. |
 | `-inline-runtime` | bool | Place runtime files inline with generated code. Useful for playground/testing environments. |
 | `-omit-empty` | bool | Add `omitempty` to every generated Go struct field, not just optional fields. Default: `false` (optional fields only). |
+| `-preserve-empty-optional-arrays` | bool | Emit `omitzero` on optional Go slice fields so a nil slice is omitted and a non-nil empty slice serializes as `[]`. Requires Go 1.24+ for generated code. Takes precedence over `-omit-empty` for optional slices. Default: `false`. |
 
 #### Java Plugin (`java-client-server`)
 

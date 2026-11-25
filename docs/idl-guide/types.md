@@ -22,6 +22,13 @@ PulseRPC supports a rich type system for defining your service contracts.
 > TypeScript runtime validates the safe-integer range. This is a breaking change
 > from the earlier signed 32-bit `int`.
 
+A JSON number written in decimal or exponent form (`1.0`, `1e3`) is accepted
+for `int` when its value is integral. Go parses those tokens exactly and rejects
+one whose fractional part a `float64` would lose; the other runtimes validate
+the parsed number. See the
+[Go reference](../languages/go/reference.html#numeric-ids-are-exact) for the
+cross-runtime caveat.
+
 ## Arrays
 
 Ordered lists of a type:

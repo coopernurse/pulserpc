@@ -24,6 +24,9 @@ const (
 	// ParamsModePositionalOnly rejects object params with -32600. Positional
 	// params, absent params, and null params are accepted.
 	ParamsModePositionalOnly
+	// ParamsModePositionalOnlyMapped rejects object params via the parameter
+	// decode mappers. If neither mapper supplies an error, it returns -32600.
+	ParamsModePositionalOnlyMapped
 )
 
 // ServerConfig controls the JSON-RPC policy enforced by the Go runtime server
@@ -59,11 +62,24 @@ type ServerConfig struct {
 	// params, recursively through pointers, slices, arrays, maps, and embedded
 	// structs. Unknown top-level JSON-RPC envelope members are still ignored.
 	RejectUnknownRequestFields bool
+	// RequireIDLFieldNames rejects request struct keys not declared in the IDL,
+	// including Go aliases, when request contract validation is enabled.
+	// It applies to nested structs, without restricting ordinary string-keyed
+	// maps or JSON-RPC envelope members.
+	RequireIDLFieldNames bool
+	// RejectNullRequestField can reject an explicit null for an optional IDL
+	// struct field during request validation. It receives the declared struct
+	// name (including its namespace when declared) and the exact IDL field key.
+	// Omitted fields, responses, and direct Contract validation are unaffected.
+	RejectNullRequestField func(structName, fieldName string) bool
 	// MapError maps argument decode and validation failures to an RPCError.
-	// Returning nil falls back to the normal JSON-RPC error. Envelope protocol
-	// errors (invalid jsonrpc/method/id, named-param rejection) are never
-	// mapped.
+	// Returning nil falls back to the normal JSON-RPC error. Invalid
+	// jsonrpc, method, or id values are never mapped. Named-parameter
+	// rejection is mapped only in ParamsModePositionalOnlyMapped.
 	MapError func(phase ErrorPhase, err error) *RPCError
+	// MapMethodError maps the same errors as MapError and receives the
+	// incoming qualified RPC method. A nil result falls through to MapError.
+	MapMethodError func(method string, phase ErrorPhase, err error) *RPCError
 }
 
 // DefaultServerConfig returns the lenient v0.4.0 policy: batches allowed,

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -114,7 +115,8 @@ func jsonNumberFloatEqual(n json.Number, f float64) bool {
 
 // DecodeResponse parses a JSON-RPC response body. The top-level id keeps its
 // original numeric text as json.Number so large ids compare exactly; every
-// other number is normalized to float64 to preserve the v0.4.0 client view.
+// other number is normalized for the v0.4.0 client view. Values that cannot
+// round-trip through float64 stay json.Number.
 func DecodeResponse(data []byte) (map[string]interface{}, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
@@ -135,15 +137,19 @@ func DecodeResponse(data []byte) (map[string]interface{}, error) {
 }
 
 // normalizeJSONNumbers converts json.Number values to float64 recursively when
-// the integer is in the JavaScript safe-integer range. It is used for request
-// params, response results, and error data so middleware and handlers see the
-// same Go types as v0.4.0. Larger int64 values stay json.Number; converting
-// them would lose precision (and JSON float formatting can rewrite even an
-// exactly representable value such as MinInt64).
+// the value fits the v0.4.0 numeric view: integers in the JavaScript
+// safe-integer range and fractional values. Exact wide integers and
+// whole-valued decimal/exponent tokens outside that range stay json.Number so
+// int64 precision is not lost. It is used for request params, response results,
+// and error data so middleware and handlers see the same Go types as v0.4.0 for
+// ordinary values. Negative zero keeps its sign.
 func normalizeJSONNumbers(value interface{}) interface{} {
 	switch v := value.(type) {
 	case json.Number:
 		if i, err := v.Int64(); err == nil {
+			if i == 0 && strings.HasPrefix(v.String(), "-") {
+				return math.Copysign(0, -1)
+			}
 			if intFitsFloatExactly(i) {
 				return float64(i)
 			}
@@ -154,9 +160,21 @@ func normalizeJSONNumbers(value interface{}) interface{} {
 		if isIntegerFormJSONNumber(v) {
 			return v
 		}
-		if f, err := v.Float64(); err == nil {
+		// Check the exact value before trusting float parsing. A large
+		// exponent can compensate for an equally long fractional part.
+		if i, ok := exactJSONInt64(v); ok {
+			if intFitsFloatExactly(i) {
+				if i == 0 && strings.HasPrefix(v.String(), "-") {
+					return math.Copysign(0, -1)
+				}
+				return float64(i)
+			}
+			return json.Number(strconv.FormatInt(i, 10))
+		}
+		if f, err := v.Float64(); err == nil && math.Trunc(f) != f {
 			return f
 		}
+		// A fractional or out-of-range token can look integral as a float.
 		return v
 	case []interface{}:
 		for i := range v {

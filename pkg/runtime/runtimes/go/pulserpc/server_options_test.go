@@ -26,8 +26,9 @@ const optionsTestIDL = `{
 		]
 	}],
 	"structs": [
-		{"name":"OptMeta","fields":[{"name":"note","type":{"builtIn":"string"}}]},
-		{"name":"OptItem","fields":[
+		{"name":"OptBase","fields":[{"name":"label","type":{"builtIn":"string"},"optional":true}]},
+		{"name":"OptMeta","extends":"OptBase","fields":[{"name":"note","type":{"builtIn":"string"}}]},
+		{"name":"OptItem","namespace":"admin.example","fields":[
 			{"name":"name","type":{"builtIn":"string"}},
 			{"name":"count","type":{"builtIn":"int"}},
 			{"name":"meta","type":{"userDefined":"OptMeta"}},
@@ -40,7 +41,8 @@ const optionsTestIDL = `{
 }`
 
 type OptMeta struct {
-	Note string `json:"note"`
+	Note  string  `json:"note"`
+	Label *string `json:"label,omitempty"`
 }
 
 type OptItem struct {
@@ -525,6 +527,9 @@ func TestConvertJSONNumberInt64Bounds(t *testing.T) {
 		{"-9223372036854775808", math.MinInt64},
 		{"9007199254740993", 9007199254740993},
 		{"5.0", 5},
+		{"9007199254740993e0", 9007199254740993},
+		{"9223372036854775807.0", math.MaxInt64},
+		{"-92233720368547758080e-1", math.MinInt64},
 	} {
 		got := server.convertValueToType(reflect.ValueOf(json.Number(tc.text)), target)
 		if got.Kind() != reflect.Int64 || got.Int() != tc.want {
@@ -532,7 +537,7 @@ func TestConvertJSONNumberInt64Bounds(t *testing.T) {
 		}
 	}
 
-	for _, text := range []string{"9223372036854775808", "-9223372036854775809", "9223372036854775807.0"} {
+	for _, text := range []string{"9223372036854775808", "-9223372036854775809", "9223372036854775808.0", "9007199254740992.5"} {
 		got := server.convertValueToType(reflect.ValueOf(json.Number(text)), target)
 		if got.Int() != 0 {
 			t.Errorf("json.Number(%q) -> %v, want the int64 zero value", text, got.Interface())
@@ -551,5 +556,219 @@ func TestExactNumericIDComparison(t *testing.T) {
 	}
 	if !idsEqual(7, 7.0) || !idsEqual(json.Number("7.1"), 7.1) {
 		t.Error("mixed numeric id comparisons no longer match v0.4.0 behavior")
+	}
+}
+
+func TestMapMethodErrorSelectsMethodAndFallsThrough(t *testing.T) {
+	config := DefaultServerConfig()
+	config.MapMethodError = func(method string, phase ErrorPhase, err error) *RPCError {
+		if err == nil {
+			t.Fatal("expected parameter failure")
+		}
+		if method == "Opt.add" {
+			if phase == ErrorPhaseDecodeParams {
+				return NewRPCError(1001, "wrong argument shape")
+			}
+			return NewRPCError(1002, "wrong argument value")
+		}
+		if method != itemRequest(fullItemMap())["method"] {
+			t.Fatalf("unexpected mapped method %q", method)
+		}
+		return nil
+	}
+	config.MapError = func(ErrorPhase, error) *RPCError {
+		return NewRPCError(4101, "Invalid input")
+	}
+	server, _ := newOptionsServer(t, config)
+	call := func(method any, params any, id any) map[string]interface{} {
+		return server.Call(map[string]interface{}{
+			"jsonrpc": "2.0", "method": method, "params": params, "id": id,
+		})
+	}
+	for _, test := range []struct {
+		method any
+		params any
+		id     any
+		want   int
+	}{
+		{"Opt.add", []any{1}, 7, 1001},
+		{"Opt.add", []any{1, "bad"}, 7, 1002},
+		{itemRequest(fullItemMap())["method"], []any{1}, 7, 4101},
+		{"Opt.notRegistered", []any{1}, 7, -32601},
+		{"Opt.add", []any{1}, true, -32600},
+	} {
+		if got := errorCode(t, call(test.method, test.params, test.id)); got != test.want {
+			t.Errorf("method %v with params %v and ID %v: got %d, want %d", test.method, test.params, test.id, got, test.want)
+		}
+	}
+
+	config.MapMethodError = func(string, ErrorPhase, error) *RPCError { return nil }
+	config.MapError = func(ErrorPhase, error) *RPCError { return nil }
+	server, _ = newOptionsServer(t, config)
+	if got := errorCode(t, call("Opt.add", []any{1}, 7)); got != -32602 {
+		t.Errorf("both mappers declined: got %d, want -32602", got)
+	}
+
+}
+
+func TestRejectNullRequestFieldDistinguishesOmittedFromNull(t *testing.T) {
+	config := DefaultServerConfig()
+	config.RejectNullRequestField = func(structName, fieldName string) bool {
+		return structName == "admin.example.OptItem" && fieldName == "child"
+	}
+	server, _ := newOptionsServer(t, config)
+	for _, test := range []struct {
+		name  string
+		child any
+	}{
+		{"object", map[string]any{"note": "valid"}},
+		{"null", nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			item := fullItemMap()
+			item["child"] = test.child
+			response := server.Call(itemRequest(item))
+			if test.child == nil {
+				if got := errorCode(t, response); got != -32602 {
+					t.Fatalf("explicit null: got %d, want -32602", got)
+				}
+				if err := server.contract.ValidateRequest("Opt", "meta", []any{item}); err != nil {
+					t.Fatalf("direct validation used server policy: %v", err)
+				}
+			} else if response["result"] != "widget" {
+				t.Fatalf("valid object: got %#v", response)
+			}
+		})
+	}
+	item := fullItemMap()
+	delete(item, "child")
+	if response := server.Call(itemRequest(item)); response["result"] != "widget" {
+		t.Fatalf("omitted optional field: got %#v", response)
+	}
+
+	config.RejectNullRequestField = func(string, string) bool { return false }
+	other, _ := newOptionsServer(t, config)
+	item["child"] = nil
+	if response := other.Call(itemRequest(item)); response["result"] != "widget" {
+		t.Fatalf("unselected optional field: got %#v", response)
+	}
+}
+
+func TestRequireIDLFieldNamesRejectsAliasesInNestedRequests(t *testing.T) {
+	config := DefaultServerConfig()
+	config.RequireIDLFieldNames = true
+	strict, _ := newOptionsServer(t, config)
+	legacyConfig := DefaultServerConfig()
+	legacyConfig.RejectUnknownRequestFields = true
+	legacy, _ := newOptionsServer(t, legacyConfig)
+
+	item := fullItemMap()
+	item["labels"].(map[string]any)["arbitrary map key"] = map[string]any{"note": "value", "label": "inherited"}
+	if response := strict.Call(itemRequest(item)); response["result"] != "widget" {
+		t.Fatalf("canonical field and arbitrary map key should pass: %#v", response)
+	}
+
+	for _, mutate := range []func(map[string]any){
+		func(data map[string]any) { data["Name"] = "alias" },
+		func(data map[string]any) { data["meta"].(map[string]any)["Label"] = "alias" },
+		func(data map[string]any) { data["children"].([]any)[0].(map[string]any)["Note"] = "alias" },
+		func(data map[string]any) { data["labels"].(map[string]any)["k"].(map[string]any)["Label"] = "alias" },
+	} {
+		item := fullItemMap()
+		mutate(item)
+		if code := errorCode(t, strict.Call(itemRequest(item))); code != -32602 {
+			t.Fatalf("alias was not rejected: %d", code)
+		}
+		if response := legacy.Call(itemRequest(item)); response["result"] != "widget" {
+			t.Fatalf("legacy alias behavior changed: %#v", response)
+		}
+	}
+}
+
+func TestQualifiedInterfaceRegistrationKeepsWireName(t *testing.T) {
+	var idl any
+	raw := strings.Replace(optionsTestIDL, `"name": "Opt",`, `"name": "Opt", "namespace": "example.api",`, 1)
+	if err := json.Unmarshal([]byte(raw), &idl); err != nil {
+		t.Fatal(err)
+	}
+	contract := NewContract(idl)
+	if !contract.HasInterface("Opt") || !contract.HasInterface("example.api.Opt") ||
+		contract.HasInterface("other.api.Opt") || len(contract.Interfaces) != 1 {
+		t.Fatal("qualified lookup changed the declared contract")
+	}
+	server := NewServer(contract, true, true)
+	if err := server.AddHandler("example.api.Opt", &optionsHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	call := func(name string, params []any) map[string]any {
+		return server.Call(map[string]any{"jsonrpc": "2.0", "id": 17, "method": name, "params": params})
+	}
+	if response := call("example.api.Opt.ping", nil); response["result"] != "pong" || response["id"] != 17 {
+		t.Fatalf("qualified result: %#v", response)
+	}
+	if code := errorCode(t, call("Opt.ping", nil)); code != -32601 {
+		t.Fatalf("unregistered bare name: got %d, want -32601", code)
+	}
+	if code := errorCode(t, call("example.api.Opt.add", []any{"bad", 2})); code != -32602 {
+		t.Fatalf("qualified parameter validation: got %d, want -32602", code)
+	}
+}
+
+func TestQualifiedInterfaceLookupPrefersExactDeclaration(t *testing.T) {
+	var idl any
+	if err := json.Unmarshal([]byte(`{"interfaces":[
+		{"name":"Example","namespace":"app","methods":[{"name":"root"}]},
+		{"name":"app.Example","namespace":"app","methods":[{"name":"exact"}]}
+	]}`), &idl); err != nil {
+		t.Fatal(err)
+	}
+	contract := NewContract(idl)
+	if iface := contract.GetInterface("app.Example"); iface == nil || iface.GetFunction("exact") == nil {
+		t.Fatalf("expected exact declaration, got %#v", iface)
+	}
+}
+
+func TestMappedPositionalModeMapsOnlyNamedParameterRejection(t *testing.T) {
+	config := DefaultServerConfig()
+	config.ParamsMode = ParamsModePositionalOnlyMapped
+	calls := 0
+	config.MapMethodError = func(name string, phase ErrorPhase, err error) *RPCError {
+		calls++
+		if name != "Opt.add" || phase != ErrorPhaseDecodeParams || err == nil {
+			t.Fatalf("unexpected mapping arguments: %q %q %v", name, phase, err)
+		}
+		return NewRPCError(4101, "Positional arguments required")
+	}
+	server, _ := newOptionsServer(t, config)
+	request := map[string]any{
+		"jsonrpc": "2.0", "id": "stable", "method": "Opt.add",
+		"params": map[string]any{"a": 1, "b": 2},
+	}
+	response := server.Call(request)
+	if got := errorCode(t, response); got != 4101 || response["id"] != "stable" {
+		t.Fatalf("mapped rejection = %#v", response)
+	}
+	request["id"] = true
+	if got := errorCode(t, server.Call(request)); got != -32600 || calls != 1 {
+		t.Fatalf("envelope error was mapped: code=%d mapper calls=%d", got, calls)
+	}
+
+	request["id"] = "stable"
+	config.MapMethodError = nil
+	fallback, _ := newOptionsServer(t, config)
+	response = fallback.Call(request)
+	data, hasData := errorData(t, response)
+	if code := errorCode(t, response); code != -32600 || !hasData || data != "named params are not allowed" {
+		t.Fatalf("fallback = %#v", response)
+	}
+
+	config.ParamsMode = ParamsModePositionalOnly
+	config.MapError = func(ErrorPhase, error) *RPCError {
+		t.Fatal("existing positional policy unexpectedly invoked the mapper")
+		return nil
+	}
+	legacy, _ := newOptionsServer(t, config)
+	if code := errorCode(t, legacy.Call(request)); code != -32600 {
+		t.Fatalf("legacy positional code = %d", code)
 	}
 }

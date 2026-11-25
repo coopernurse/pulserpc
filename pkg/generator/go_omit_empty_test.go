@@ -13,6 +13,8 @@ const omitEmptyTestIDL = `namespace opt
 struct Item {
   required_name string
   optional_note string [optional]
+  optional_items []string [optional]
+  required_items []string
 }
 
 interface Svc {
@@ -22,7 +24,7 @@ interface Svc {
 
 // generateOmitEmptyModule runs the Go generator with the optional -omit-empty
 // flag and returns the generated namespace file.
-func generateOmitEmptyModule(t *testing.T, enabled bool) string {
+func generateOmitEmptyModule(t *testing.T, flags ...string) string {
 	t.Helper()
 	idl := parseTestIDL(t, omitEmptyTestIDL)
 	dir := t.TempDir()
@@ -36,8 +38,8 @@ func generateOmitEmptyModule(t *testing.T, enabled bool) string {
 	if err := fs.Set("package", "example.com/omitempty"); err != nil {
 		t.Fatal(err)
 	}
-	if enabled {
-		if err := fs.Set("omit-empty", "true"); err != nil {
+	for _, name := range flags {
+		if err := fs.Set(name, "true"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -53,7 +55,7 @@ func generateOmitEmptyModule(t *testing.T, enabled bool) string {
 
 // The default keeps optional-only omitempty tags.
 func TestGoOmitEmptyDefaultKeepsOptionalOnlyTags(t *testing.T) {
-	code := generateOmitEmptyModule(t, false)
+	code := generateOmitEmptyModule(t)
 	if !strings.Contains(code, "`json:\"optional_note,omitempty\"`") {
 		t.Errorf("optional field lost omitempty:\n%s", code)
 	}
@@ -67,7 +69,7 @@ func TestGoOmitEmptyDefaultKeepsOptionalOnlyTags(t *testing.T) {
 
 // -omit-empty=true adds omitempty to every generated struct field.
 func TestGoOmitEmptyAddsTagToRequiredFields(t *testing.T) {
-	code := generateOmitEmptyModule(t, true)
+	code := generateOmitEmptyModule(t, "omit-empty")
 	for _, want := range []string{
 		"`json:\"required_name,omitempty\"`",
 		"`json:\"optional_note,omitempty\"`",
@@ -90,5 +92,26 @@ func TestGoOmitEmptyFlagDefault(t *testing.T) {
 	}
 	if f.DefValue != "false" {
 		t.Errorf("omit-empty default = %q, want false", f.DefValue)
+	}
+}
+
+func TestGoPreserveEmptyOptionalArrays(t *testing.T) {
+	defaultCode := generateOmitEmptyModule(t)
+	if !strings.Contains(defaultCode, "`json:\"optional_items,omitempty\"`") {
+		t.Fatal("default changes the optional array tag")
+	}
+	code := generateOmitEmptyModule(t, "preserve-empty-optional-arrays")
+	for _, want := range []string{
+		"`json:\"optional_items,omitzero\"`",
+		"`json:\"optional_note,omitempty\"`",
+		"`json:\"required_items\"`",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("preserve-empty mode missing %q:\n%s", want, code)
+		}
+	}
+	code = generateOmitEmptyModule(t, "preserve-empty-optional-arrays", "omit-empty")
+	if !strings.Contains(code, "`json:\"optional_items,omitzero\"`") || !strings.Contains(code, "`json:\"required_items,omitempty\"`") {
+		t.Fatalf("flags should compose:\n%s", code)
 	}
 }

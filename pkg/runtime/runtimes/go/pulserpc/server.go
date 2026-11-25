@@ -81,11 +81,13 @@ func (s *Server) rejectNullID(reqID interface{}) map[string]interface{} {
 	return nil
 }
 
-// NormalizeRequestNumbers converts numbers inside a decoded request to
-// float64, matching the pre-UseNumber middleware and handler view, while
-// preserving the top-level request id as json.Number so it can be echoed
-// exactly. Generated HTTP adapters call it after decoding the body. Batch
-// arrays are walked member by member, so each member's id is preserved.
+// NormalizeRequestNumbers normalizes numbers inside a decoded request for the
+// v0.4.0 middleware and handler view, while preserving the top-level request id
+// as json.Number so it can be echoed exactly. Integers outside the JavaScript
+// safe-integer range and whole-valued decimal/exponent tokens that cannot
+// round-trip through float64 stay json.Number. Generated HTTP adapters call it
+// after decoding the body. Batch arrays are walked member by member, so each
+// member's id is preserved.
 func NormalizeRequestNumbers(request interface{}) {
 	switch r := request.(type) {
 	case map[string]interface{}:
@@ -111,11 +113,14 @@ type paramError struct {
 
 func (e *paramError) Error() string { return e.err.Error() }
 
-// paramErrorResponse converts a params decode/validation failure into a
-// JSON-RPC error response. A configured MapError wins; a nil return falls back
-// to the pre-options behavior: RPCError passthrough, otherwise -32602 with the
-// error text as data.
-func (s *Server) paramErrorResponse(isNotification bool, reqID interface{}, phase ErrorPhase, err error) map[string]interface{} {
+// paramErrorResponse tries the method-aware mapper before MapError. If neither
+// maps the failure, pass through an RPCError or return -32602 with error data.
+func (s *Server) paramErrorResponse(isNotification bool, reqID interface{}, method string, phase ErrorPhase, err error) map[string]interface{} {
+	if s.config.MapMethodError != nil {
+		if mapped := s.config.MapMethodError(method, phase, err); mapped != nil {
+			return s.respondError(isNotification, reqID, mapped.Code, mapped.Message, mapped.Data)
+		}
+	}
 	if s.config.MapError != nil {
 		if mapped := s.config.MapError(phase, err); mapped != nil {
 			return s.respondError(isNotification, reqID, mapped.Code, mapped.Message, mapped.Data)
@@ -410,20 +415,22 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 	case []interface{}:
 		positionalParams = p
 	case map[string]interface{}:
-		// Named params are an envelope-level protocol shape decision, so they
-		// are never routed through MapError.
-		if s.config.ParamsMode == ParamsModePositionalOnly {
+		switch s.config.ParamsMode {
+		case ParamsModePositionalOnly:
 			return s.respondError(isNotification, reqID, -32600, "Invalid Request",
 				"named params are not allowed")
+		case ParamsModePositionalOnlyMapped:
+			return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams,
+				NewRPCErrorWithData(-32600, "Invalid Request", "named params are not allowed"))
 		}
 		positionalParams, err = s.namedParamsToPositional(p, fnDef)
 		if err != nil {
-			return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams, err)
+			return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams, err)
 		}
 	case nil:
 		positionalParams = []interface{}{}
 	default:
-		return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams,
+		return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams,
 			fmt.Errorf("params must be an array or an object"))
 	}
 
@@ -433,7 +440,7 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 	if fnDef != nil {
 		paramDefs, _ := fnDef["parameters"].([]interface{})
 		if len(positionalParams) != len(paramDefs) {
-			return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams,
+			return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams,
 				fmt.Errorf("function '%s.%s' expects %d param(s), %d given",
 					ifaceName, funcName, len(paramDefs), len(positionalParams)))
 		}
@@ -441,15 +448,19 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 
 	// Validate request using positional params
 	if s.validateRequests && s.contract != nil {
-		if err := s.contract.ValidateRequest(ifaceName, funcName, positionalParams); err != nil {
-			return s.paramErrorResponse(isNotification, reqID, ErrorPhaseValidateParams, err)
+		policy := requestFieldPolicy{
+			requireIDLNames: s.config.RequireIDLFieldNames,
+			rejectNull:      s.config.RejectNullRequestField,
+		}
+		if err := s.contract.validateRequest(ifaceName, funcName, positionalParams, policy); err != nil {
+			return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseValidateParams, err)
 		}
 	}
 
 	// Convert positional params to named params using IDL signature
 	namedParams, err := s.positionalToNamedParams(ifaceName, funcName, positionalParams)
 	if err != nil {
-		return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams, err)
+		return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams, err)
 	}
 
 	// Invoke handler method with the reflect.Value resolved above.
@@ -458,7 +469,7 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 		// Parameter decode failures (unknown request fields) carry their phase
 		// so MapError can see them.
 		if pe, ok := err.(*paramError); ok {
-			return s.paramErrorResponse(isNotification, reqID, pe.phase, pe.err)
+			return s.paramErrorResponse(isNotification, reqID, method, pe.phase, pe.err)
 		}
 		// Check if it's an RPCError
 		if rpcErr, ok := err.(*RPCError); ok {
@@ -1106,28 +1117,19 @@ func (s *Server) convertMapToStruct(mapValue reflect.Value, structType reflect.T
 // caller's existing fallback behavior intact.
 func convertJSONNumber(num json.Number, targetType reflect.Type) (reflect.Value, bool) {
 	switch targetType.Kind() {
+	case reflect.Pointer:
+		value, ok := convertJSONNumber(num, targetType.Elem())
+		if !ok {
+			return reflect.Value{}, false
+		}
+		ptr := reflect.New(targetType.Elem())
+		ptr.Elem().Set(value)
+		return ptr, true
+
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		var i int64
-		if parsed, err := num.Int64(); err == nil {
-			i = parsed
-		} else {
-			// An integer-form number that does not fit int64 is out of range.
-			// Parsing it as a float could round it back into range.
-			if isIntegerFormJSONNumber(num) {
-				return reflect.Value{}, false
-			}
-			// Accept whole-valued decimals such as "5.0".
-			f, ferr := num.Float64()
-			if ferr != nil {
-				return reflect.Value{}, false
-			}
-			if f < minInt64AsFloat || f >= maxInt64FloatExclusive {
-				return reflect.Value{}, false
-			}
-			i = int64(f)
-			if float64(i) != f {
-				return reflect.Value{}, false
-			}
+		i, ok := exactJSONInt64(num)
+		if !ok {
+			return reflect.Value{}, false
 		}
 		converted := reflect.New(targetType).Elem()
 		if converted.OverflowInt(i) {

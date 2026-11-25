@@ -62,9 +62,15 @@ runtimes support the full range. For a `float64` input, the representable
 integer bounds are `[-2^63, 2^63)`: `2^63` is exactly the `float64` rounding of
 `9223372036854775807` and must be rejected, while `-2^63` is exact and valid.
 This is a documented breaking change from the earlier signed 32-bit `int`
-behavior. `float` is not affected by this rule: it is an IEEE-754 double, and
-runtime validation accepts any number, including `NaN` and `±Infinity` (a JSON
-parser can produce them even though they are not standard JSON literals).
+behavior. A JSON number token written with a decimal point or exponent is
+accepted when its represented value is an integer. Go parses those tokens
+exactly and rejects a token whose fractional part a `float64` would lose, such
+as `9007199254740992.5`. Runtimes that validate a native floating-point value
+(Java, C#, Python, TypeScript) validate the parsed number instead, so that
+token rounds to `9007199254740992` and is accepted there. `float` is not
+affected by this rule: it is an IEEE-754 double, and runtime validation accepts
+any number, including `NaN` and `±Infinity` (a JSON parser can produce them even
+though they are not standard JSON literals).
 
 **D2 — `id` is a string, number, or null.** Servers reject boolean, object, and
 array ids with `-32600`. Numeric ids are compared by value. An absent or

@@ -1,6 +1,7 @@
 package pulserpc
 
 import (
+	"bytes"
 	"encoding"
 	"encoding/json"
 	"fmt"
@@ -31,6 +32,8 @@ type Contract struct {
 	// once here and reused by all validation/FindStruct/FindEnum calls so type
 	// resolution stays O(1) instead of scanning the whole map per lookup.
 	resolver *typeResolver
+
+	qualifiedInterfaces map[string]*Interface
 }
 
 // NewContract creates a new Contract from parsed IDL data
@@ -66,6 +69,12 @@ func NewContract(idlParsed interface{}) *Contract {
 						}
 					}
 					c.Interfaces[iface.Name] = iface
+					if namespace, _ := ifaceDict["namespace"].(string); namespace != "" && !strings.Contains(iface.Name, ".") {
+						if c.qualifiedInterfaces == nil {
+							c.qualifiedInterfaces = make(map[string]*Interface)
+						}
+						c.qualifiedInterfaces[namespace+"."+iface.Name] = iface
+					}
 				}
 			}
 		}
@@ -152,17 +161,16 @@ func LoadContractFromFile(path string) (*Contract, error) {
 
 // HasInterface checks if an interface exists in the contract
 func (c *Contract) HasInterface(ifaceName string) bool {
-	_, ok := c.Interfaces[ifaceName]
-	return ok
+	return c.GetInterface(ifaceName) != nil
 }
 
-// GetInterface returns an interface by name, or nil if not found
+// GetInterface returns an interface by declared name or qualified IDL name.
+// An exact declared name takes precedence over a derived qualified name.
 func (c *Contract) GetInterface(ifaceName string) *Interface {
-	iface, ok := c.Interfaces[ifaceName]
-	if !ok {
-		return nil
+	if iface := c.Interfaces[ifaceName]; iface != nil {
+		return iface
 	}
-	return iface
+	return c.qualifiedInterfaces[ifaceName]
 }
 
 // GetFunction returns a function definition from an interface
@@ -209,6 +217,10 @@ func (c *Contract) FindEnum(enumName string) EnumDef {
 
 // ValidateRequest validates request parameters against the IDL
 func (c *Contract) ValidateRequest(ifaceName string, funcName string, params []interface{}) error {
+	return c.validateRequest(ifaceName, funcName, params, requestFieldPolicy{})
+}
+
+func (c *Contract) validateRequest(ifaceName string, funcName string, params []interface{}, policy requestFieldPolicy) error {
 	iface := c.GetInterface(ifaceName)
 	if iface == nil {
 		return fmt.Errorf("unknown interface: '%s'", ifaceName)
@@ -249,7 +261,7 @@ func (c *Contract) ValidateRequest(ifaceName string, funcName string, params []i
 			isOptional = opt
 		}
 
-		errs := validateTypeE(paramValue, paramType, c.typeResolver(), isOptional, fmt.Sprintf("param[%d]", i))
+		errs := validateTypeE(paramValue, paramType, c.typeResolver(), isOptional, fmt.Sprintf("param[%d]", i), policy)
 		allErrors = append(allErrors, errs...)
 	}
 
@@ -306,7 +318,7 @@ func (c *Contract) ValidateResponse(ifaceName string, funcName string, result in
 		isOptional = opt
 	}
 
-	errs := validateTypeE(result, returnType, c.typeResolver(), isOptional, "")
+	errs := validateTypeE(result, returnType, c.typeResolver(), isOptional, "", requestFieldPolicy{})
 	if len(errs) > 0 {
 		vr := NewValidationResult(errs)
 		return NewRPCErrorWithData(-32603, fmt.Sprintf("function '%s.%s' invalid response", ifaceName, funcName), vr.ToMap())
@@ -434,9 +446,12 @@ func structViaJSON(value interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("failed to marshal struct to JSON: %w", err)
 	}
 	var result map[string]interface{}
-	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(jsonBytes))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON to map: %w", err)
 	}
+	normalizeJSONNumbers(result)
 	return result, nil
 }
 
@@ -448,10 +463,12 @@ func jsonRoundTrip(value interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("failed to marshal struct to JSON: %w", err)
 	}
 	var result interface{}
-	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(jsonBytes))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON to map: %w", err)
 	}
-	return result, nil
+	return normalizeJSONNumbers(result), nil
 }
 
 // canConvertStructByReflection reports whether a struct type can be walked
