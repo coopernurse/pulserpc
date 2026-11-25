@@ -300,6 +300,12 @@ integers. Upgrade client and server runtimes together, and note that a server
 which still rounds a large id will now fail the client's envelope check instead
 of silently accepting a mismatched id.
 
+For Go IDL integer fields, decimal and exponent spellings are accepted when
+their exact numeric value is an integer in the signed 64-bit range. The adapter
+rejects fractional values even when a float64 conversion would round to an
+integer. These rules apply to optional pointer fields as well.
+
+
 > **JavaScript/TypeScript cannot use the full `int` range.** The JavaScript
 > `number` type represents integers exactly only up to 2^53-1
 > (`9007199254740991`). A TypeScript client or server therefore validates

@@ -525,6 +525,9 @@ func TestConvertJSONNumberInt64Bounds(t *testing.T) {
 		{"-9223372036854775808", math.MinInt64},
 		{"9007199254740993", 9007199254740993},
 		{"5.0", 5},
+		{"9007199254740993e0", 9007199254740993},
+		{"9223372036854775807.0", math.MaxInt64},
+		{"-92233720368547758080e-1", math.MinInt64},
 	} {
 		got := server.convertValueToType(reflect.ValueOf(json.Number(tc.text)), target)
 		if got.Kind() != reflect.Int64 || got.Int() != tc.want {
@@ -532,7 +535,7 @@ func TestConvertJSONNumberInt64Bounds(t *testing.T) {
 		}
 	}
 
-	for _, text := range []string{"9223372036854775808", "-9223372036854775809", "9223372036854775807.0"} {
+	for _, text := range []string{"9223372036854775808", "-9223372036854775809", "9223372036854775808.0", "9007199254740992.5"} {
 		got := server.convertValueToType(reflect.ValueOf(json.Number(text)), target)
 		if got.Int() != 0 {
 			t.Errorf("json.Number(%q) -> %v, want the int64 zero value", text, got.Interface())

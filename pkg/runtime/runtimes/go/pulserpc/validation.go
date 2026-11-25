@@ -50,19 +50,10 @@ func ValidateIntE(value interface{}, path string) []ValidationError {
 	case float64:
 		return validateFloatAsIntE(v, path)
 	case json.Number:
-		if _, err := v.Int64(); err == nil {
+		if _, ok := exactJSONInt64(v); ok {
 			return nil
 		}
-		// An integer-form number that does not fit int64 is out of range.
-		// Do not let the float64 fallback round it back into range.
-		if isIntegerFormJSONNumber(v) {
-			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 64-bit range, got %s", v.String())}}
-		}
-		f, err := v.Float64()
-		if err != nil {
-			return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got non-numeric value %q", v.String())}}
-		}
-		return validateFloatAsIntE(f, path)
+		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int in signed 64-bit range, got %s", v)}}
 	default:
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got %T", value)}}
 	}
@@ -94,8 +85,7 @@ func isIntegerFormJSONNumber(n json.Number) bool {
 	return !strings.ContainsAny(n.String(), ".eE")
 }
 
-// validateFloatAsIntE applies the fractional and range rules shared by float and
-// json.Number inputs for an int parameter.
+// validateFloatAsIntE checks values already represented as floats.
 func validateFloatAsIntE(v float64, path string) []ValidationError {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return []ValidationError{{Path: path, Message: fmt.Sprintf("expected int, got non-finite float %v", v)}}

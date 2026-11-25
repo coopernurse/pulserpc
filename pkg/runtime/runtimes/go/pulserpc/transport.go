@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -154,9 +155,21 @@ func normalizeJSONNumbers(value interface{}) interface{} {
 		if isIntegerFormJSONNumber(v) {
 			return v
 		}
-		if f, err := v.Float64(); err == nil {
+		// Check the exact value before trusting float parsing. A large
+		// exponent can compensate for an equally long fractional part.
+		if i, ok := exactJSONInt64(v); ok {
+			if intFitsFloatExactly(i) {
+				if i == 0 && strings.HasPrefix(v.String(), "-") {
+					return math.Copysign(0, -1)
+				}
+				return float64(i)
+			}
+			return json.Number(strconv.FormatInt(i, 10))
+		}
+		if f, err := v.Float64(); err == nil && math.Trunc(f) != f {
 			return f
 		}
+		// A fractional or out-of-range token can look integral as a float.
 		return v
 	case []interface{}:
 		for i := range v {

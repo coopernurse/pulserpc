@@ -1106,28 +1106,19 @@ func (s *Server) convertMapToStruct(mapValue reflect.Value, structType reflect.T
 // caller's existing fallback behavior intact.
 func convertJSONNumber(num json.Number, targetType reflect.Type) (reflect.Value, bool) {
 	switch targetType.Kind() {
+	case reflect.Pointer:
+		value, ok := convertJSONNumber(num, targetType.Elem())
+		if !ok {
+			return reflect.Value{}, false
+		}
+		ptr := reflect.New(targetType.Elem())
+		ptr.Elem().Set(value)
+		return ptr, true
+
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		var i int64
-		if parsed, err := num.Int64(); err == nil {
-			i = parsed
-		} else {
-			// An integer-form number that does not fit int64 is out of range.
-			// Parsing it as a float could round it back into range.
-			if isIntegerFormJSONNumber(num) {
-				return reflect.Value{}, false
-			}
-			// Accept whole-valued decimals such as "5.0".
-			f, ferr := num.Float64()
-			if ferr != nil {
-				return reflect.Value{}, false
-			}
-			if f < minInt64AsFloat || f >= maxInt64FloatExclusive {
-				return reflect.Value{}, false
-			}
-			i = int64(f)
-			if float64(i) != f {
-				return reflect.Value{}, false
-			}
+		i, ok := exactJSONInt64(num)
+		if !ok {
+			return reflect.Value{}, false
 		}
 		converted := reflect.New(targetType).Elem()
 		if converted.OverflowInt(i) {
