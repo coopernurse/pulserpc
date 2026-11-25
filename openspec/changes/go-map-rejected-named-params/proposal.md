@@ -14,4 +14,4 @@ Add an opt-in positional-only mode that lets parameter error mappers handle reje
 
 ## Impact
 
-Default and existing positional-only modes are unchanged. The new mode keeps the standard response when no mapper handles the error.
+Default and existing positional-only modes are unchanged. The new mode keeps the standard response when no mapper handles the error. This change MODIFIES a `go-server-options` requirement introduced by `add-go-server-options`, so archive that change first.
