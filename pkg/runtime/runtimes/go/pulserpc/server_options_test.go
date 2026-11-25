@@ -556,3 +556,55 @@ func TestExactNumericIDComparison(t *testing.T) {
 		t.Error("mixed numeric id comparisons no longer match v0.4.0 behavior")
 	}
 }
+
+func TestMapMethodErrorSelectsMethodAndFallsThrough(t *testing.T) {
+	config := DefaultServerConfig()
+	config.MapMethodError = func(method string, phase ErrorPhase, err error) *RPCError {
+		if err == nil {
+			t.Fatal("expected parameter failure")
+		}
+		if method == "Opt.add" {
+			if phase == ErrorPhaseDecodeParams {
+				return NewRPCError(1001, "wrong argument shape")
+			}
+			return NewRPCError(1002, "wrong argument value")
+		}
+		if method != itemRequest(fullItemMap())["method"] {
+			t.Fatalf("unexpected mapped method %q", method)
+		}
+		return nil
+	}
+	config.MapError = func(ErrorPhase, error) *RPCError {
+		return NewRPCError(4101, "Invalid input")
+	}
+	server, _ := newOptionsServer(t, config)
+	call := func(method any, params any, id any) map[string]interface{} {
+		return server.Call(map[string]interface{}{
+			"jsonrpc": "2.0", "method": method, "params": params, "id": id,
+		})
+	}
+	for _, test := range []struct {
+		method any
+		params any
+		id     any
+		want   int
+	}{
+		{"Opt.add", []any{1}, 7, 1001},
+		{"Opt.add", []any{1, "bad"}, 7, 1002},
+		{itemRequest(fullItemMap())["method"], []any{1}, 7, 4101},
+		{"Opt.notRegistered", []any{1}, 7, -32601},
+		{"Opt.add", []any{1}, true, -32600},
+	} {
+		if got := errorCode(t, call(test.method, test.params, test.id)); got != test.want {
+			t.Errorf("method %v with params %v and ID %v: got %d, want %d", test.method, test.params, test.id, got, test.want)
+		}
+	}
+
+	config.MapMethodError = func(string, ErrorPhase, error) *RPCError { return nil }
+	config.MapError = func(ErrorPhase, error) *RPCError { return nil }
+	server, _ = newOptionsServer(t, config)
+	if got := errorCode(t, call("Opt.add", []any{1}, 7)); got != -32602 {
+		t.Errorf("both mappers declined: got %d, want -32602", got)
+	}
+
+}

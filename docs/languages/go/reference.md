@@ -242,7 +242,7 @@ keeps the v0.4.0 behavior.
 
 `AllowBatch`, `MaxRequestBodyBytes`, and `RejectInvalidUTF8` are enforced by the
 generated HTTP adapter. `RequireNonNullID`, `ParamsMode`,
-`RejectUnknownRequestFields`, and `MapError` are enforced by the runtime
+`RejectUnknownRequestFields`, `MapError`, and `MapMethodError` are enforced by the runtime
 dispatcher, so they also apply to programmatic `Call`/`CallWithContext` users.
 
 Regenerate the Go server with the matching PulseRPC release. Generated servers
@@ -259,6 +259,7 @@ copied `pulserpc` runtime must be upgraded together; `NewPulseRPCServer` and
 | `RejectInvalidUTF8` | `false` | `true` rejects a body that is not valid UTF-8 with `-32700` `"Parse error"`. The default lets `encoding/json` replace invalid bytes with U+FFFD. |
 | `RejectUnknownRequestFields` | `false` | `true` rejects unknown keys in struct-typed request params with `-32602` (or the mapped error). Detection recurses through pointers, slices, arrays, maps, and embedded structs, and honors `json` tags and `json:"-"`. Unknown top-level JSON-RPC envelope members are still ignored. |
 | `MapError` | `nil` | Maps argument decode and validation failures to the returned `*RPCError`. Return `nil` to fall back to the standard response. |
+| `MapMethodError` | `nil` | Maps the same failures with the qualified RPC method available. Return `nil` to fall through to `MapError`, then to the standard response. |
 
 ### Parameter error phases
 

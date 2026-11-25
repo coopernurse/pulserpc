@@ -111,11 +111,14 @@ type paramError struct {
 
 func (e *paramError) Error() string { return e.err.Error() }
 
-// paramErrorResponse converts a params decode/validation failure into a
-// JSON-RPC error response. A configured MapError wins; a nil return falls back
-// to the pre-options behavior: RPCError passthrough, otherwise -32602 with the
-// error text as data.
-func (s *Server) paramErrorResponse(isNotification bool, reqID interface{}, phase ErrorPhase, err error) map[string]interface{} {
+// paramErrorResponse tries the method-aware mapper before MapError. If neither
+// maps the failure, pass through an RPCError or return -32602 with error data.
+func (s *Server) paramErrorResponse(isNotification bool, reqID interface{}, method string, phase ErrorPhase, err error) map[string]interface{} {
+	if s.config.MapMethodError != nil {
+		if mapped := s.config.MapMethodError(method, phase, err); mapped != nil {
+			return s.respondError(isNotification, reqID, mapped.Code, mapped.Message, mapped.Data)
+		}
+	}
 	if s.config.MapError != nil {
 		if mapped := s.config.MapError(phase, err); mapped != nil {
 			return s.respondError(isNotification, reqID, mapped.Code, mapped.Message, mapped.Data)
@@ -418,12 +421,12 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 		}
 		positionalParams, err = s.namedParamsToPositional(p, fnDef)
 		if err != nil {
-			return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams, err)
+			return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams, err)
 		}
 	case nil:
 		positionalParams = []interface{}{}
 	default:
-		return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams,
+		return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams,
 			fmt.Errorf("params must be an array or an object"))
 	}
 
@@ -433,7 +436,7 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 	if fnDef != nil {
 		paramDefs, _ := fnDef["parameters"].([]interface{})
 		if len(positionalParams) != len(paramDefs) {
-			return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams,
+			return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams,
 				fmt.Errorf("function '%s.%s' expects %d param(s), %d given",
 					ifaceName, funcName, len(paramDefs), len(positionalParams)))
 		}
@@ -442,14 +445,14 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 	// Validate request using positional params
 	if s.validateRequests && s.contract != nil {
 		if err := s.contract.ValidateRequest(ifaceName, funcName, positionalParams); err != nil {
-			return s.paramErrorResponse(isNotification, reqID, ErrorPhaseValidateParams, err)
+			return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseValidateParams, err)
 		}
 	}
 
 	// Convert positional params to named params using IDL signature
 	namedParams, err := s.positionalToNamedParams(ifaceName, funcName, positionalParams)
 	if err != nil {
-		return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams, err)
+		return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseDecodeParams, err)
 	}
 
 	// Invoke handler method with the reflect.Value resolved above.
@@ -458,7 +461,7 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 		// Parameter decode failures (unknown request fields) carry their phase
 		// so MapError can see them.
 		if pe, ok := err.(*paramError); ok {
-			return s.paramErrorResponse(isNotification, reqID, pe.phase, pe.err)
+			return s.paramErrorResponse(isNotification, reqID, method, pe.phase, pe.err)
 		}
 		// Check if it's an RPCError
 		if rpcErr, ok := err.(*RPCError); ok {

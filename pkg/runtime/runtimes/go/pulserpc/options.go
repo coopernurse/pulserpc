@@ -64,6 +64,9 @@ type ServerConfig struct {
 	// errors (invalid jsonrpc/method/id, named-param rejection) are never
 	// mapped.
 	MapError func(phase ErrorPhase, err error) *RPCError
+	// MapMethodError maps the same errors as MapError and receives the
+	// incoming qualified RPC method. A nil result falls through to MapError.
+	MapMethodError func(method string, phase ErrorPhase, err error) *RPCError
 }
 
 // DefaultServerConfig returns the lenient v0.4.0 policy: batches allowed,
