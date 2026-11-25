@@ -877,6 +877,10 @@ func (s *Server) convertValueToType(value reflect.Value, targetType reflect.Type
 		if converted, ok := convertJSONNumber(num, targetType); ok {
 			return converted
 		}
+		// A JSON number must not fall through to the generic ConvertibleTo
+		// path: json.Number has string kind, so a number could otherwise
+		// silently populate a string field. Use the target's zero value.
+		return reflect.Zero(targetType)
 	}
 
 	// Handle nil pointer inputs

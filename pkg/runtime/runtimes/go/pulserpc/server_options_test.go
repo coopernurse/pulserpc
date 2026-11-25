@@ -3,6 +3,7 @@ package pulserpc
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -455,6 +456,16 @@ func TestDecodeResponsePreservesIDAndNormalizesResult(t *testing.T) {
 	}
 	if _, err := DecodeResponse([]byte(`{"jsonrpc":"2.0","id":1} {"jsonrpc":"2.0","id":2}`)); err == nil {
 		t.Fatal("DecodeResponse accepted trailing data")
+	}
+}
+
+// json.Number has string kind; conversion must not silently turn a JSON number
+// into a string.
+func TestJSONNumberDoesNotConvertToString(t *testing.T) {
+	server := &Server{}
+	converted := server.convertValueToType(reflect.ValueOf(json.Number("123")), reflect.TypeOf(""))
+	if converted.Kind() != reflect.String || converted.String() != "" {
+		t.Fatalf("json.Number -> string = %#v, want empty string", converted.Interface())
 	}
 }
 
