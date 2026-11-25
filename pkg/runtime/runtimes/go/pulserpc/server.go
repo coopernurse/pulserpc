@@ -444,7 +444,11 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 
 	// Validate request using positional params
 	if s.validateRequests && s.contract != nil {
-		if err := s.contract.validateRequest(ifaceName, funcName, positionalParams, s.config.RejectNullRequestField); err != nil {
+		policy := requestFieldPolicy{
+			requireIDLNames: s.config.RequireIDLFieldNames,
+			rejectNull:      s.config.RejectNullRequestField,
+		}
+		if err := s.contract.validateRequest(ifaceName, funcName, positionalParams, policy); err != nil {
 			return s.paramErrorResponse(isNotification, reqID, method, ErrorPhaseValidateParams, err)
 		}
 	}

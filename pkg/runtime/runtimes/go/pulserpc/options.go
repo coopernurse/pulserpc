@@ -59,6 +59,11 @@ type ServerConfig struct {
 	// params, recursively through pointers, slices, arrays, maps, and embedded
 	// structs. Unknown top-level JSON-RPC envelope members are still ignored.
 	RejectUnknownRequestFields bool
+	// RequireIDLFieldNames rejects request struct keys not declared in the IDL,
+	// including Go aliases, when request contract validation is enabled.
+	// It applies to nested structs, without restricting ordinary string-keyed
+	// maps or JSON-RPC envelope members.
+	RequireIDLFieldNames bool
 	// RejectNullRequestField can reject an explicit null for an optional IDL
 	// struct field during request validation. It receives the declared struct
 	// name (including its namespace when declared) and the exact IDL field key.

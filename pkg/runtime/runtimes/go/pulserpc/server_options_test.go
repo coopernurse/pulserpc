@@ -26,7 +26,8 @@ const optionsTestIDL = `{
 		]
 	}],
 	"structs": [
-		{"name":"OptMeta","fields":[{"name":"note","type":{"builtIn":"string"}}]},
+		{"name":"OptBase","fields":[{"name":"label","type":{"builtIn":"string"},"optional":true}]},
+		{"name":"OptMeta","extends":"OptBase","fields":[{"name":"note","type":{"builtIn":"string"}}]},
 		{"name":"OptItem","namespace":"admin.example","fields":[
 			{"name":"name","type":{"builtIn":"string"}},
 			{"name":"count","type":{"builtIn":"int"}},
@@ -40,7 +41,8 @@ const optionsTestIDL = `{
 }`
 
 type OptMeta struct {
-	Note string `json:"note"`
+	Note  string  `json:"note"`
+	Label *string `json:"label,omitempty"`
 }
 
 type OptItem struct {
@@ -649,5 +651,36 @@ func TestRejectNullRequestFieldDistinguishesOmittedFromNull(t *testing.T) {
 	item["child"] = nil
 	if response := other.Call(itemRequest(item)); response["result"] != "widget" {
 		t.Fatalf("unselected optional field: got %#v", response)
+	}
+}
+
+func TestRequireIDLFieldNamesRejectsAliasesInNestedRequests(t *testing.T) {
+	config := DefaultServerConfig()
+	config.RequireIDLFieldNames = true
+	strict, _ := newOptionsServer(t, config)
+	legacyConfig := DefaultServerConfig()
+	legacyConfig.RejectUnknownRequestFields = true
+	legacy, _ := newOptionsServer(t, legacyConfig)
+
+	item := fullItemMap()
+	item["labels"].(map[string]any)["arbitrary map key"] = map[string]any{"note": "value", "label": "inherited"}
+	if response := strict.Call(itemRequest(item)); response["result"] != "widget" {
+		t.Fatalf("canonical field and arbitrary map key should pass: %#v", response)
+	}
+
+	for _, mutate := range []func(map[string]any){
+		func(data map[string]any) { data["Name"] = "alias" },
+		func(data map[string]any) { data["meta"].(map[string]any)["Label"] = "alias" },
+		func(data map[string]any) { data["children"].([]any)[0].(map[string]any)["Note"] = "alias" },
+		func(data map[string]any) { data["labels"].(map[string]any)["k"].(map[string]any)["Label"] = "alias" },
+	} {
+		item := fullItemMap()
+		mutate(item)
+		if code := errorCode(t, strict.Call(itemRequest(item))); code != -32602 {
+			t.Fatalf("alias was not rejected: %d", code)
+		}
+		if response := legacy.Call(itemRequest(item)); response["result"] != "widget" {
+			t.Fatalf("legacy alias behavior changed: %#v", response)
+		}
 	}
 }

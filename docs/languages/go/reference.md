@@ -242,7 +242,7 @@ keeps the v0.4.0 behavior.
 
 `AllowBatch`, `MaxRequestBodyBytes`, and `RejectInvalidUTF8` are enforced by the
 generated HTTP adapter. `RequireNonNullID`, `ParamsMode`,
-`RejectUnknownRequestFields`, `RejectNullRequestField`, `MapError`, and `MapMethodError` are enforced by the runtime
+`RejectUnknownRequestFields`, `RequireIDLFieldNames`, `RejectNullRequestField`, `MapError`, and `MapMethodError` are enforced by the runtime
 dispatcher, so they also apply to programmatic `Call`/`CallWithContext` users.
 
 Regenerate the Go server with the matching PulseRPC release. Generated servers
@@ -258,6 +258,7 @@ copied `pulserpc` runtime must be upgraded together; `NewPulseRPCServer` and
 | `MaxRequestBodyBytes` | `0` | `<= 0` keeps the legacy 1 MiB cap and the legacy `-32600` `"Request body too large"` response. A positive value uses that byte cap and reports oversized bodies as `-32700` `"Parse error"`. |
 | `RejectInvalidUTF8` | `false` | `true` rejects a body that is not valid UTF-8 with `-32700` `"Parse error"`. The default lets `encoding/json` replace invalid bytes with U+FFFD. |
 | `RejectUnknownRequestFields` | `false` | `true` rejects unknown keys in struct-typed request params with `-32602` (or the mapped error). Detection recurses through pointers, slices, arrays, maps, and embedded structs, and honors `json` tags and `json:"-"`. Unknown top-level JSON-RPC envelope members are still ignored. |
+| `RequireIDLFieldNames` | `false` | During request contract validation, restricts struct keys to exact IDL field names, including nested and inherited fields. Leaves map keys, envelope metadata, and response validation unchanged. |
 | `RejectNullRequestField` | `nil` | Rejects explicit null for selected optional request struct fields. The callback receives the declared struct name and exact IDL field key. Omission, response validation, and direct contract validation are unaffected. |
 | `MapError` | `nil` | Maps argument decode and validation failures to the returned `*RPCError`. Return `nil` to fall back to the standard response. |
 | `MapMethodError` | `nil` | Maps the same failures with the qualified RPC method available. Return `nil` to fall through to `MapError`, then to the standard response. |
