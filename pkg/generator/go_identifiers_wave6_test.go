@@ -134,8 +134,8 @@ func TestGoKeywordParameterNames(t *testing.T) {
 	}, "root.pulse", false)
 	server := wave6Read(t, filepath.Join(out, "kw", "server.go"))
 	client := wave6Read(t, filepath.Join(out, "kw", "client.go"))
-	wave6Want(t, server, "Ping(type_ string)")
-	wave6Want(t, client, "Ping(type_ string)", "\t\ttype_,\n")
+	wave6Want(t, server, "Ping(ctx context.Context, type_ string) (string, error)")
+	wave6Want(t, client, "Ping(ctx context.Context, type_ string) (string, error)", "\t\ttype_,\n")
 	wave6Go(t, out, "build", "./...")
 }
 

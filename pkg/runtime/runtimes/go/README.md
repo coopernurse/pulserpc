@@ -60,14 +60,21 @@ The Go generator creates:
 ```go
 // Server
 server := NewServer("localhost", 8080)
-server.Register("MyInterface", &MyInterfaceImpl{})
+if err := server.Register("MyInterface", &MyInterfaceImpl{}); err != nil {
+    log.Fatal(err)
+}
 server.ServeForever()
 
 // Client
+ctx := context.Background()
 transport := NewHTTPTransport("http://localhost:8080", nil)
 client := NewMyInterfaceClient(transport)
-result, err := client.MyMethod(param1, param2)
+result, err := client.MyMethod(ctx, param1, param2)
 ```
+
+Handler methods take `ctx context.Context` first and return `(T, error)` for
+value-returning methods or `error` for void methods. Registration rejects a
+handler that does not match. `UseHTTP` and `UseRPC` add middleware hooks.
 
 **Note:** The runtime library is automatically bundled into the output directory when code is generated, so no separate installation is required.
 

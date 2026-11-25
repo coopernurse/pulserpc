@@ -1,6 +1,7 @@
 package pulserpc
 
 import (
+	"context"
 	"sync"
 	"testing"
 )
@@ -12,11 +13,11 @@ type concurrentTransport struct {
 	ids []interface{}
 }
 
-func (t *concurrentTransport) Request(method string, params interface{}) (map[string]interface{}, error) {
-	return t.RequestWithID(method, params, 1)
+func (t *concurrentTransport) Request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error) {
+	return t.RequestWithID(ctx, method, params, 1)
 }
 
-func (t *concurrentTransport) RequestWithID(method string, params interface{}, id interface{}) (map[string]interface{}, error) {
+func (t *concurrentTransport) RequestWithID(ctx context.Context, method string, params interface{}, id interface{}) (map[string]interface{}, error) {
 	t.mu.Lock()
 	t.ids = append(t.ids, id)
 	t.mu.Unlock()
@@ -41,7 +42,7 @@ func TestConcurrentCallsUseDistinctIDs(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := client.Call("A.add", []interface{}{1, 2}); err != nil {
+			if _, err := client.Call(context.Background(), "A.add", []interface{}{1, 2}); err != nil {
 				errs <- err
 			}
 		}()

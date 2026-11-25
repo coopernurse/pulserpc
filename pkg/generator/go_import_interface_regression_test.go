@@ -64,7 +64,7 @@ func TestGoImportedInterfaceIdentifiersAndMethodName(t *testing.T) {
 	for _, want := range []string{
 		"type AlphaClient struct",
 		"func NewAlphaClient(",
-		"func (c *AlphaClient) Ping(",
+		"func (c *AlphaClient) Ping(ctx context.Context) (string, error)",
 		`methodName := "alpha.Alpha.Ping"`,
 		`ValidateRequest("alpha.Alpha", "Ping", params)`,
 		`ValidateResponse("alpha.Alpha", "Ping", result)`,

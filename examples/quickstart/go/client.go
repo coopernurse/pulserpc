@@ -1,33 +1,36 @@
 package main
 
 import (
+	"context"
 	"fmt"
+
 	"checkout-service/pkg/checkout"
 	"checkout-service/pkg/pulserpc"
 )
 
 func main() {
+	ctx := context.Background()
 	transport := checkout.NewHTTPTransport("http://localhost:8080", nil)
 	catalog := checkout.NewCatalogServiceClient(transport)
 	cart := checkout.NewCartServiceClient(transport)
 	orders := checkout.NewOrderServiceClient(transport)
 
 	// List products
-	products, _ := catalog.ListProducts()
+	products, _ := catalog.ListProducts(ctx)
 	fmt.Println("=== Products ===")
 	for _, p := range products {
 		fmt.Printf("%s - $%.2f\n", p.Name, p.Price)
 	}
 
 	// Add to cart
-	result, _ := cart.AddToCart(checkout.AddToCartRequest{
+	result, _ := cart.AddToCart(ctx, checkout.AddToCartRequest{
 		ProductId: products[0].ProductId,
 		Quantity:  2,
 	})
 	fmt.Printf("\nCart: %s, Subtotal: $%.2f\n", result.CartId, result.Subtotal)
 
 	// Create order
-	response, _ := orders.CreateOrder(checkout.CreateOrderRequest{
+	response, _ := orders.CreateOrder(ctx, checkout.CreateOrderRequest{
 		CartId: result.CartId,
 		ShippingAddress: checkout.Address{
 			Street:  "123 Main St",
@@ -42,8 +45,8 @@ func main() {
 
 	// Test error case: empty cart
 	fmt.Println("\n=== Testing Error Case ===")
-	cart.ClearCart(result.CartId)
-	_, err := orders.CreateOrder(checkout.CreateOrderRequest{
+	cart.ClearCart(ctx, result.CartId)
+	_, err := orders.CreateOrder(ctx, checkout.CreateOrderRequest{
 		CartId: result.CartId,
 		ShippingAddress: checkout.Address{
 			Street:  "123 Main St",

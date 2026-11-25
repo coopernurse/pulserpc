@@ -2,6 +2,7 @@ package pulserpc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,7 @@ import (
 // Transport interface for RPC transports
 type Transport interface {
 	// Request sends a JSON-RPC request and returns the response
-	Request(method string, params interface{}) (map[string]interface{}, error)
+	Request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error)
 }
 
 // RequestWithID is an optional capability implemented by transports that let
@@ -21,7 +22,7 @@ type Transport interface {
 // the id member must be omitted and no response is expected. Transports that
 // do not implement it keep working through the legacy Request method.
 type RequestWithID interface {
-	RequestWithID(method string, params interface{}, id interface{}) (map[string]interface{}, error)
+	RequestWithID(ctx context.Context, method string, params interface{}, id interface{}) (map[string]interface{}, error)
 }
 
 // idsEqual compares a request id with the one echoed in a response. JSON
@@ -141,13 +142,18 @@ func NewHTTPTransport(baseURL string, headers map[string]string) *HTTPTransport 
 }
 
 // Request sends a JSON-RPC request via HTTP POST with a default id of 1.
-func (t *HTTPTransport) Request(method string, params interface{}) (map[string]interface{}, error) {
-	return t.RequestWithID(method, params, 1)
+func (t *HTTPTransport) Request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error) {
+	return t.RequestWithID(ctx, method, params, 1)
 }
 
 // RequestWithID sends a JSON-RPC request via HTTP POST with the supplied id.
-// A nil id omits the id member entirely, producing a notification.
-func (t *HTTPTransport) RequestWithID(method string, params interface{}, id interface{}) (map[string]interface{}, error) {
+// A nil id omits the id member entirely, producing a notification. The caller
+// context bounds the HTTP request and cancellation aborts it.
+func (t *HTTPTransport) RequestWithID(ctx context.Context, method string, params interface{}, id interface{}) (map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Build request. Notifications have no id member.
 	reqBody := map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -165,8 +171,8 @@ func (t *HTTPTransport) RequestWithID(method string, params interface{}, id inte
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create HTTP request
-	httpReq, err := http.NewRequest("POST", t.BaseURL, bytes.NewReader(body))
+	// Create HTTP request bound to the caller context
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", t.BaseURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -225,13 +231,15 @@ func NewInProcTransport(server *Server) *InProcTransport {
 }
 
 // Request sends a request directly to the server with a default id of 1.
-func (t *InProcTransport) Request(method string, params interface{}) (map[string]interface{}, error) {
-	return t.RequestWithID(method, params, 1)
+func (t *InProcTransport) Request(ctx context.Context, method string, params interface{}) (map[string]interface{}, error) {
+	return t.RequestWithID(ctx, method, params, 1)
 }
 
 // RequestWithID sends a request directly to the server with the supplied id.
-// A nil id produces a notification, which the server answers with nil.
-func (t *InProcTransport) RequestWithID(method string, params interface{}, id interface{}) (map[string]interface{}, error) {
+// A nil id produces a notification, which the server answers with nil. The
+// caller context is forwarded to the server so handlers observe cancellation
+// and deadlines.
+func (t *InProcTransport) RequestWithID(ctx context.Context, method string, params interface{}, id interface{}) (map[string]interface{}, error) {
 	req := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  method,
@@ -243,7 +251,7 @@ func (t *InProcTransport) RequestWithID(method string, params interface{}, id in
 		req["id"] = id
 	}
 
-	response := t.Server.Call(req)
+	response := t.Server.CallWithContext(ctx, req)
 	if response == nil {
 		if id == nil {
 			return map[string]interface{}{}, nil

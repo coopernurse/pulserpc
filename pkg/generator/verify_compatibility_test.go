@@ -29,7 +29,7 @@ func TestVerifyCompatibilityFetchesServerIDL(t *testing.T) {
 		writeVerifyCompatibilityMethod(&sb, "TestClient")
 		code := sb.String()
 
-		if !strings.Contains(code, `c.transport.Call("pulserpc-idl", []interface{}{})`) {
+		if !strings.Contains(code, `c.transport.Call(ctx, "pulserpc-idl", []interface{}{})`) {
 			t.Errorf("generated Go VerifyCompatibility does not fetch the server IDL via pulserpc-idl:\n%s", code)
 		}
 		if strings.Contains(code, "serverIDL = c.contract.GetIDLParsed()") {
