@@ -427,6 +427,18 @@ func (s *Server) CallWithContext(ctx context.Context, request map[string]interfa
 			fmt.Errorf("params must be an array or an object"))
 	}
 
+	// A parameter-count mismatch is a decode failure, not a value-validation
+	// failure. Check it before Contract.ValidateRequest so MapError receives
+	// ErrorPhaseDecodeParams; the message matches the contract validator's.
+	if fnDef != nil {
+		paramDefs, _ := fnDef["parameters"].([]interface{})
+		if len(positionalParams) != len(paramDefs) {
+			return s.paramErrorResponse(isNotification, reqID, ErrorPhaseDecodeParams,
+				fmt.Errorf("function '%s.%s' expects %d param(s), %d given",
+					ifaceName, funcName, len(paramDefs), len(positionalParams)))
+		}
+	}
+
 	// Validate request using positional params
 	if s.validateRequests && s.contract != nil {
 		if err := s.contract.ValidateRequest(ifaceName, funcName, positionalParams); err != nil {
