@@ -101,16 +101,15 @@ func TestGoImportedInterfaceIdentifiersAndMethodName(t *testing.T) {
 }
 
 // Generated Go packages must not ship the runtime's own tests: they are
-// upstream-only, and the spec-consistency test reads a Markdown file from the
-// PulseRPC checkout. Keeping it upstream but omitting it from generated output
+// upstream-only. Keeping them upstream but omitting them from generated output
 // lets `go test ./...` pass in a fresh module outside the checkout.
 func TestGoGeneratedRuntimeOmitsUpstreamTests(t *testing.T) {
 	embedded, err := runtime.GetRuntimeFiles("go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := embedded["severity_spec_test.go"]; !ok {
-		t.Fatal("upstream Go runtime lost severity_spec_test.go; the spec check must stay upstream")
+	if _, ok := embedded["transport_test.go"]; !ok {
+		t.Fatal("upstream Go runtime lost transport_test.go; runtime tests must stay upstream")
 	}
 
 	dir := t.TempDir()

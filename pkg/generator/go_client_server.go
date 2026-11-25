@@ -431,10 +431,9 @@ func (p *GoClientServer) copyRuntimeFiles(outputDir string, silent bool) error {
 		return err
 	}
 	// The embedded runtime tree contains upstream's own *_test.go files. They
-	// are not part of the generated package and some of them read files from
-	// the PulseRPC source checkout (e.g. the spec-consistency test), so
-	// shipping them makes `go test ./...` fail in a fresh generated module.
-	// Keep those tests upstream; generated output gets production files only.
+	// are not part of the generated package, so shipping them makes
+	// `go test ./...` heavier and can fail in a fresh generated module. Keep
+	// those tests upstream; generated output gets production files only.
 	// Remember their names so an idempotent re-generation can evict copies left
 	// behind by an older generator.
 	upstreamTests := make(map[string]bool)

@@ -150,8 +150,8 @@ func TestGoRegenerationRemovesStaleUpstreamTests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale := filepath.Join(out, "pulserpc", "severity_spec_test.go")
-	if err := os.WriteFile(stale, embedded["severity_spec_test.go"], 0644); err != nil {
+	stale := filepath.Join(out, "pulserpc", "transport_test.go")
+	if err := os.WriteFile(stale, embedded["transport_test.go"], 0644); err != nil {
 		t.Fatal(err)
 	}
 	// Regenerate into the same output directory (the idempotent path).
